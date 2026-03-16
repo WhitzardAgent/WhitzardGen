@@ -114,6 +114,13 @@
 - Ran lightweight installation/deployment smoke verification only:
   - `PYTHONPATH=src python3 -m unittest tests.test_smoke -v`
   - result: 2 tests passed
+- Hardened traditional installation support after the reported console-script import failure:
+  - made `setup.py` explicitly declare `find_packages(where="src")`, dependencies, and `console_scripts`
+  - added `setuptools>=68` to `requirements.txt`
+  - documented reinstall steps in `README.md`
+- Re-ran lightweight packaging smoke verification after the install fix:
+  - `PYTHONPATH=src python3 -m unittest tests.test_smoke -v`
+  - result: 2 tests passed
 
 ## Files Added/Modified
 - /Users/morinop/coding/whitzardgen/progress.md

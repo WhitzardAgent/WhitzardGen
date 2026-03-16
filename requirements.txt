@@ -1,3 +1,4 @@
 # Base install for the framework CLI and local config parsing.
 # Heavy model runtime dependencies stay in per-model Conda env specs under `envs/`.
+setuptools>=68
 -e .

@@ -38,6 +38,13 @@ pip install -e .
 python setup.py develop
 ```
 
+If you previously installed an older broken build, reinstall after pulling the latest changes:
+
+```bash
+pip uninstall -y aigc
+pip install -e .
+```
+
 After installation:
 
 ```bash
