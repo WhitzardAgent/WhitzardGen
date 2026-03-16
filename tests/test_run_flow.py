@@ -14,6 +14,9 @@ class FakeEnvRecord:
 
 
 class FakeEnvManager:
+    def ensure_ready(self, model_name: str, foreground: bool = True):
+        return FakeEnvRecord()
+
     def ensure_environment(self, model_name: str):
         return FakeEnvRecord()
 
@@ -22,6 +25,72 @@ class FakeEnvManager:
 
 
 class RunFlowTests(unittest.TestCase):
+    def test_real_run_uses_foreground_ensure_ready_when_env_is_needed(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "example.txt"
+        prompts_path.write_text("a futuristic city at night\n", encoding="utf-8")
+
+        class TrackingEnvManager(FakeEnvManager):
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, bool]] = []
+
+            def ensure_ready(self, model_name: str, foreground: bool = True):
+                self.calls.append((model_name, foreground))
+                return FakeEnvRecord()
+
+        manager = TrackingEnvManager()
+
+        def fake_worker_runner(_env_record, task_file: Path, result_file: Path):
+            task_payload = json.loads(task_file.read_text(encoding="utf-8"))
+            workdir = Path(task_payload["workdir"])
+            workdir.mkdir(parents=True, exist_ok=True)
+            artifact_path = workdir / f"{task_payload['prompts'][0]['prompt_id']}.png"
+            artifact_path.write_bytes(
+                b"\x89PNG\r\n\x1a\n"
+                + b"\x00\x00\x00\rIHDR"
+                + b"\x00\x00\x00\x01"
+                + b"\x00\x00\x00\x01"
+                + b"\x08\x02\x00\x00\x00"
+            )
+            result_payload = {
+                "task_id": task_payload["task_id"],
+                "model_name": task_payload["model_name"],
+                "execution_mode": task_payload["execution_mode"],
+                "plan": {"mode": "in_process"},
+                "execution_result": {"exit_code": 0, "logs": "ok", "outputs": {}},
+                "model_result": {
+                    "status": "success",
+                    "batch_items": [
+                        {
+                            "prompt_id": task_payload["prompts"][0]["prompt_id"],
+                            "status": "success",
+                            "artifacts": [
+                                {
+                                    "type": "image",
+                                    "path": str(artifact_path),
+                                    "metadata": {"width": 1, "height": 1, "format": "png"},
+                                }
+                            ],
+                        }
+                    ],
+                    "logs": "ok",
+                    "metadata": {},
+                },
+            }
+            result_file.write_text(json.dumps(result_payload), encoding="utf-8")
+            return 0, "ok"
+
+        run_single_model(
+            model_name="Z-Image-Turbo",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "ensure_ready",
+            execution_mode="real",
+            env_manager=manager,
+            worker_runner=fake_worker_runner,
+        )
+
+        self.assertEqual(manager.calls, [("Z-Image-Turbo", True)])
+
     def test_minimal_run_wiring_creates_run_dir_and_export(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "example.txt"

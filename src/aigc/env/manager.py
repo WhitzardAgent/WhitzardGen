@@ -4,12 +4,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
+import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from aigc.registry import ModelRegistry, load_registry
 
@@ -145,6 +147,83 @@ class EnvManager:
     def wrap_command(self, env_id: str, command: list[str]) -> list[str]:
         return ["conda", "run", "--prefix", str(self.environment_prefix(env_id)), *command]
 
+    def ensure_ready(
+        self,
+        model_name: str,
+        *,
+        foreground: bool = True,
+        progress: Callable[[str], None] | None = None,
+        wait_timeout_sec: float = 1800.0,
+        poll_interval_sec: float = 2.0,
+    ) -> EnvironmentRecord:
+        progress_cb = self._resolve_progress_callback(foreground=foreground, progress=progress)
+        record = self.inspect_model_environment(model_name)
+        if record.state == "ready":
+            return record
+        if not record.conda_available:
+            raise EnvManagerError(
+                f"Failed to prepare environment for {model_name}: Conda is not available in PATH."
+            )
+
+        if record.state == "creating":
+            if self._creation_lock_path(record.env_id).exists():
+                self._emit_progress(
+                    progress_cb,
+                    f"Environment for {model_name} is currently marked as creating. Waiting for env {record.env_id}...",
+                )
+                deadline = time.monotonic() + max(wait_timeout_sec, poll_interval_sec)
+                while time.monotonic() < deadline:
+                    time.sleep(poll_interval_sec)
+                    record = self.inspect_model_environment(model_name)
+                    if record.state == "ready":
+                        self._emit_progress(progress_cb, f"Environment ready: {record.env_id}")
+                        return record
+                    if record.state in {"failed", "invalid", "missing"}:
+                        break
+                    if not self._creation_lock_path(record.env_id).exists():
+                        break
+                record = self.inspect_model_environment(model_name)
+
+            if record.state == "creating" and not self._creation_lock_path(record.env_id).exists():
+                self._emit_progress(
+                    progress_cb,
+                    f"Recovering stale creating state for {model_name}: {record.env_id}",
+                )
+                spec = self.resolve_spec_for_model(model_name)
+                self._update_metadata(
+                    env_id=record.env_id,
+                    env_spec=spec.spec_name,
+                    models=[model_name],
+                    state="failed",
+                    path=record.path,
+                    validation={
+                        "passed": False,
+                        "error": "Recovered stale creating state before foreground recreation.",
+                        "checked_at": datetime.now(UTC).isoformat(),
+                    },
+                    error="Recovered stale creating state before foreground recreation.",
+                )
+                record = self.inspect_model_environment(model_name)
+
+        if record.state == "ready":
+            return record
+
+        if record.state in {"missing", "failed", "invalid"}:
+            record = self.create_environment(
+                model_name,
+                foreground=foreground,
+                progress=progress_cb,
+            )
+            if record.state == "ready":
+                return record
+            raise EnvManagerError(
+                f"Failed to create environment for {model_name}. "
+                f"Env spec: {record.env_spec}. "
+                f"Reason: {record.error or f'environment ended in state {record.state}'}"
+            )
+
+        raise EnvManagerError(f"Environment for {model_name} is not ready: {record.state}")
+
     def build_model_process_env(self, model_name: str) -> dict[str, str]:
         env = self.conda_process_env()
         model = self.registry.get_model(model_name)
@@ -161,14 +240,34 @@ class EnvManager:
         env["AIGC_MODEL_NAME"] = model.name
         return env
 
-    def create_environment(self, model_name: str) -> EnvironmentRecord:
+    def create_environment(
+        self,
+        model_name: str,
+        *,
+        foreground: bool = False,
+        progress: Callable[[str], None] | None = None,
+    ) -> EnvironmentRecord:
         model = self.registry.get_model(model_name)
         spec = self.resolve_spec_for_model(model_name)
         env_id = self.compute_env_id(spec)
         if not self.conda_available():
             raise EnvManagerError("Conda is not available in PATH.")
+        progress_cb = self._resolve_progress_callback(foreground=foreground, progress=progress)
 
         with self._env_lock(env_id):
+            self._emit_progress(
+                progress_cb,
+                f"Environment for {model_name} is not ready.",
+            )
+            self._emit_progress(
+                progress_cb,
+                f"Creating Conda environment: {env_id}",
+            )
+            self._emit_progress(
+                progress_cb,
+                f"Using spec: {spec.environment_file}",
+            )
+            self._remove_stale_environment_prefix(env_id=env_id, progress=progress_cb)
             self._update_metadata(
                 env_id=env_id,
                 env_spec=spec.spec_name,
@@ -187,15 +286,13 @@ class EnvManager:
                 "--file",
                 str(spec.environment_file),
             ]
-            result = subprocess.run(
+            result = self._run_command(
                 create_command,
                 env=self.conda_process_env(),
-                capture_output=True,
-                text=True,
-                check=False,
+                foreground=foreground,
             )
             if result.returncode != 0:
-                error = (result.stderr or result.stdout).strip() or "conda env create failed"
+                error = self._command_logs(result) or "conda env create failed"
                 self._update_metadata(
                     env_id=env_id,
                     env_spec=spec.spec_name,
@@ -212,18 +309,17 @@ class EnvManager:
                 raise EnvManagerError(error)
 
             if spec.pip_requirements_file is not None:
+                self._emit_progress(progress_cb, "Installing pip requirements...")
                 pip_command = self.wrap_command(
                     env_id, ["python", "-m", "pip", "install", "-r", str(spec.pip_requirements_file)]
                 )
-                pip_result = subprocess.run(
+                pip_result = self._run_command(
                     pip_command,
                     env=self.conda_process_env(),
-                    capture_output=True,
-                    text=True,
-                    check=False,
+                    foreground=foreground,
                 )
                 if pip_result.returncode != 0:
-                    error = (pip_result.stderr or pip_result.stdout).strip() or "pip install failed"
+                    error = self._command_logs(pip_result) or "pip install failed"
                     self._update_metadata(
                         env_id=env_id,
                         env_spec=spec.spec_name,
@@ -240,18 +336,15 @@ class EnvManager:
                     raise EnvManagerError(error)
 
             if spec.post_install_file is not None:
+                self._emit_progress(progress_cb, f"Running post-install hook: {spec.post_install_file}")
                 post_install_command = self.wrap_command(env_id, ["bash", str(spec.post_install_file)])
-                post_install_result = subprocess.run(
+                post_install_result = self._run_command(
                     post_install_command,
                     env=self.conda_process_env(),
-                    capture_output=True,
-                    text=True,
-                    check=False,
+                    foreground=foreground,
                 )
                 if post_install_result.returncode != 0:
-                    error = (
-                        post_install_result.stderr or post_install_result.stdout
-                    ).strip() or "post-install hook failed"
+                    error = self._command_logs(post_install_result) or "post-install hook failed"
                     self._update_metadata(
                         env_id=env_id,
                         env_spec=spec.spec_name,
@@ -267,9 +360,26 @@ class EnvManager:
                     )
                     raise EnvManagerError(error)
 
+            self._emit_progress(progress_cb, "Validating environment...")
+            self._update_metadata(
+                env_id=env_id,
+                env_spec=spec.spec_name,
+                models=[model_name],
+                state="validating",
+                path=str(self.environment_prefix(env_id)),
+                validation={
+                    "passed": False,
+                    "error": None,
+                    "checked_at": datetime.now(UTC).isoformat(),
+                },
+                error=None,
+            )
             exists, env_path = self.environment_exists(env_id)
             validation_passed, validation_error = self.validate_environment(env_id, spec)
-            state = "ready" if exists and validation_passed else "invalid"
+            if exists and validation_passed:
+                state = "ready"
+            else:
+                state = "failed"
             self._update_metadata(
                 env_id=env_id,
                 env_spec=spec.spec_name,
@@ -283,6 +393,13 @@ class EnvManager:
                 },
                 error=validation_error,
             )
+            if state == "ready":
+                self._emit_progress(progress_cb, f"Environment ready: {env_id}")
+            else:
+                self._emit_progress(
+                    progress_cb,
+                    f"Failed to validate environment for {model_name}: {validation_error or 'validation failed'}",
+                )
 
         return self.inspect_model_environment(model_name)
 
@@ -296,12 +413,7 @@ class EnvManager:
         return env
 
     def ensure_environment(self, model_name: str) -> EnvironmentRecord:
-        record = self.inspect_model_environment(model_name)
-        if record.state == "ready":
-            return record
-        if record.state in {"missing", "failed"} and not record.exists:
-            return self.create_environment(model_name)
-        raise EnvManagerError(f"Environment for {model_name} is not ready: {record.state}")
+        return self.ensure_ready(model_name, foreground=False)
 
     def inspect_model_environment(self, model_name: str) -> EnvironmentRecord:
         model = self.registry.get_model(model_name)
@@ -338,7 +450,7 @@ class EnvManager:
             state = "invalid"
         else:
             state = str(metadata.get("state", "missing"))
-            if state not in {"creating", "failed"}:
+            if state not in {"creating", "failed", "validating"}:
                 state = "missing"
 
         return EnvironmentRecord(
@@ -361,6 +473,84 @@ class EnvManager:
     def doctor(self, model_name: str | None = None) -> list[EnvironmentRecord]:
         model_names = [model_name] if model_name else [model.name for model in self.registry.list_models()]
         return [self.inspect_model_environment(name) for name in model_names]
+
+    def _resolve_progress_callback(
+        self,
+        *,
+        foreground: bool,
+        progress: Callable[[str], None] | None,
+    ) -> Callable[[str], None] | None:
+        if progress is not None:
+            return progress
+        if not foreground:
+            return None
+        return self._default_progress
+
+    def _emit_progress(
+        self,
+        progress: Callable[[str], None] | None,
+        message: str,
+    ) -> None:
+        if progress is not None:
+            progress(message)
+
+    def _default_progress(self, message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
+
+    def _run_command(
+        self,
+        command: list[str],
+        *,
+        env: dict[str, str],
+        foreground: bool,
+        cwd: str | Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        if not foreground:
+            return subprocess.run(
+                command,
+                env=env,
+                cwd=str(cwd) if cwd is not None else None,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        process = subprocess.Popen(
+            command,
+            env=env,
+            cwd=str(cwd) if cwd is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        output_lines: list[str] = []
+        assert process.stdout is not None
+        for line in process.stdout:
+            output_lines.append(line)
+            print(line, file=sys.stderr, end="", flush=True)
+        returncode = process.wait()
+        logs = "".join(output_lines).strip()
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=returncode,
+            stdout=logs,
+            stderr="",
+        )
+
+    def _command_logs(self, result: subprocess.CompletedProcess[str]) -> str:
+        return ((result.stdout or "") + ("\n" + result.stderr if result.stderr else "")).strip()
+
+    def _remove_stale_environment_prefix(
+        self,
+        *,
+        env_id: str,
+        progress: Callable[[str], None] | None,
+    ) -> None:
+        prefix = self.environment_prefix(env_id)
+        if not prefix.exists():
+            return
+        self._emit_progress(progress, f"Removing stale environment prefix: {prefix}")
+        shutil.rmtree(prefix)
 
     def _load_metadata(self) -> dict[str, dict[str, Any]]:
         if not self.metadata_path.exists():
@@ -409,9 +599,12 @@ class EnvManager:
             }
         return checks
 
+    def _creation_lock_path(self, env_id: str) -> Path:
+        return LOCKS_ROOT / f"{env_id}.lock"
+
     @contextmanager
     def _env_lock(self, env_id: str) -> Iterator[None]:
-        lock_path = LOCKS_ROOT / f"{env_id}.lock"
+        lock_path = self._creation_lock_path(env_id)
         fd = None
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)

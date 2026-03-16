@@ -551,6 +551,8 @@ def _resolve_environment_record(
 ) -> EnvironmentRecord:
     if execution_mode == "mock" and hasattr(manager, "inspect_model_environment"):
         return manager.inspect_model_environment(model_name)
+    if hasattr(manager, "ensure_ready"):
+        return manager.ensure_ready(model_name, foreground=True)
     return manager.ensure_environment(model_name)
 
 

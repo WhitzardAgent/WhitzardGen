@@ -4,6 +4,28 @@
 - Phase 8 - Cluster Readiness & Real-Execution Hardening
 
 ## Completed
+- Re-read the core docs and compared them against the current implementation to answer whether the project is truly docs-complete or mainly awaiting cluster validation.
+- Added `task_p1.md` as a clear implementation-status summary:
+  - what is already aligned with the docs
+  - what remains only as remote real-mode validation
+  - what is still genuinely unimplemented (especially scheduler core and retry/resume)
+- Re-read `progress.md`, `AGENT.md`, `START_HERE.md`, `docs/spec.md`, `docs/env_manager_spec.md`, `docs/cli_spec.md`, `docs/codex_tasks.md`, and the current env/run-flow implementation files before starting the targeted fix.
+- Hardened the `aigc run` environment contract so real-mode runs now request synchronous foreground environment preparation through `EnvManager.ensure_ready(...)` instead of returning immediately on a non-ready env state.
+- Improved env-manager state handling for the CLI run path:
+  - added explicit foreground progress messages for env creation, pip install, post-install hooks, validation, readiness, and failures
+  - added stale `creating` recovery when no active lock exists
+  - added `validating` metadata transitions and clearer failure propagation back to the CLI
+- Added targeted lightweight regression coverage for:
+  - `missing -> creating -> ready`
+  - `missing -> creating -> failed`
+  - stale `creating` recovery
+  - run-flow use of foreground `ensure_ready(...)` in real mode
+- Ran lightweight verification only:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager tests.test_run_flow -v`
+  - result: 13 tests passed
+- Ran lightweight full regression only:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 35 tests passed
 - Read `AGENT.md`, `START_HERE.md`, all required specs under `docs/`, and all model references under `docs/model_references/`.
 - Inspected the repository state and confirmed it is currently docs-only.
 - Completed Phase 0 repository scaffold:
@@ -134,6 +156,11 @@
 
 ## Files Added/Modified
 - /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/task_p1.md
+- /Users/morinop/coding/whitzardgen/src/aigc/env/manager.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/tests/test_env_manager.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
 - /Users/morinop/coding/whitzardgen/.gitignore
 - /Users/morinop/coding/whitzardgen/requirements.txt
 - /Users/morinop/coding/whitzardgen/README.md
@@ -223,9 +250,10 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-16 20:36:10 CST.
-- Phase 8 is in a good state. Local path overrides, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, lightweight regression coverage, and installation/deployment entrypoints (`setup.py`, `requirements.txt`, `README.md`) are all in place without requiring local GPU execution. The cluster-side missing `aigc.env` issue was traced to `.gitignore` incorrectly excluding `src/aigc/env/`, and that ignore rule has now been corrected.
-- Phase 8 is in a good state. Local path overrides, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, lightweight regression coverage, and installation/deployment entrypoints (`setup.py`, `requirements.txt`, `README.md`) are all in place without requiring local GPU execution. The cluster-side missing package issues were traced to `.gitignore` incorrectly excluding `src/aigc/env/` and `src/aigc/runtime/`, and those ignore rules have now been corrected.
+- Updated at 2026-03-16 21:36:40 CST.
+- Phase 8 env hardening is now in a good state. `aigc run` real-mode execution will synchronously create and validate missing environments in the foreground, print progress, recover stale `creating` metadata when practical, and fail clearly instead of exiting early on a non-ready env state.
+- Local mock mode, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, and installation/deployment entrypoints remain intact after the env-flow fix.
+- The new `task_p1.md` comparison confirms the project is ready for cluster real-mode bring-up, but is not yet fully docs-complete: the main remaining implementation gaps are scheduler core plus retry/resume support, while real-model execution for the current adapters still needs cluster proof.
 
 ## Blockers
 - Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.
@@ -234,4 +262,4 @@
 - Real non-mock validation for the five MVP video models is also intentionally deferred to the future GPU cluster environment, where model repositories, weights, and GPU runtime constraints can be validated properly.
 
 ## Next Task
-- Move to the GPU-cluster validation phase: populate `configs/local_models.yaml`, provision Conda envs, and switch selected runs from `mock` to `real` for canary validation.
+- Use `task_p1.md` as the implementation baseline, then split next work into two tracks: cluster canary validation for real-mode adapters, and follow-up implementation for scheduler core plus `runs retry` / `runs resume`.
