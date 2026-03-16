@@ -125,6 +125,9 @@
 - Re-ran lightweight packaging smoke verification after the bootstrap guard fix:
   - `PYTHONPATH=src python3 -m unittest tests.test_smoke -v`
   - result: 2 tests passed
+- Identified and fixed a repository tracking bug in `.gitignore`:
+  - the previous `env/` ignore rule also matched `src/aigc/env/`, so the env subsystem was not being tracked by git
+  - narrowed virtualenv ignores to repository-root paths only
 
 ## Files Added/Modified
 - /Users/morinop/coding/whitzardgen/progress.md
@@ -218,7 +221,7 @@
 
 ## Current Status
 - Updated at 2026-03-16 20:36:10 CST.
-- Phase 8 is in a good state. Local path overrides, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, lightweight regression coverage, and installation/deployment entrypoints (`setup.py`, `requirements.txt`, `README.md`) are all in place without requiring local GPU execution.
+- Phase 8 is in a good state. Local path overrides, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, lightweight regression coverage, and installation/deployment entrypoints (`setup.py`, `requirements.txt`, `README.md`) are all in place without requiring local GPU execution. The cluster-side missing `aigc.env` issue was traced to `.gitignore` incorrectly excluding `src/aigc/env/`, and that ignore rule has now been corrected.
 
 ## Blockers
 - Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.
