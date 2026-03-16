@@ -140,8 +140,46 @@ Main remaining gaps:
 - `aigc runs resume`
 - richer global conventions like `--verbose` / `--quiet`
 - more differentiated exit codes beyond the current simple error handling
+- no meaningful run-time terminal progress UI yet for long-running jobs
 
-### 6. Parquet Export Is Not Implemented
+### 6. Terminal Run UX Is Now A High-Priority Gap
+
+This was not originally emphasized enough in the planning docs, but cluster usage now
+makes it clear that it should be treated as a real priority.
+
+Current reality:
+
+- environment creation has some foreground logs
+- but task execution has almost no ongoing user feedback
+- there is no task-level progress summary
+- there is no clear "current stage" display
+- there is no heartbeat/spinner/progress bar for long inference windows
+- the CLI can look idle even when the framework is still working correctly
+
+Why this matters:
+
+- on long-running GPU jobs, silent terminals create operational uncertainty
+- users cannot easily tell whether the framework is stuck, downloading, validating, or generating
+- this increases the cost of cluster debugging and hurts trust in the framework
+
+Recommended priority:
+
+- this should be treated as a **high-priority usability and operability task**, not a cosmetic nice-to-have
+
+Recommended MVP scope for terminal UX:
+
+- stage messages:
+  - loading prompts
+  - resolving models
+  - ensuring environments
+  - preparing tasks
+  - running task `i/n`
+  - exporting dataset
+- per-task start/finish lines
+- a concise run summary footer
+- optional richer spinner/progress rendering later, potentially with `rich`
+
+### 7. Parquet Export Is Not Implemented
 
 This is optional/recommended in the task doc, not the biggest blocker, but it is still not done.
 
@@ -240,4 +278,4 @@ The shortest truthful summary is:
 > We are **not** in a state where only remote validation remains.
 > We **are** in a state where remote validation is the correct next step.
 > But to claim the project is fully complete against the docs, we still need:
-> real-model cluster proof, scheduler-core work, and retry/resume support.
+> real-model cluster proof, scheduler-core work, retry/resume support, and a much better run-time terminal UX.
