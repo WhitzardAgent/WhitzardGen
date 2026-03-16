@@ -45,6 +45,14 @@ pip uninstall -y aigc
 pip install -e .
 ```
 
+If a cluster still reports a console-script import error after reinstall, prefer this clean sequence:
+
+```bash
+pip uninstall -y aigc
+rm -rf *.egg-info
+pip install --no-build-isolation -e .
+```
+
 After installation:
 
 ```bash

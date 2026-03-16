@@ -121,6 +121,10 @@
 - Re-ran lightweight packaging smoke verification after the install fix:
   - `PYTHONPATH=src python3 -m unittest tests.test_smoke -v`
   - result: 2 tests passed
+- Added source-root bootstrap guards in the CLI and worker entry modules to make editable/develop installs more robust on cluster environments with stale console-script shims.
+- Re-ran lightweight packaging smoke verification after the bootstrap guard fix:
+  - `PYTHONPATH=src python3 -m unittest tests.test_smoke -v`
+  - result: 2 tests passed
 
 ## Files Added/Modified
 - /Users/morinop/coding/whitzardgen/progress.md
