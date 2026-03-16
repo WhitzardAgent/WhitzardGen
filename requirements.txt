@@ -1,0 +1,4 @@
+# Base install for the framework CLI and local config parsing.
+# Use model-specific Conda env specs under `envs/` for heavy runtime dependencies.
+-e .
+PyYAML>=6.0

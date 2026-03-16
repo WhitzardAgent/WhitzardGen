@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Multimodal AIGC synthetic data generation framework MVP"
 requires-python = ">=3.10"
 
+[project.scripts]
+aigc = "aigc.cli.main:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
