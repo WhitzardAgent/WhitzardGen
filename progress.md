@@ -4,6 +4,14 @@
 - Phase 8 - Cluster Readiness & Real-Execution Hardening
 
 ## Completed
+- Wired the cluster-local `diffusers` checkout into `configs/local_envs.yaml` for all currently diffusers-based env specs:
+  - `zimage`
+  - `flux_image`
+  - `sdxl_image`
+  - `qwen_image`
+  - `wan_t2v_diffusers`
+  - `hunyuan_video_15`
+- Added a direct override for the legacy GitHub diffusers line in `zimage`, so the cluster no longer needs GitHub access for that env spec.
 - Added local YAML-based environment install overrides for restricted cluster machines:
   - added `configs/local_envs.yaml` as the user-editable entry point
   - added env-manager support for env-level and model-level local install overrides
@@ -295,13 +303,14 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-16 22:04:44 CST.
+- Updated at 2026-03-16 22:07:15 CST.
 - Phase 8 env hardening is now in a good state. `aigc run` real-mode execution will synchronously create and validate missing environments in the foreground, print progress, recover stale `creating` metadata when practical, and fail clearly instead of exiting early on a non-ready env state.
 - Local mock mode, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, and installation/deployment entrypoints remain intact after the env-flow fix.
 - The new `task_p1.md` comparison confirms the project is ready for cluster real-mode bring-up, but is not yet fully docs-complete: the main remaining implementation gaps are scheduler core plus retry/resume support, while real-model execution for the current adapters still needs cluster proof.
 - The environment strategy has now been simplified for cluster operation: every env spec uses `python_version.txt` plus `requirements.txt`, and the manager creates envs with `conda create ... python=<version> pip` before pip-installing model-family dependencies.
 - Foreground environment creation is now more observable on the cluster: `conda create`, `pip install`, and post-install output can all be surfaced directly in the CLI during `aigc run`.
 - Restricted cluster environments can now override GitHub/public-internet pip dependencies through `configs/local_envs.yaml`, so packages like `diffusers` can be redirected to local wheels, alternate requirement files, or internal package sources without changing repository code.
+- The current repository config already points all diffusers-based env specs at the cluster-local diffusers path `/inspire/qb-ilm/project/control-technology/25015/deps/diffusers`.
 
 ## Blockers
 - Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.

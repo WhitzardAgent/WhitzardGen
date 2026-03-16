@@ -24,5 +24,24 @@
 #     pip_requirement_overrides:
 #       diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
 
-envs: {}
+envs:
+  zimage:
+    pip_requirement_overrides:
+      diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers
+      git+https://github.com/huggingface/diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers
+  flux_image:
+    pip_requirement_overrides:
+      diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers
+  sdxl_image:
+    pip_requirement_overrides:
+      diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers
+  qwen_image:
+    pip_requirement_overrides:
+      diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers
+  wan_t2v_diffusers:
+    pip_requirement_overrides:
+      diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers
+  hunyuan_video_15:
+    pip_requirement_overrides:
+      diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers
 models: {}
