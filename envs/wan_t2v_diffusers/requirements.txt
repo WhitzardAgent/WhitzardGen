@@ -1,5 +1,8 @@
+torch
+torchvision
 diffusers
 transformers
 accelerate
 safetensors
-invisible-watermark
+imageio
+imageio-ffmpeg

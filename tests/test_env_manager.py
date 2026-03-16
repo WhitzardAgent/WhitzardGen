@@ -40,7 +40,9 @@ class EnvManagerTests(unittest.TestCase):
     def test_resolve_spec_for_model(self) -> None:
         spec = self.manager.resolve_spec_for_model("Z-Image")
         self.assertEqual(spec.spec_name, "zimage")
-        self.assertTrue(spec.environment_file.exists())
+        self.assertTrue(spec.python_version_file.exists())
+        self.assertEqual(spec.python_version, "3.10")
+        self.assertTrue(spec.requirements_file is not None and spec.requirements_file.exists())
         self.assertIn("diffusers", spec.validation_imports)
 
     def test_compute_env_id_is_stable(self) -> None:
@@ -158,12 +160,12 @@ class FakeForegroundEnvManager(EnvManager):
 
     def _run_command(self, command, *, env, foreground, cwd=None):
         env_text = " ".join(str(item) for item in command)
-        if self.fail_stage == "create" and command[:3] == ["conda", "env", "create"]:
-            return subprocess.CompletedProcess(args=command, returncode=1, stdout="conda env create failed", stderr="")
+        if self.fail_stage == "create" and command[:2] == ["conda", "create"]:
+            return subprocess.CompletedProcess(args=command, returncode=1, stdout="conda create failed", stderr="")
         if self.fail_stage == "pip" and "pip install" in env_text:
             return subprocess.CompletedProcess(args=command, returncode=1, stdout="pip install failed", stderr="")
 
-        if command[:3] == ["conda", "env", "create"]:
+        if command[:2] == ["conda", "create"]:
             prefix = Path(command[command.index("--prefix") + 1])
             prefix.mkdir(parents=True, exist_ok=True)
         return subprocess.CompletedProcess(args=command, returncode=0, stdout="ok", stderr="")

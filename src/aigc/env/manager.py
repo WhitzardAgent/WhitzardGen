@@ -33,8 +33,9 @@ class EnvManagerError(RuntimeError):
 class EnvSpec:
     spec_name: str
     directory: Path
-    environment_file: Path
-    pip_requirements_file: Path | None
+    python_version_file: Path
+    python_version: str
+    requirements_file: Path | None
     post_install_file: Path | None
     validation_file: Path | None
     validation_imports: list[str]
@@ -79,12 +80,17 @@ class EnvManager:
         model = self.registry.get_model(model_name)
         spec_name = model.env_spec
         spec_dir = ENVS_ROOT / spec_name
-        environment_file = spec_dir / "environment.yml"
-        if not environment_file.exists():
+        python_version_file = spec_dir / "python_version.txt"
+        if not python_version_file.exists():
             raise EnvManagerError(
-                f"Environment spec {spec_name!r} for model {model_name} is missing {environment_file}"
+                f"Environment spec {spec_name!r} for model {model_name} is missing {python_version_file}"
             )
-        pip_requirements_file = spec_dir / "pip_requirements.txt"
+        python_version = python_version_file.read_text(encoding="utf-8").strip()
+        if not python_version:
+            raise EnvManagerError(
+                f"Environment spec {spec_name!r} for model {model_name} has an empty {python_version_file}"
+            )
+        requirements_file = spec_dir / "requirements.txt"
         post_install_file = spec_dir / "post_install.sh"
         validation_file = spec_dir / "validation.json"
         validation_imports = []
@@ -94,8 +100,9 @@ class EnvManager:
         return EnvSpec(
             spec_name=spec_name,
             directory=spec_dir,
-            environment_file=environment_file,
-            pip_requirements_file=pip_requirements_file if pip_requirements_file.exists() else None,
+            python_version_file=python_version_file,
+            python_version=python_version,
+            requirements_file=requirements_file if requirements_file.exists() else None,
             post_install_file=post_install_file if post_install_file.exists() else None,
             validation_file=validation_file if validation_file.exists() else None,
             validation_imports=validation_imports,
@@ -104,8 +111,8 @@ class EnvManager:
     def compute_env_id(self, spec: EnvSpec) -> str:
         digest = sha256()
         for file_path in (
-            spec.environment_file,
-            spec.pip_requirements_file,
+            spec.python_version_file,
+            spec.requirements_file,
             spec.post_install_file,
             spec.validation_file,
         ):
@@ -265,8 +272,13 @@ class EnvManager:
             )
             self._emit_progress(
                 progress_cb,
-                f"Using spec: {spec.environment_file}",
+                f"Using Python version: {spec.python_version} ({spec.python_version_file})",
             )
+            if spec.requirements_file is not None:
+                self._emit_progress(
+                    progress_cb,
+                    f"Using requirements: {spec.requirements_file}",
+                )
             self._remove_stale_environment_prefix(env_id=env_id, progress=progress_cb)
             self._update_metadata(
                 env_id=env_id,
@@ -279,12 +291,12 @@ class EnvManager:
             )
             create_command = [
                 "conda",
-                "env",
                 "create",
                 "--prefix",
                 str(self.environment_prefix(env_id)),
-                "--file",
-                str(spec.environment_file),
+                "-y",
+                f"python={spec.python_version}",
+                "pip",
             ]
             result = self._run_command(
                 create_command,
@@ -292,7 +304,7 @@ class EnvManager:
                 foreground=foreground,
             )
             if result.returncode != 0:
-                error = self._command_logs(result) or "conda env create failed"
+                error = self._command_logs(result) or "conda create failed"
                 self._update_metadata(
                     env_id=env_id,
                     env_spec=spec.spec_name,
@@ -308,10 +320,10 @@ class EnvManager:
                 )
                 raise EnvManagerError(error)
 
-            if spec.pip_requirements_file is not None:
+            if spec.requirements_file is not None:
                 self._emit_progress(progress_cb, "Installing pip requirements...")
                 pip_command = self.wrap_command(
-                    env_id, ["python", "-m", "pip", "install", "-r", str(spec.pip_requirements_file)]
+                    env_id, ["python", "-m", "pip", "install", "-r", str(spec.requirements_file)]
                 )
                 pip_result = self._run_command(
                     pip_command,

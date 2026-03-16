@@ -369,7 +369,7 @@ Use env-spec-based identity
 
 #### T3.4 Implement environment creation
 
-From `environment.yml` and optional pip requirements
+From `python_version.txt` and per-spec `requirements.txt`
 
 #### T3.5 Implement environment validation
 
@@ -905,4 +905,3 @@ It should be used as the coding roadmap for Codex.
 
 The priority is not elegance first.
 The priority is a **real, functioning MVP** that can run the required models on real prompt lists and produce real dataset outputs.
-

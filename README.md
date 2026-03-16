@@ -190,6 +190,21 @@ Heavy runtime dependencies such as:
 
 are expected to be handled through the per-model Conda specs under `envs/` and cluster-local model paths configured in `configs/local_models.yaml`.
 
+Each env spec now follows a simple cluster-friendly pattern:
+
+- `envs/<spec>/python_version.txt`
+- `envs/<spec>/requirements.txt`
+- optional `envs/<spec>/post_install.sh`
+- optional `envs/<spec>/validation.json`
+
+At runtime, `aigc run` / `aigc doctor` will create the environment with:
+
+```bash
+conda create --prefix <env_path> python=<version> pip
+```
+
+and then install the corresponding `requirements.txt`.
+
 ## Test
 
 Lightweight tests only:

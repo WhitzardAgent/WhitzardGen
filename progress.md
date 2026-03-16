@@ -4,6 +4,24 @@
 - Phase 8 - Cluster Readiness & Real-Execution Hardening
 
 ## Completed
+- Switched the environment-management strategy to the simpler per-spec model requested for cluster operation:
+  - create environments with `conda create --prefix ... python=<version> pip`
+  - store Python version in `envs/<spec>/python_version.txt`
+  - store model-family dependencies in `envs/<spec>/requirements.txt`
+- Updated `EnvManager` to consume the new spec format and create environments without `environment.yml`.
+- Replaced all existing env spec files under `envs/`:
+  - removed `environment.yml`
+  - removed `pip_requirements.txt`
+  - added `python_version.txt`
+  - added `requirements.txt`
+- Updated the environment docs/task docs so repository guidance now matches the new env strategy.
+- Updated `README.md` so deployment guidance now matches the new env strategy (`python_version.txt` + `requirements.txt`).
+- Ran lightweight regression after the env strategy change:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager tests.test_run_flow tests.test_registry -v`
+  - result: 18 tests passed
+- Ran lightweight full regression after the env strategy change:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 35 tests passed
 - Re-read the core docs and compared them against the current implementation to answer whether the project is truly docs-complete or mainly awaiting cluster validation.
 - Added `task_p1.md` as a clear implementation-status summary:
   - what is already aligned with the docs
@@ -156,6 +174,9 @@
 
 ## Files Added/Modified
 - /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/docs/env_manager_spec.md
+- /Users/morinop/coding/whitzardgen/docs/codex_tasks.md
+- /Users/morinop/coding/whitzardgen/README.md
 - /Users/morinop/coding/whitzardgen/task_p1.md
 - /Users/morinop/coding/whitzardgen/src/aigc/env/manager.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
@@ -210,17 +231,17 @@
 - /Users/morinop/coding/whitzardgen/tests/test_cli_runs.py
 - /Users/morinop/coding/whitzardgen/configs/.gitkeep
 - /Users/morinop/coding/whitzardgen/envs/.gitkeep
-- /Users/morinop/coding/whitzardgen/envs/flux_image/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/flux_image/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/flux_image/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/flux_image/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/flux_image/validation.json
-- /Users/morinop/coding/whitzardgen/envs/sdxl_image/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/sdxl_image/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/sdxl_image/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/sdxl_image/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/sdxl_image/validation.json
-- /Users/morinop/coding/whitzardgen/envs/qwen_image/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/qwen_image/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/qwen_image/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/qwen_image/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/qwen_image/validation.json
-- /Users/morinop/coding/whitzardgen/envs/zimage/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/zimage/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/zimage/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/zimage/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/zimage/validation.json
 - /Users/morinop/coding/whitzardgen/prompts/example.txt
 - /Users/morinop/coding/whitzardgen/prompts/video_example.txt
@@ -230,30 +251,31 @@
 - /Users/morinop/coding/whitzardgen/prompts/canary_video.csv
 - /Users/morinop/coding/whitzardgen/prompts/canary_image.jsonl
 - /Users/morinop/coding/whitzardgen/prompts/canary_video.jsonl
-- /Users/morinop/coding/whitzardgen/envs/hunyuan_image/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/hunyuan_image/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_image/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_image/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_image/validation.json
-- /Users/morinop/coding/whitzardgen/envs/wan_t2v_diffusers/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/wan_t2v_diffusers/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/wan_t2v_diffusers/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/wan_t2v_diffusers/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/wan_t2v_diffusers/validation.json
-- /Users/morinop/coding/whitzardgen/envs/wan_ti2v/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/wan_ti2v/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/wan_ti2v/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/wan_ti2v/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/wan_ti2v/validation.json
-- /Users/morinop/coding/whitzardgen/envs/longcat_video/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/longcat_video/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/longcat_video/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/longcat_video/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/longcat_video/validation.json
-- /Users/morinop/coding/whitzardgen/envs/mova_720p/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/mova_720p/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/mova_720p/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/mova_720p/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/mova_720p/validation.json
-- /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/environment.yml
-- /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/requirements.txt
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-16 21:36:40 CST.
+- Updated at 2026-03-16 21:53:49 CST.
 - Phase 8 env hardening is now in a good state. `aigc run` real-mode execution will synchronously create and validate missing environments in the foreground, print progress, recover stale `creating` metadata when practical, and fail clearly instead of exiting early on a non-ready env state.
 - Local mock mode, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, and installation/deployment entrypoints remain intact after the env-flow fix.
 - The new `task_p1.md` comparison confirms the project is ready for cluster real-mode bring-up, but is not yet fully docs-complete: the main remaining implementation gaps are scheduler core plus retry/resume support, while real-model execution for the current adapters still needs cluster proof.
+- The environment strategy has now been simplified for cluster operation: every env spec uses `python_version.txt` plus `requirements.txt`, and the manager creates envs with `conda create ... python=<version> pip` before pip-installing model-family dependencies.
 
 ## Blockers
 - Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.
@@ -262,4 +284,4 @@
 - Real non-mock validation for the five MVP video models is also intentionally deferred to the future GPU cluster environment, where model repositories, weights, and GPU runtime constraints can be validated properly.
 
 ## Next Task
-- Use `task_p1.md` as the implementation baseline, then split next work into two tracks: cluster canary validation for real-mode adapters, and follow-up implementation for scheduler core plus `runs retry` / `runs resume`.
+- Use the simplified env strategy on the GPU cluster: populate local model paths, let `aigc run` create envs from `python_version.txt` + `requirements.txt`, and debug the first real canary runs with the new foreground progress output.

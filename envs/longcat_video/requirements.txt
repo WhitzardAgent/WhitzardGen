@@ -1,3 +1,4 @@
+torch
 flash_attn==2.7.4.post1
 psutil
 packaging

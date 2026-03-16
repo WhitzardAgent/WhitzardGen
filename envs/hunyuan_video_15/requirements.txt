@@ -1,5 +1,9 @@
+torch
+torchvision
 diffusers
 transformers
 accelerate
 safetensors
 tencentcloud-sdk-python
+imageio
+imageio-ffmpeg

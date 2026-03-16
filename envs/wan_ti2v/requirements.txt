@@ -1,4 +1,4 @@
-diffusers
+torch
 transformers
 accelerate
 safetensors

@@ -190,52 +190,47 @@ Recommended layout:
 ```text
 envs/
   diffusers_image/
-    environment.yml
-    pip_requirements.txt
+    python_version.txt
+    requirements.txt
     post_install.sh
   longcat_video/
-    environment.yml
-    pip_requirements.txt
+    python_version.txt
+    requirements.txt
   hunyuan_image/
-    environment.yml
+    python_version.txt
+    requirements.txt
 ```
 
 ---
 
-## 5.1 environment.yml
+## 5.1 python_version.txt
 
-This is the primary Conda environment definition.
+This is the primary Conda environment definition for the simplified MVP strategy.
 
-Example:
+The framework should create environments with a command of the form:
 
-```yaml
-name: diffusers_image
-channels:
-  - pytorch
-  - nvidia
-  - conda-forge
-dependencies:
-  - python=3.10
-  - pytorch=2.4
-  - torchvision
-  - pip
-  - ffmpeg
-  - pip:
-      - diffusers
-      - transformers
-      - accelerate
-      - safetensors
+```bash
+conda create --prefix <env_path> python=<version>
 ```
-
----
-
-## 5.2 pip_requirements.txt
-
-Optional additional pip dependencies.
 
 Example:
 
 ```text
+3.10
+```
+
+---
+
+## 5.2 requirements.txt
+
+Model-family dependencies are installed after environment creation from a per-spec
+`requirements.txt` file.
+
+Example:
+
+```text
+torch
+torchvision
 xformers
 sentencepiece
 einops
@@ -331,9 +326,9 @@ Recommended creation pipeline:
 ```text
 resolve spec
   ↓
-create conda env from environment.yml
+conda create --prefix ... python=<version>
   ↓
-install optional pip requirements
+install requirements.txt
   ↓
 run optional post_install.sh
   ↓
@@ -590,13 +585,14 @@ Recommended environment-related file layout:
 ```text
 envs/
   diffusers_image/
-    environment.yml
-    pip_requirements.txt
+    python_version.txt
+    requirements.txt
   longcat_video/
-    environment.yml
-    pip_requirements.txt
+    python_version.txt
+    requirements.txt
   hunyuan_image/
-    environment.yml
+    python_version.txt
+    requirements.txt
 
 runtime/
   env_metadata.json
