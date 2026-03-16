@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 SRC_ROOT = Path(__file__).resolve().parents[2]
@@ -65,7 +66,13 @@ def execute_task_payload(payload: TaskPayload, registry_path: str | None = None)
         )
         exec_result = ExecutionResult(
             exit_code=result.returncode,
-            logs="\n".join(part for part in [result.stdout, result.stderr] if part),
+            logs=_format_external_process_logs(
+                command=plan.command,
+                cwd=plan.cwd or str(workdir),
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            ),
         )
     else:
         exec_result = adapter.execute(
@@ -100,22 +107,48 @@ def main(argv: list[str] | None = None) -> int:
         result = execute_task_payload(task_payload, registry_path=args.registry_file)
         status_code = 0
     except Exception as exc:  # pragma: no cover - exercised through integration boundaries
+        traceback_text = traceback.format_exc()
+        print(traceback_text, file=sys.stderr, flush=True)
         result = {
             "task_id": task_payload.task_id,
             "model_name": task_payload.model_name,
             "execution_mode": task_payload.execution_mode,
             "plan": None,
-            "execution_result": {"exit_code": 1, "logs": str(exc), "outputs": {}},
+            "execution_result": {"exit_code": 1, "logs": traceback_text, "outputs": {}},
             "model_result": {
                 "status": "failed",
                 "batch_items": [],
-                "logs": str(exc),
-                "metadata": {},
+                "logs": traceback_text,
+                "metadata": {"error_type": exc.__class__.__name__},
             },
         }
         status_code = 1
     Path(args.result_file).write_text(json.dumps(result, indent=2), encoding="utf-8")
     return status_code
+
+
+def _format_external_process_logs(
+    *,
+    command: list[str],
+    cwd: str,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> str:
+    sections = [
+        f"External command exit code: {returncode}",
+        f"Command: {' '.join(command)}",
+        f"CWD: {cwd}",
+    ]
+    clean_stdout = stdout.strip()
+    clean_stderr = stderr.strip()
+    if clean_stdout:
+        sections.append(f"STDOUT:\n{clean_stdout}")
+    if clean_stderr:
+        sections.append(f"STDERR:\n{clean_stderr}")
+    if not clean_stdout and not clean_stderr:
+        sections.append("No stdout/stderr captured from external process.")
+    return "\n\n".join(sections)
 
 
 if __name__ == "__main__":

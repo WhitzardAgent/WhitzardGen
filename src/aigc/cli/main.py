@@ -20,6 +20,7 @@ from aigc.run_store import (
     load_run_manifest,
 )
 from aigc.run_flow import RunFlowError, run_models
+from aigc.utils.progress import build_run_progress
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -262,6 +263,7 @@ def handle_export_dataset(args: argparse.Namespace) -> int:
 
 def handle_run(args: argparse.Namespace) -> int:
     model_names = [item.strip() for item in args.models.split(",") if item.strip()]
+    progress = build_run_progress(output_mode=args.output)
     summary = run_models(
         model_names=model_names,
         prompt_file=args.prompts,
@@ -269,6 +271,7 @@ def handle_run(args: argparse.Namespace) -> int:
         run_name=args.run_name,
         execution_mode=args.execution_mode,
         mock_mode=bool(args.mock),
+        progress=progress,
     )
     if args.output == "json":
         print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))

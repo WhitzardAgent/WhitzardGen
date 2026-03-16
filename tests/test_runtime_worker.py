@@ -89,3 +89,49 @@ class RuntimeWorkerTests(unittest.TestCase):
         self.assertEqual(payload["model_result"]["status"], "success")
         self.assertTrue((workdir / "p001.txt").exists())
         self.assertEqual((workdir / "p001.txt").read_text(encoding="utf-8"), "hello world")
+
+    def test_worker_failure_writes_traceback_to_result_and_stderr(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        registry_path = tmpdir / "test_models.json"
+        task_path = tmpdir / "task.json"
+        result_path = tmpdir / "result.json"
+
+        registry_path.write_text('{"models": {}}', encoding="utf-8")
+        task_path.write_text(
+            json.dumps(
+                {
+                    "task_id": "task_fail",
+                    "model_name": "Missing-Model",
+                    "execution_mode": "real",
+                    "prompts": [{"prompt_id": "p001", "prompt": "hello", "language": "en"}],
+                    "params": {},
+                    "workdir": str(tmpdir / "workdir"),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "aigc.runtime.worker",
+                "--task-file",
+                str(task_path),
+                "--result-file",
+                str(result_path),
+                "--registry-file",
+                str(registry_path),
+            ],
+            cwd=ROOT,
+            env={"PYTHONPATH": str(ROOT / "src")},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Traceback", result.stderr)
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["model_result"]["status"], "failed")
+        self.assertIn("Traceback", payload["execution_result"]["logs"])

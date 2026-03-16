@@ -1,9 +1,46 @@
 # Progress
 
 ## Current Phase
-- Phase 8 - Cluster Readiness & Real-Execution Hardening
+- Phase 8.5 / 9-prep — Terminal UI Hardening for Long-Running Runs
 
 ## Completed
+- Implemented a reusable terminal progress UI abstraction for `aigc run`:
+  - added `aigc.utils.progress` with `RunProgress` interface plus `TextRunProgress` and `NullRunProgress`
+  - added `RunSummaryData` and helpers for final run summaries and simple task status aggregation
+- Wired stage-level progress into the minimal run flow:
+  - `run_flow.run_models` now emits ordered stages for loading/validating prompts, resolving models, ensuring environments, preparing tasks, running tasks, exporting the dataset, writing the manifest, and completion
+  - stage messages are emitted through the progress abstraction instead of ad hoc `print()` calls
+- Added task-level progress visibility during execution:
+  - each batch-level task now reports `current/total`, `model`, number of prompts, execution mode (`mock`/`real`), and per-task success/failure with an approximate artifact count
+  - progress remains usable for both image and video runs, and for single- and multi-model runs
+- Integrated environment creation progress into the same UI channel:
+  - `run_models` now calls `EnvManager.ensure_ready(...)` with a progress callback wired to the run-time progress reporter
+  - per-model env-resolution steps are surfaced via `Ensuring environment for model: ...` plus the existing detailed EnvManager foreground messages
+- Added a final human-readable run summary:
+  - summary includes `run_id`, `execution_mode`, selected models, prompt count, task count, success/failed task counts, output directory, dataset export path, and manifest path
+  - JSON output mode uses the existing structured summary only and suppresses human-oriented progress output
+- Ensured non-interactive/plain-text behavior remains usable:
+  - the default `TextRunProgress` implementation writes concise, line-oriented updates to `stderr` and degrades cleanly when output is redirected
+  - a `NullRunProgress` implementation is used automatically whenever `--output json` is requested to avoid polluting machine-readable output
+- Added lightweight regression coverage for the new progress layer:
+  - `tests.test_progress` now covers text-mode stage/task messages, summary formatting, JSON-mode suppression, and task-status aggregation
+  - existing run-flow and CLI tests were updated and still pass with the new progress wiring
+- Hardened worker failure diagnostics for real runs:
+  - worker exceptions now write full Python tracebacks into `result.json`
+  - worker exceptions also print the traceback to stderr
+  - external-process execution logs now include exit code, command, cwd, and explicit stdout/stderr sections
+- Hardened run-flow failure surfacing:
+  - when a worker exits non-zero, the framework now prefers the richer `result.json` diagnostics over generic outer `conda run` wrapper errors
+  - task-level `.worker.log` files are now written alongside task JSON files for easier postmortem debugging
+- Added lightweight regression coverage for:
+  - worker failure writing traceback to stderr and `result.json`
+  - run-flow preferring real worker diagnostics over generic wrapper failures
+- Ran targeted regression after the worker-diagnostics fix:
+  - `PYTHONPATH=src python3 -m unittest tests.test_runtime_worker tests.test_run_flow tests.test_env_manager -v`
+  - result: 20 tests passed
+- Ran lightweight full regression after the worker-diagnostics fix:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 41 tests passed
 - Reassessed the current run-time CLI UX after the first successful real cluster run and confirmed that terminal observability is still too weak for long-running jobs.
 - Updated `task_p1.md` to explicitly raise terminal run UX / progress visibility to a high-priority gap:
   - current framework lacks meaningful task-stage progress feedback during generation
@@ -221,6 +258,10 @@
 
 ## Files Added/Modified
 - /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/worker.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/tests/test_runtime_worker.py
 - /Users/morinop/coding/whitzardgen/task_p1.md
 - /Users/morinop/coding/whitzardgen/README.md
 - /Users/morinop/coding/whitzardgen/configs/local_envs.yaml
@@ -280,6 +321,8 @@
 - /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
 - /Users/morinop/coding/whitzardgen/tests/test_smoke.py
 - /Users/morinop/coding/whitzardgen/tests/test_cli_runs.py
+- /Users/morinop/coding/whitzardgen/src/aigc/utils/progress.py
+- /Users/morinop/coding/whitzardgen/tests/test_progress.py
 - /Users/morinop/coding/whitzardgen/configs/.gitkeep
 - /Users/morinop/coding/whitzardgen/envs/.gitkeep
 - /Users/morinop/coding/whitzardgen/envs/flux_image/python_version.txt
@@ -322,16 +365,10 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-16 22:15:28 CST.
-- Phase 8 env hardening is now in a good state. `aigc run` real-mode execution will synchronously create and validate missing environments in the foreground, print progress, recover stale `creating` metadata when practical, and fail clearly instead of exiting early on a non-ready env state.
-- Local mock mode, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, and installation/deployment entrypoints remain intact after the env-flow fix.
-- The new `task_p1.md` comparison confirms the project is ready for cluster real-mode bring-up, but is not yet fully docs-complete: the main remaining implementation gaps are scheduler core plus retry/resume support, while real-model execution for the current adapters still needs cluster proof.
-- The environment strategy has now been simplified for cluster operation: every env spec uses `python_version.txt` plus `requirements.txt`, and the manager creates envs with `conda create ... python=<version> pip` before pip-installing model-family dependencies.
-- Foreground environment creation is now more observable on the cluster: `conda create`, `pip install`, and post-install output can all be surfaced directly in the CLI during `aigc run`.
-- Restricted cluster environments can now override GitHub/public-internet pip dependencies through `configs/local_envs.yaml`, so packages like `diffusers` can be redirected to local wheels, alternate requirement files, or internal package sources without changing repository code.
-- The current repository config already points all diffusers-based env specs at the cluster-local diffusers path `/inspire/qb-ilm/project/control-technology/25015/deps/diffusers`.
-- Prebuilt Conda environments can now be reused explicitly through `reuse_prefix`, which should reduce redundant environment creation on the cluster for models that already have a validated shared env available.
-- The first real cluster run also revealed that the current terminal UX is too quiet during task execution. This is now explicitly tracked as a high-priority gap in `task_p1.md`.
+- Updated at 2026-03-16 23:10:00 CST.
+- Phase 8.5 terminal UI hardening is in place: `aigc run` now has visible stage-level progress, per-task progress, integrated environment-creation messaging, and a final run summary, all funneled through a small reusable progress abstraction.
+- JSON output paths remain clean and machine-readable because the progress layer automatically degrades to a no-op reporter when `--output json` is requested.
+- Existing env-hardening behavior, mock-mode support, run manifests, run-management CLI commands, dataset export paths, and worker diagnostics all remain intact after the progress wiring.
 
 ## Blockers
 - Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.
@@ -340,4 +377,4 @@
 - Real non-mock validation for the five MVP video models is also intentionally deferred to the future GPU cluster environment, where model repositories, weights, and GPU runtime constraints can be validated properly.
 
 ## Next Task
-- Use the simplified env strategy on the GPU cluster: populate local model paths, let `aigc run` create envs from `python_version.txt` + `requirements.txt`, and debug the first real canary runs with the new foreground progress output.
+- Use the improved terminal progress UI on the GPU cluster to observe long-running real-mode jobs: ensure env preparation, task execution, and dataset export stages look healthy under real workloads, and then proceed toward scheduler core and retry/resume implementation in subsequent phases.

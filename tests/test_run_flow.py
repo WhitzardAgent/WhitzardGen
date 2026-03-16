@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aigc.run_flow import run_models, run_single_model
+from aigc.run_flow import RunFlowError, run_models, run_single_model
 from aigc.runtime.payloads import TaskPayload
 from aigc.runtime.worker import execute_task_payload
 
@@ -14,7 +14,7 @@ class FakeEnvRecord:
 
 
 class FakeEnvManager:
-    def ensure_ready(self, model_name: str, foreground: bool = True):
+    def ensure_ready(self, model_name: str, foreground: bool = True, progress=None):
         return FakeEnvRecord()
 
     def ensure_environment(self, model_name: str):
@@ -25,6 +25,47 @@ class FakeEnvManager:
 
 
 class RunFlowTests(unittest.TestCase):
+    def test_real_run_prefers_worker_result_logs_over_generic_wrapper_error(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "example.txt"
+        prompts_path.write_text("a futuristic city at night\n", encoding="utf-8")
+
+        def failing_worker_runner(_env_record, task_file: Path, result_file: Path):
+            task_payload = json.loads(task_file.read_text(encoding="utf-8"))
+            result_payload = {
+                "task_id": task_payload["task_id"],
+                "model_name": task_payload["model_name"],
+                "execution_mode": task_payload["execution_mode"],
+                "plan": None,
+                "execution_result": {
+                    "exit_code": 1,
+                    "logs": "Traceback (most recent call last):\nRuntimeError: real root cause",
+                    "outputs": {},
+                },
+                "model_result": {
+                    "status": "failed",
+                    "batch_items": [],
+                    "logs": "Traceback (most recent call last):\nRuntimeError: real root cause",
+                    "metadata": {},
+                },
+            }
+            result_file.write_text(json.dumps(result_payload), encoding="utf-8")
+            return 1, "ERROR conda.cli.main_run:execute(125): generic wrapper failure"
+
+        with self.assertRaises(RunFlowError) as context:
+            run_single_model(
+                model_name="Z-Image-Turbo",
+                prompt_file=prompts_path,
+                out_dir=tmpdir / "runs" / "worker_failure",
+                execution_mode="real",
+                env_manager=FakeEnvManager(),
+                worker_runner=failing_worker_runner,
+            )
+
+        message = str(context.exception)
+        self.assertIn("real root cause", message)
+        self.assertIn("generic wrapper failure", message)
+
     def test_real_run_uses_foreground_ensure_ready_when_env_is_needed(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "example.txt"
@@ -34,7 +75,7 @@ class RunFlowTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls: list[tuple[str, bool]] = []
 
-            def ensure_ready(self, model_name: str, foreground: bool = True):
+            def ensure_ready(self, model_name: str, foreground: bool = True, progress=None):
                 self.calls.append((model_name, foreground))
                 return FakeEnvRecord()
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -17,6 +18,12 @@ from aigc.registry.models import ModelInfo
 from aigc.registry import load_registry
 from aigc.run_store import write_failures_summary, write_run_manifest
 from aigc.runtime.payloads import TaskPayload, TaskPrompt
+from aigc.utils.progress import (
+    RunProgress,
+    RunSummaryData,
+    NullRunProgress,
+    summarize_task_statuses,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -84,7 +91,14 @@ def run_models(
     env_manager: EnvManager | None = None,
     worker_runner: Callable[[EnvironmentRecord, Path, Path], tuple[int, str]] | None = None,
     batch_limit: int | None = None,
+    progress: RunProgress | None = None,
 ) -> RunSummary:
+    progress = progress or NullRunProgress()
+
+    total_stages = 9
+    stage_index = 1
+
+    progress.stage_start(stage_index, total_stages, "Loading prompts")
     resolved_execution_mode = _resolve_execution_mode(
         execution_mode=execution_mode,
         mock_mode=mock_mode,
@@ -101,10 +115,17 @@ def run_models(
             f"Expected {modality}, got mismatched models: {', '.join(invalid_models)}."
         )
 
+    progress.stage_end(stage_index, total_stages, "Loading prompts")
+    stage_index += 1
+
+    progress.stage_start(stage_index, total_stages, "Validating prompts")
     prompts = load_prompts(prompt_file)
     if not prompts:
         raise RunFlowError("Prompt file did not produce any valid prompts.")
+    progress.stage_end(stage_index, total_stages, "Validating prompts")
+    stage_index += 1
 
+    progress.stage_start(stage_index, total_stages, "Resolving models")
     run_id = _generate_run_id(run_name)
     run_root = Path(out_dir) if out_dir else REPO_ROOT / "runs" / run_id
     tasks_dir = run_root / "tasks"
@@ -115,6 +136,8 @@ def run_models(
         directory.mkdir(parents=True, exist_ok=True)
 
     manager = env_manager or EnvManager(registry=registry)
+    progress.stage_end(stage_index, total_stages, "Resolving models")
+    stage_index += 1
     created_at = datetime.now(UTC).isoformat()
     initial_manifest = {
         "run_id": run_id,
@@ -133,15 +156,20 @@ def run_models(
     write_run_manifest(run_root, initial_manifest)
     failures: list[dict[str, object]] = []
     try:
-        env_records = {
-            model.name: _resolve_environment_record(
+        progress.stage_start(stage_index, total_stages, "Ensuring environments")
+        env_records: dict[str, EnvironmentRecord] = {}
+        for model in models:
+            progress.env_message(f"Ensuring environment for model: {model.name}")
+            env_records[model.name] = _resolve_environment_record(
                 manager=manager,
                 model_name=model.name,
                 execution_mode=resolved_execution_mode,
+                progress=progress.env_message,
             )
-            for model in models
-        }
+        progress.stage_end(stage_index, total_stages, "Ensuring environments")
+        stage_index += 1
 
+        progress.stage_start(stage_index, total_stages, "Preparing tasks")
         task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
         runner = worker_runner or _run_worker_task
         task_counter = 1
@@ -153,10 +181,15 @@ def run_models(
             for directory in (model_tasks_dir, model_workdir_root, model_artifacts_root):
                 directory.mkdir(parents=True, exist_ok=True)
 
-            for batch_number, prompt_batch in enumerate(
-                _batch_prompts_for_model(model=model, prompts=prompts, batch_limit=batch_limit),
-                start=1,
-            ):
+            batched_prompts = list(
+                _batch_prompts_for_model(
+                    model=model,
+                    prompts=prompts,
+                    batch_limit=batch_limit,
+                )
+            )
+            total_tasks_for_model = len(batched_prompts)
+            for batch_number, prompt_batch in enumerate(batched_prompts, start=1):
                 task_id = f"task_{task_counter:06d}"
                 batch_id = f"{model_slug}_batch_{batch_number:06d}"
                 task_workdir = model_workdir_root / task_id
@@ -177,6 +210,19 @@ def run_models(
                     encoding="utf-8",
                 )
 
+                if resolved_execution_mode == "mock":
+                    execution_label = "mock"
+                else:
+                    execution_label = "real"
+
+                progress.task_start(
+                    current=batch_number,
+                    total=total_tasks_for_model,
+                    model_name=model.name,
+                    prompts=len(prompt_batch),
+                    execution_mode=execution_label,
+                )
+
                 returncode, logs = runner(env_records[model.name], task_file, result_file)
                 if not result_file.exists():
                     failures.append(
@@ -188,36 +234,85 @@ def run_models(
                         }
                     )
                     write_failures_summary(run_root, failures)
+                    progress.task_end(
+                        current=batch_number,
+                        total=total_tasks_for_model,
+                        model_name=model.name,
+                        status="failed",
+                        artifacts=None,
+                    )
                     raise RunFlowError(f"Worker did not produce result file for {task_id}.")
 
                 result_payload = json.loads(result_file.read_text(encoding="utf-8"))
-                if returncode != 0 and result_payload["model_result"]["status"] == "failed":
+                execution_logs = _merge_diagnostic_logs(
+                    result_payload.get("execution_result", {}).get("logs"),
+                    result_payload.get("model_result", {}).get("logs"),
+                    logs,
+                )
+                model_status = result_payload["model_result"]["status"]
+                if returncode != 0 and model_status == "failed":
                     failures.append(
                         {
                             "task_id": task_id,
                             "model_name": model.name,
                             "status": "failed",
-                            "error": logs,
+                            "error": execution_logs,
                         }
                     )
                     write_failures_summary(run_root, failures)
-                    raise RunFlowError(f"Worker failed for {task_id}: {logs}")
-                if result_payload["model_result"]["status"] == "failed":
+                    progress.task_end(
+                        current=batch_number,
+                        total=total_tasks_for_model,
+                        model_name=model.name,
+                        status="failed",
+                        artifacts=None,
+                    )
+                    raise RunFlowError(f"Worker failed for {task_id}:\n{execution_logs}")
+                if model_status == "failed":
                     failures.append(
                         {
                             "task_id": task_id,
                             "model_name": model.name,
                             "status": "failed",
-                            "error": result_payload["execution_result"]["logs"],
+                            "error": execution_logs,
                         }
                     )
                     write_failures_summary(run_root, failures)
-                    raise RunFlowError(
-                        f"Task {task_id} failed: {result_payload['execution_result']['logs']}"
+                    progress.task_end(
+                        current=batch_number,
+                        total=total_tasks_for_model,
+                        model_name=model.name,
+                        status="failed",
+                        artifacts=None,
                     )
+                    raise RunFlowError(f"Task {task_id} failed:\n{execution_logs}")
+
+                successful_artifacts = 0
+                for batch_item in result_payload.get("model_result", {}).get("batch_items", []):
+                    if batch_item.get("status") != "success":
+                        continue
+                    successful_artifacts += len(batch_item.get("artifacts", []))
+
+                progress.task_end(
+                    current=batch_number,
+                    total=total_tasks_for_model,
+                    model_name=model.name,
+                    status=model_status,
+                    artifacts=successful_artifacts or None,
+                )
                 task_results.append((model, payload, result_payload))
                 task_counter += 1
 
+        progress.stage_end(stage_index, total_stages, "Preparing tasks")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Running tasks")
+        # Task execution has already happened inline above; the stage marker
+        # exists to keep the visible stage sequence aligned with the spec.
+        progress.stage_end(stage_index, total_stages, "Running tasks")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Exporting dataset")
         all_records = []
         record_index = 1
         for model, payload, result_payload in task_results:
@@ -232,6 +327,10 @@ def run_models(
             record_index += len(task_records)
 
         export_path = export_jsonl(all_records, exports_dir / "dataset.jsonl")
+        progress.stage_end(stage_index, total_stages, "Exporting dataset")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Writing run manifest")
         per_model_summary: dict[str, dict[str, object]] = {}
         for model in models:
             model_records = [record for record in all_records if record["model_name"] == model.name]
@@ -261,8 +360,36 @@ def run_models(
             "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
         }
         (run_root / "run.json").write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
-        write_run_manifest(run_root, run_manifest)
+        manifest_path = write_run_manifest(run_root, run_manifest)
         write_failures_summary(run_root, failures)
+        progress.stage_end(stage_index, total_stages, "Writing run manifest")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Done")
+
+        # Compute simple success / failure counts for the final summary.
+        task_statuses = [
+            result["model_result"]["status"]
+            for _model, _payload, result in task_results
+        ]
+        success_tasks, failed_tasks = summarize_task_statuses(task_statuses)
+
+        progress.print_summary(
+            RunSummaryData(
+                run_id=run_id,
+                execution_mode=resolved_execution_mode,
+                model_names=[model.name for model in models],
+                prompt_count=len(prompts),
+                task_count=len(task_results),
+                success_tasks=success_tasks,
+                failed_tasks=failed_tasks,
+                output_dir=str(run_root),
+                dataset_path=str(export_path),
+                manifest_path=str(manifest_path),
+            )
+        )
+
+        progress.stage_end(stage_index, total_stages, "Done")
     except Exception as exc:
         failure_manifest = {
             **initial_manifest,
@@ -295,6 +422,7 @@ def run_models(
 
 def _run_worker_task(env_record: EnvironmentRecord, task_file: Path, result_file: Path) -> tuple[int, str]:
     payload = TaskPayload.from_dict(json.loads(task_file.read_text(encoding="utf-8")))
+    worker_log_file = task_file.with_suffix(".worker.log")
     if payload.execution_mode == "mock":
         command = [
             sys.executable,
@@ -322,6 +450,7 @@ def _run_worker_task(env_record: EnvironmentRecord, task_file: Path, result_file
                 "--result-file",
                 str(result_file),
             ],
+            foreground=False,
         )
         env = manager.build_model_process_env(payload.model_name)
     if payload.execution_mode == "mock":
@@ -339,8 +468,35 @@ def _run_worker_task(env_record: EnvironmentRecord, task_file: Path, result_file
         text=True,
         check=False,
     )
-    logs = "\n".join(part for part in [result.stdout, result.stderr] if part)
+    logs = "\n".join(part for part in [result.stdout, result.stderr] if part).strip()
+    if result.returncode != 0:
+        diagnostics = [
+            f"Worker command exit code: {result.returncode}",
+            f"Command: {shlex.join(command)}",
+            f"Task file: {task_file}",
+            f"Result file: {result_file}",
+            f"Worker log: {worker_log_file}",
+        ]
+        if logs:
+            diagnostics.append(f"Command output:\n{logs}")
+        else:
+            diagnostics.append("Command output: <empty>")
+        logs = "\n\n".join(diagnostics)
+    if logs:
+        worker_log_file.write_text(logs + "\n", encoding="utf-8")
     return result.returncode, logs
+
+
+def _merge_diagnostic_logs(*parts: str | None) -> str:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        clean = (part or "").strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        merged.append(clean)
+    return "\n\n".join(merged)
 
 
 def _prompt_to_task_prompt(prompt: PromptRecord) -> TaskPrompt:
@@ -548,11 +704,12 @@ def _resolve_environment_record(
     manager: EnvManager,
     model_name: str,
     execution_mode: str,
+    progress: callable | None = None,
 ) -> EnvironmentRecord:
     if execution_mode == "mock" and hasattr(manager, "inspect_model_environment"):
         return manager.inspect_model_environment(model_name)
     if hasattr(manager, "ensure_ready"):
-        return manager.ensure_ready(model_name, foreground=True)
+        return manager.ensure_ready(model_name, foreground=True, progress=progress)
     return manager.ensure_environment(model_name)
 
 
