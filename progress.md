@@ -1,0 +1,207 @@
+# Progress
+
+## Current Phase
+- Phase 8 - Cluster Readiness & Real-Execution Hardening
+
+## Completed
+- Read `AGENT.md`, `START_HERE.md`, all required specs under `docs/`, and all model references under `docs/model_references/`.
+- Inspected the repository state and confirmed it is currently docs-only.
+- Completed Phase 0 repository scaffold:
+  - added `pyproject.toml`
+  - added `src/aigc/` package skeleton for CLI, prompts, registry, adapters, env, runtime, scheduler, exporters, utils
+  - added a root `aigc` launcher and package `__main__`
+  - added initial smoke tests
+- Completed Phase 1 prompt input system:
+  - implemented `.txt`, `.csv`, and `.jsonl` loading
+  - added prompt normalization, language inference/defaulting, and validation
+  - added prompt loader tests for happy paths and validation failures
+- Completed Phase 2 model registry:
+  - added registry definitions for all 11 MVP target models
+  - added registry loader, model data model, and adapter binding checks
+  - added `aigc models list` and `aigc models inspect`
+  - added registry tests and verified full discovery
+- Completed Phase 3 environment manager skeleton:
+  - added env specs for all current model families under `envs/`
+  - added deterministic env identity hashing from spec contents
+  - added conda env existence checks, validation hooks, metadata store, and command wrapping
+  - added `aigc doctor` for env readiness reporting
+  - added env manager tests and verified doctor output
+- Completed Phase 4 runtime worker skeleton:
+  - added task payload models and a worker entrypoint
+  - added task result serialization to JSON
+  - verified isolated workdir execution through a subprocess test
+- Completed Phase 5 adapter base system:
+  - added adapter capabilities, execution plan, artifact/result models, and abstract base adapter
+  - migrated placeholder adapters onto the new base layer
+  - added a small in-process test adapter to verify the worker flow
+- Started Phase 6 first real image-model vertical slice:
+  - added a real `ZImageAdapter` using the documented `diffusers`-based `ZImagePipeline` path
+  - added a minimal single-model `aigc run` flow for `Z-Image`
+  - added run directory creation, task payload generation, worker invocation, and JSONL export
+  - added `prompts/example.txt` for the first meaningful run target
+- Added Phase 6 boundary tests:
+  - dataset JSONL export shape
+  - Z-Image artifact normalization/metadata collection
+  - minimal run wiring with a lightweight worker stub
+- Re-read the required specs and the six MVP image model references for the Phase 6.5 expansion cycle.
+- Added shared image adapter infrastructure for the MVP image family:
+  - mock-capable PNG artifact generation for local development
+  - shared batch-aware image artifact collection
+  - concrete adapter classes for `Z-Image-Turbo`, `FLUX.1-dev`, `stable-diffusion-xl-base-1.0`, `Qwen-Image-2512`, and `HunyuanImage-3.0`
+- Extended runtime task payloads so worker execution can carry `batch_id` and `runtime_config` cleanly through the worker/adapter path.
+- Expanded `aigc run` into a broader MVP image run flow:
+  - supports `.txt`, `.csv`, and `.jsonl`
+  - supports one or more selected image models
+  - supports batch formation based on adapter capabilities
+  - supports explicit `--mock` local execution mode without heavy Conda/GPU requirements
+- Updated JSONL dataset export so each artifact record now preserves `batch_id`, `batch_index`, and mock execution traceability.
+- Added Phase 6.5 lightweight tests for:
+  - mock Z-Image artifact generation
+  - batch splitting and prompt-to-artifact mapping
+  - multi-model mock run flow
+  - `.txt`, `.csv`, and `.jsonl` run-path coverage
+- Ran the lightweight unit test suite only:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 23 tests passed
+- Re-read the core specs and all five relevant video model references for the Phase 7 cycle.
+- Added shared video adapter infrastructure:
+  - mock-capable `.mp4` artifact generation with deterministic metadata sidecars
+  - common video artifact collection and prompt-to-video mapping
+  - structural support for both in-process and external-process video adapter styles
+- Wired concrete video adapter classes for:
+  - `Wan2.2-T2V-A14B-Diffusers`
+  - `Wan2.2-TI2V-5B`
+  - `LongCat-Video`
+  - `HunyuanVideo-1.5`
+  - `MOVA-720p`
+- Extended worker prepare-time runtime injection so adapters can choose mock vs real planning cleanly.
+- Started generalizing `aigc run` toward modality-consistent video execution and added `prompts/video_example.txt`.
+- Completed Phase 7 video run-flow expansion:
+  - `aigc run` now accepts modality-consistent video model selections
+  - video mock runs work through the same worker/runtime/export path as image runs
+  - video defaults and task payload generation are in place for all MVP video models
+- Added Phase 7 lightweight tests for:
+  - mock video artifact generation
+  - video metadata normalization
+  - video dataset JSONL export shape
+  - multi-model video run flow
+  - `.txt`, `.csv`, and `.jsonl` video prompt execution paths
+- Ran lightweight regression only:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 28 tests passed
+- Re-read `progress.md`, `AGENT.md`, `START_HERE.md`, all required Phase 8 specs under `docs/`, and all relevant image/video model references under `docs/model_references/`.
+- Completed the first Phase 8 hardening slice:
+  - added `configs/local_models.yaml` as the user-editable entry point for per-model local path overrides
+  - added registry-side local override loading and merge behavior
+  - exposed effective local override metadata on `ModelInfo`
+  - updated real image/video adapters so they now prefer configured local paths, weights paths, repo paths, script roots, and optional HF cache dirs when present
+- Completed the second Phase 8 hardening slice:
+  - formalized run/task execution mode as explicit `mock` or `real` through CLI, run flow, worker runtime, adapters, exports, and summaries
+  - added per-run `run_manifest.json` and `failures.json`
+  - added run inspection helpers plus CLI commands for `runs list`, `runs inspect`, `runs failures`, and `export dataset`
+  - hardened `doctor` output so it now exposes configured local path overrides and path existence checks
+  - added canary prompt assets for image/video smoke validation in `.txt`, `.csv`, and `.jsonl`
+- Ran lightweight Phase 8 regression only:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 31 tests passed
+- Added repository `.gitignore` for Python caches, virtualenvs, build outputs, runtime directories, and common editor/OS files.
+
+## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/.gitignore
+- /Users/morinop/coding/whitzardgen/pyproject.toml
+- /Users/morinop/coding/whitzardgen/aigc
+- /Users/morinop/coding/whitzardgen/configs/models.yaml
+- /Users/morinop/coding/whitzardgen/configs/local_models.yaml
+- /Users/morinop/coding/whitzardgen/src/aigc/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/__main__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/cli/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompts/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/registry/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/registry/local_overrides.py
+- /Users/morinop/coding/whitzardgen/src/aigc/registry/models.py
+- /Users/morinop/coding/whitzardgen/src/aigc/registry/loader.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/stubs.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/base.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/image_family.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/zimage.py
+- /Users/morinop/coding/whitzardgen/src/aigc/env/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/env/manager.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/payloads.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/worker.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_store.py
+- /Users/morinop/coding/whitzardgen/src/aigc/scheduler/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/exporters/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/exporters/jsonl.py
+- /Users/morinop/coding/whitzardgen/src/aigc/utils/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompts/models.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompts/loader.py
+- /Users/morinop/coding/whitzardgen/src/aigc/models/.gitkeep
+- /Users/morinop/coding/whitzardgen/tests/test_prompts.py
+- /Users/morinop/coding/whitzardgen/tests/test_registry.py
+- /Users/morinop/coding/whitzardgen/tests/test_env_manager.py
+- /Users/morinop/coding/whitzardgen/tests/test_runtime_worker.py
+- /Users/morinop/coding/whitzardgen/tests/test_dataset_export.py
+- /Users/morinop/coding/whitzardgen/tests/test_zimage_adapter.py
+- /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/tests/test_smoke.py
+- /Users/morinop/coding/whitzardgen/tests/test_cli_runs.py
+- /Users/morinop/coding/whitzardgen/configs/.gitkeep
+- /Users/morinop/coding/whitzardgen/envs/.gitkeep
+- /Users/morinop/coding/whitzardgen/envs/flux_image/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/flux_image/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/flux_image/validation.json
+- /Users/morinop/coding/whitzardgen/envs/sdxl_image/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/sdxl_image/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/sdxl_image/validation.json
+- /Users/morinop/coding/whitzardgen/envs/qwen_image/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/qwen_image/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/qwen_image/validation.json
+- /Users/morinop/coding/whitzardgen/envs/zimage/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/zimage/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/zimage/validation.json
+- /Users/morinop/coding/whitzardgen/prompts/example.txt
+- /Users/morinop/coding/whitzardgen/prompts/video_example.txt
+- /Users/morinop/coding/whitzardgen/prompts/canary_image.txt
+- /Users/morinop/coding/whitzardgen/prompts/canary_video.txt
+- /Users/morinop/coding/whitzardgen/prompts/canary_image.csv
+- /Users/morinop/coding/whitzardgen/prompts/canary_video.csv
+- /Users/morinop/coding/whitzardgen/prompts/canary_image.jsonl
+- /Users/morinop/coding/whitzardgen/prompts/canary_video.jsonl
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_image/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_image/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_image/validation.json
+- /Users/morinop/coding/whitzardgen/envs/wan_t2v_diffusers/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/wan_t2v_diffusers/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/wan_t2v_diffusers/validation.json
+- /Users/morinop/coding/whitzardgen/envs/wan_ti2v/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/wan_ti2v/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/wan_ti2v/validation.json
+- /Users/morinop/coding/whitzardgen/envs/longcat_video/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/longcat_video/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/longcat_video/validation.json
+- /Users/morinop/coding/whitzardgen/envs/mova_720p/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/mova_720p/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/mova_720p/validation.json
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/environment.yml
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/pip_requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
+
+## Current Status
+- Updated at 2026-03-16 20:36:10 CST.
+- Phase 8 is in a good state. Local path overrides, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, and lightweight regression coverage are all in place without requiring local GPU execution.
+
+## Blockers
+- Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.
+- Per user instruction, do not continue local real-run validation on this machine.
+- Real non-mock validation for the other five image models is intentionally deferred to the future GPU cluster environment.
+- Real non-mock validation for the five MVP video models is also intentionally deferred to the future GPU cluster environment, where model repositories, weights, and GPU runtime constraints can be validated properly.
+
+## Next Task
+- Move to the GPU-cluster validation phase: populate `configs/local_models.yaml`, provision Conda envs, and switch selected runs from `mock` to `real` for canary validation.

@@ -1,0 +1,52 @@
+{
+  "Z-Image": {
+    "local_path": null,
+    "hf_cache_dir": null
+  },
+  "Z-Image-Turbo": {
+    "local_path": null,
+    "hf_cache_dir": null
+  },
+  "stable-diffusion-xl-base-1.0": {
+    "local_path": null,
+    "hf_cache_dir": null
+  },
+  "FLUX.1-dev": {
+    "local_path": null,
+    "hf_cache_dir": null
+  },
+  "HunyuanImage-3.0": {
+    "local_path": null,
+    "repo_path": null,
+    "hf_cache_dir": null
+  },
+  "Qwen-Image-2512": {
+    "local_path": null,
+    "hf_cache_dir": null
+  },
+  "Wan2.2-T2V-A14B-Diffusers": {
+    "local_path": null,
+    "hf_cache_dir": null
+  },
+  "Wan2.2-TI2V-5B": {
+    "repo_path": null,
+    "weights_path": null,
+    "script_root": null
+  },
+  "LongCat-Video": {
+    "repo_path": null,
+    "weights_path": null,
+    "script_root": null
+  },
+  "HunyuanVideo-1.5": {
+    "local_path": null,
+    "repo_path": null,
+    "weights_path": null,
+    "hf_cache_dir": null
+  },
+  "MOVA-720p": {
+    "repo_path": null,
+    "weights_path": null,
+    "script_root": null
+  }
+}

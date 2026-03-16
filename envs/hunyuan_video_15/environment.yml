@@ -1,0 +1,12 @@
+name: hunyuan_video_15
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pip
+  - ffmpeg

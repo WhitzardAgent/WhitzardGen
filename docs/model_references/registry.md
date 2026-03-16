@@ -1,0 +1,11 @@
+https://huggingface.co/black-forest-labs/FLUX.1-dev
+https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
+https://huggingface.co/Qwen/Qwen-Image-2512
+https://huggingface.co/Tongyi-MAI/Z-Image-Turbo
+https://huggingface.co/Tongyi-MAI/Z-Image
+https://huggingface.co/tencent/HunyuanImage-3.0
+https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B-Diffusers
+https://huggingface.co/OpenMOSS-Team/MOVA-720p
+https://huggingface.co/tencent/HunyuanVideo-1.5
+https://huggingface.co/meituan-longcat/LongCat-Video

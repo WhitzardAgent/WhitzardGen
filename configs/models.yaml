@@ -1,0 +1,281 @@
+{
+  "models": {
+    "FLUX.1-dev": {
+      "version": "1.0",
+      "adapter": "FluxImageAdapter",
+      "modality": "image",
+      "task_type": "t2i",
+      "capabilities": {
+        "supports_batch_prompts": true,
+        "max_batch_size": 4,
+        "preferred_batch_size": 2,
+        "supports_negative_prompt": false,
+        "supports_seed": true,
+        "output_types": ["image"],
+        "supported_languages": ["en"]
+      },
+      "runtime": {
+        "execution_mode": "in_process",
+        "gpu_required": true,
+        "min_vram_gb": 24,
+        "recommended_vram_gb": 32,
+        "env_spec": "flux_image"
+      },
+      "weights": {
+        "hf_repo": "black-forest-labs/FLUX.1-dev"
+      }
+    },
+    "stable-diffusion-xl-base-1.0": {
+      "version": "1.0",
+      "adapter": "StableDiffusionXLAdapter",
+      "modality": "image",
+      "task_type": "t2i",
+      "capabilities": {
+        "supports_batch_prompts": true,
+        "max_batch_size": 4,
+        "preferred_batch_size": 2,
+        "supports_negative_prompt": true,
+        "supports_seed": true,
+        "output_types": ["image"],
+        "supported_languages": ["en"]
+      },
+      "runtime": {
+        "execution_mode": "in_process",
+        "gpu_required": true,
+        "min_vram_gb": 16,
+        "recommended_vram_gb": 24,
+        "env_spec": "sdxl_image"
+      },
+      "weights": {
+        "hf_repo": "stabilityai/stable-diffusion-xl-base-1.0"
+      }
+    },
+    "Qwen-Image-2512": {
+      "version": "2512",
+      "adapter": "QwenImageAdapter",
+      "modality": "image",
+      "task_type": "t2i",
+      "capabilities": {
+        "supports_batch_prompts": true,
+        "max_batch_size": 4,
+        "preferred_batch_size": 2,
+        "supports_negative_prompt": true,
+        "supports_seed": true,
+        "output_types": ["image"],
+        "supported_languages": ["en", "zh"]
+      },
+      "runtime": {
+        "execution_mode": "in_process",
+        "gpu_required": true,
+        "min_vram_gb": 24,
+        "recommended_vram_gb": 32,
+        "env_spec": "qwen_image"
+      },
+      "weights": {
+        "hf_repo": "Qwen/Qwen-Image-2512"
+      }
+    },
+    "Z-Image-Turbo": {
+      "version": "1.0",
+      "adapter": "ZImageTurboAdapter",
+      "modality": "image",
+      "task_type": "t2i",
+      "capabilities": {
+        "supports_batch_prompts": true,
+        "max_batch_size": 8,
+        "preferred_batch_size": 4,
+        "supports_negative_prompt": false,
+        "supports_seed": true,
+        "output_types": ["image"],
+        "supported_languages": ["en", "zh"]
+      },
+      "runtime": {
+        "execution_mode": "in_process",
+        "gpu_required": true,
+        "min_vram_gb": 16,
+        "recommended_vram_gb": 24,
+        "env_spec": "zimage"
+      },
+      "weights": {
+        "hf_repo": "Tongyi-MAI/Z-Image-Turbo"
+      }
+    },
+    "Z-Image": {
+      "version": "1.0",
+      "adapter": "ZImageAdapter",
+      "modality": "image",
+      "task_type": "t2i",
+      "capabilities": {
+        "supports_batch_prompts": true,
+        "max_batch_size": 8,
+        "preferred_batch_size": 4,
+        "supports_negative_prompt": true,
+        "supports_seed": true,
+        "output_types": ["image"],
+        "supported_languages": ["en", "zh"]
+      },
+      "runtime": {
+        "execution_mode": "in_process",
+        "gpu_required": true,
+        "min_vram_gb": 16,
+        "recommended_vram_gb": 24,
+        "env_spec": "zimage"
+      },
+      "weights": {
+        "hf_repo": "Tongyi-MAI/Z-Image"
+      }
+    },
+    "HunyuanImage-3.0": {
+      "version": "3.0",
+      "adapter": "HunyuanImageAdapter",
+      "modality": "image",
+      "task_type": "t2i",
+      "capabilities": {
+        "supports_batch_prompts": false,
+        "max_batch_size": 1,
+        "preferred_batch_size": 1,
+        "supports_negative_prompt": false,
+        "supports_seed": true,
+        "output_types": ["image"],
+        "supported_languages": ["en", "zh"]
+      },
+      "runtime": {
+        "execution_mode": "in_process",
+        "gpu_required": true,
+        "min_vram_gb": 48,
+        "recommended_vram_gb": 80,
+        "env_spec": "hunyuan_image"
+      },
+      "weights": {
+        "hf_repo": "tencent/HunyuanImage-3.0",
+        "local_dir_hint": "Rename download directory to HunyuanImage-3 to avoid dots in local path loading."
+      }
+    },
+    "LongCat-Video": {
+      "version": "1.0",
+      "adapter": "LongCatVideoAdapter",
+      "modality": "video",
+      "task_type": "t2v",
+      "capabilities": {
+        "supports_batch_prompts": false,
+        "max_batch_size": 1,
+        "preferred_batch_size": 1,
+        "supports_negative_prompt": false,
+        "supports_seed": true,
+        "output_types": ["video"],
+        "supported_languages": ["en", "zh"]
+      },
+      "runtime": {
+        "execution_mode": "external_process",
+        "gpu_required": true,
+        "min_vram_gb": 24,
+        "recommended_vram_gb": 48,
+        "env_spec": "longcat_video"
+      },
+      "weights": {
+        "hf_repo": "meituan-longcat/LongCat-Video"
+      }
+    },
+    "Wan2.2-TI2V-5B": {
+      "version": "5B",
+      "adapter": "WanTI2VAdapter",
+      "modality": "video",
+      "task_type": "t2v",
+      "capabilities": {
+        "supports_batch_prompts": false,
+        "max_batch_size": 1,
+        "preferred_batch_size": 1,
+        "supports_negative_prompt": false,
+        "supports_seed": true,
+        "output_types": ["video"],
+        "supported_languages": ["en", "zh"]
+      },
+      "runtime": {
+        "execution_mode": "external_process",
+        "gpu_required": true,
+        "min_vram_gb": 24,
+        "recommended_vram_gb": 48,
+        "env_spec": "wan_ti2v"
+      },
+      "weights": {
+        "hf_repo": "Wan-AI/Wan2.2-TI2V-5B"
+      }
+    },
+    "Wan2.2-T2V-A14B-Diffusers": {
+      "version": "A14B",
+      "adapter": "WanT2VDiffusersAdapter",
+      "modality": "video",
+      "task_type": "t2v",
+      "capabilities": {
+        "supports_batch_prompts": false,
+        "max_batch_size": 1,
+        "preferred_batch_size": 1,
+        "supports_negative_prompt": true,
+        "supports_seed": true,
+        "output_types": ["video"],
+        "supported_languages": ["en", "zh"]
+      },
+      "runtime": {
+        "execution_mode": "in_process",
+        "gpu_required": true,
+        "min_vram_gb": 80,
+        "recommended_vram_gb": 80,
+        "env_spec": "wan_t2v_diffusers"
+      },
+      "weights": {
+        "hf_repo": "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+      }
+    },
+    "MOVA-720p": {
+      "version": "720p",
+      "adapter": "MOVAAdapter",
+      "modality": "video",
+      "task_type": "t2v",
+      "capabilities": {
+        "supports_batch_prompts": false,
+        "max_batch_size": 1,
+        "preferred_batch_size": 1,
+        "supports_negative_prompt": false,
+        "supports_seed": true,
+        "output_types": ["video", "audio"],
+        "supported_languages": ["en", "zh"]
+      },
+      "runtime": {
+        "execution_mode": "external_process",
+        "gpu_required": true,
+        "min_vram_gb": 48,
+        "recommended_vram_gb": 80,
+        "env_spec": "mova_720p"
+      },
+      "weights": {
+        "hf_repo": "OpenMOSS-Team/MOVA-720p"
+      }
+    },
+    "HunyuanVideo-1.5": {
+      "version": "1.5",
+      "adapter": "HunyuanVideo15Adapter",
+      "modality": "video",
+      "task_type": "t2v",
+      "capabilities": {
+        "supports_batch_prompts": false,
+        "max_batch_size": 1,
+        "preferred_batch_size": 1,
+        "supports_negative_prompt": true,
+        "supports_seed": true,
+        "output_types": ["video"],
+        "supported_languages": ["en", "zh"]
+      },
+      "runtime": {
+        "execution_mode": "in_process",
+        "gpu_required": true,
+        "min_vram_gb": 14,
+        "recommended_vram_gb": 24,
+        "env_spec": "hunyuan_video_15"
+      },
+      "weights": {
+        "hf_repo": "tencent/HunyuanVideo-1.5",
+        "diffusers_repo": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_t2v"
+      }
+    }
+  }
+}

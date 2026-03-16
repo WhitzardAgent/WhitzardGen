@@ -1,0 +1,11 @@
+name: wan_t2v_diffusers
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch
+  - torchvision
+  - pip
+  - ffmpeg

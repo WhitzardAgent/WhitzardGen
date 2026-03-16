@@ -1,0 +1,11 @@
+name: sdxl_image
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch
+  - torchvision
+  - pip
+  - ffmpeg
