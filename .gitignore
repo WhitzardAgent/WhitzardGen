@@ -24,8 +24,8 @@ dist/
 *.egg-info/
 
 # Runtime outputs
-runs/
-runtime/
+/runs/
+/runtime/
 
 # OS and editor files
 .DS_Store
