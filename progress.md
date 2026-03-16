@@ -106,10 +106,12 @@
   - result: 31 tests passed
 - Added repository `.gitignore` for Python caches, virtualenvs, build outputs, runtime directories, and common editor/OS files.
 - Added `requirements.txt` so the framework can be installed with `pip install -r requirements.txt` while keeping heavy model runtimes in per-model Conda env specs.
-- Added packaging compatibility for traditional installs:
+- Added installation/deployment documentation and compatibility entrypoints:
   - added `setup.py`
-  - added a formal `aigc` console entry point in `pyproject.toml`
-- Ran lightweight packaging smoke verification only:
+  - added `README.md`
+  - added package dependencies and a formal `aigc` console entry point in `pyproject.toml`
+  - simplified `requirements.txt` to the package installation path used for deployment
+- Ran lightweight installation/deployment smoke verification only:
   - `PYTHONPATH=src python3 -m unittest tests.test_smoke -v`
   - result: 2 tests passed
 
@@ -117,6 +119,7 @@
 - /Users/morinop/coding/whitzardgen/progress.md
 - /Users/morinop/coding/whitzardgen/.gitignore
 - /Users/morinop/coding/whitzardgen/requirements.txt
+- /Users/morinop/coding/whitzardgen/README.md
 - /Users/morinop/coding/whitzardgen/pyproject.toml
 - /Users/morinop/coding/whitzardgen/setup.py
 - /Users/morinop/coding/whitzardgen/aigc
@@ -204,8 +207,7 @@
 
 ## Current Status
 - Updated at 2026-03-16 20:36:10 CST.
-- Phase 8 is in a good state. Local path overrides, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, lightweight regression coverage, and a basic package installation path via `requirements.txt` are all in place without requiring local GPU execution.
-- Phase 8 is in a good state. Local path overrides, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, lightweight regression coverage, and both modern and traditional package installation paths are in place without requiring local GPU execution.
+- Phase 8 is in a good state. Local path overrides, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, lightweight regression coverage, and installation/deployment entrypoints (`setup.py`, `requirements.txt`, `README.md`) are all in place without requiring local GPU execution.
 
 ## Blockers
 - Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.
