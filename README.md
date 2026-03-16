@@ -215,6 +215,7 @@ Supported patterns:
 - replace an exact requirement line such as `git+https://github.com/huggingface/diffusers`
 - provide extra pip install args such as `--no-index` / `--find-links`
 - replace the entire requirements file for one env spec
+- reuse an already-built Conda prefix and skip environment creation entirely
 
 Example:
 
@@ -228,6 +229,8 @@ envs:
     pip_requirement_overrides:
       diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
       git+https://github.com/huggingface/diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
+  wan_t2v_diffusers:
+    reuse_prefix: /shared/conda_envs/wan_diffusers_ready
 ```
 
 ## Test

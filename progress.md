@@ -4,6 +4,20 @@
 - Phase 8 - Cluster Readiness & Real-Execution Hardening
 
 ## Completed
+- Added `reuse_prefix` support for environment reuse:
+  - a model/env spec can now point at an already-built Conda prefix
+  - if that prefix exists and validates, `aigc run` reuses it and skips environment creation
+  - if that prefix is configured but missing, the CLI fails clearly instead of silently rebuilding elsewhere
+- Updated `configs/local_envs.yaml` and `README.md` to document env reuse for cluster setups with prebuilt shared environments.
+- Added lightweight regression coverage for:
+  - successful reuse of an existing prefix without calling env creation
+  - clear failure when a configured reuse prefix is missing
+- Ran lightweight env-manager regression after the reuse-prefix feature:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager -v`
+  - result: 11 tests passed
+- Ran lightweight full regression after the reuse-prefix feature:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 39 tests passed
 - Wired the cluster-local `diffusers` checkout into `configs/local_envs.yaml` for all currently diffusers-based env specs:
   - `zimage`
   - `flux_image`
@@ -303,7 +317,7 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-16 22:07:15 CST.
+- Updated at 2026-03-16 22:11:21 CST.
 - Phase 8 env hardening is now in a good state. `aigc run` real-mode execution will synchronously create and validate missing environments in the foreground, print progress, recover stale `creating` metadata when practical, and fail clearly instead of exiting early on a non-ready env state.
 - Local mock mode, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, and installation/deployment entrypoints remain intact after the env-flow fix.
 - The new `task_p1.md` comparison confirms the project is ready for cluster real-mode bring-up, but is not yet fully docs-complete: the main remaining implementation gaps are scheduler core plus retry/resume support, while real-model execution for the current adapters still needs cluster proof.
@@ -311,6 +325,7 @@
 - Foreground environment creation is now more observable on the cluster: `conda create`, `pip install`, and post-install output can all be surfaced directly in the CLI during `aigc run`.
 - Restricted cluster environments can now override GitHub/public-internet pip dependencies through `configs/local_envs.yaml`, so packages like `diffusers` can be redirected to local wheels, alternate requirement files, or internal package sources without changing repository code.
 - The current repository config already points all diffusers-based env specs at the cluster-local diffusers path `/inspire/qb-ilm/project/control-technology/25015/deps/diffusers`.
+- Prebuilt Conda environments can now be reused explicitly through `reuse_prefix`, which should reduce redundant environment creation on the cluster for models that already have a validated shared env available.
 
 ## Blockers
 - Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.

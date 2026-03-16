@@ -17,6 +17,8 @@
 #       git+https://github.com/huggingface/diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
 #   flux_image:
 #     requirements_file: /shared/configs/flux_requirements_cluster.txt
+#   wan_t2v_diffusers:
+#     reuse_prefix: /shared/conda_envs/wan_diffusers_ready
 #
 # Model-specific overrides are also supported:
 # models:

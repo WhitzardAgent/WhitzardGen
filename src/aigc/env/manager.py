@@ -45,6 +45,7 @@ class EnvSpec:
     requirements_file: Path | None
     pip_install_args: list[str]
     pip_requirement_overrides: dict[str, str]
+    reuse_prefix: Path | None
     post_install_file: Path | None
     validation_file: Path | None
     validation_imports: list[str]
@@ -147,6 +148,8 @@ class EnvManager:
             for key, value in raw_requirement_overrides.items()
             if str(value).strip()
         }
+        raw_reuse_prefix = local_override.get("reuse_prefix")
+        reuse_prefix = Path(str(raw_reuse_prefix)) if raw_reuse_prefix not in (None, "") else None
         return EnvSpec(
             spec_name=spec_name,
             directory=spec_dir,
@@ -155,6 +158,7 @@ class EnvManager:
             requirements_file=effective_requirements_file if effective_requirements_file.exists() else None,
             pip_install_args=pip_install_args,
             pip_requirement_overrides=pip_requirement_overrides,
+            reuse_prefix=reuse_prefix,
             post_install_file=post_install_file if post_install_file.exists() else None,
             validation_file=validation_file if validation_file.exists() else None,
             validation_imports=validation_imports,
@@ -168,6 +172,8 @@ class EnvManager:
         digest.update(
             json.dumps(spec.pip_requirement_overrides, sort_keys=True).encode("utf-8")
         )
+        if spec.reuse_prefix is not None:
+            digest.update(str(spec.reuse_prefix).encode("utf-8"))
         for file_path in (spec.requirements_file, spec.post_install_file, spec.validation_file):
             if file_path is None or not file_path.exists():
                 continue
@@ -179,8 +185,13 @@ class EnvManager:
     def conda_available(self) -> bool:
         return shutil.which("conda") is not None
 
-    def environment_exists(self, env_id: str) -> tuple[bool, str | None]:
-        env_path = self.environment_prefix(env_id)
+    def environment_exists(
+        self,
+        env_id: str,
+        *,
+        prefix_override: str | Path | None = None,
+    ) -> tuple[bool, str | None]:
+        env_path = self.environment_prefix(env_id, prefix_override=prefix_override)
         if env_path.exists():
             return True, str(env_path)
         return False, None
@@ -191,7 +202,12 @@ class EnvManager:
         if not spec.validation_imports:
             return True, None
         import_statements = "; ".join(f"import {module}" for module in spec.validation_imports)
-        command = self.wrap_command(env_id, ["python", "-c", import_statements], foreground=False)
+        command = self.wrap_command(
+            env_id,
+            ["python", "-c", import_statements],
+            foreground=False,
+            env_path=spec.reuse_prefix,
+        )
         result = subprocess.run(
             command,
             env=self.conda_process_env(),
@@ -210,11 +226,12 @@ class EnvManager:
         command: list[str],
         *,
         foreground: bool = False,
+        env_path: str | Path | None = None,
     ) -> list[str]:
         wrapped = ["conda", "run"]
         if foreground:
             wrapped.append("--no-capture-output")
-        wrapped.extend(["--prefix", str(self.environment_prefix(env_id)), *command])
+        wrapped.extend(["--prefix", str(self.environment_prefix(env_id, prefix_override=env_path)), *command])
         return wrapped
 
     def ensure_ready(
@@ -342,12 +359,21 @@ class EnvManager:
                     progress_cb,
                     f"Using local env overrides: {spec.local_override_source}",
                 )
+            if spec.reuse_prefix is not None:
+                self._emit_progress(
+                    progress_cb,
+                    f"Reusing existing environment prefix: {spec.reuse_prefix}",
+                )
             if spec.requirements_file is not None:
                 self._emit_progress(
                     progress_cb,
                     f"Using requirements: {spec.requirements_file}",
                 )
             self._remove_stale_environment_prefix(env_id=env_id, progress=progress_cb)
+            if spec.reuse_prefix is not None:
+                raise EnvManagerError(
+                    f"Configured reuse_prefix for {model_name} does not exist or is not ready: {spec.reuse_prefix}"
+                )
             self._update_metadata(
                 env_id=env_id,
                 env_spec=spec.spec_name,
@@ -361,7 +387,7 @@ class EnvManager:
                 "conda",
                 "create",
                 "--prefix",
-                str(self.environment_prefix(env_id)),
+                str(self.environment_prefix(env_id, prefix_override=spec.reuse_prefix)),
                 "-y",
                 f"python={spec.python_version}",
                 "pip",
@@ -411,6 +437,7 @@ class EnvManager:
                         str(effective_requirements_file),
                     ],
                     foreground=foreground,
+                    env_path=spec.reuse_prefix,
                 )
                 pip_result = self._run_command(
                     pip_command,
@@ -440,6 +467,7 @@ class EnvManager:
                     env_id,
                     ["bash", str(spec.post_install_file)],
                     foreground=foreground,
+                    env_path=spec.reuse_prefix,
                 )
                 post_install_result = self._run_command(
                     post_install_command,
@@ -469,7 +497,7 @@ class EnvManager:
                 env_spec=spec.spec_name,
                 models=[model_name],
                 state="validating",
-                path=str(self.environment_prefix(env_id)),
+                path=str(self.environment_prefix(env_id, prefix_override=spec.reuse_prefix)),
                 validation={
                     "passed": False,
                     "error": None,
@@ -477,7 +505,7 @@ class EnvManager:
                 },
                 error=None,
             )
-            exists, env_path = self.environment_exists(env_id)
+            exists, env_path = self.environment_exists(env_id, prefix_override=spec.reuse_prefix)
             validation_passed, validation_error = self.validate_environment(env_id, spec)
             if exists and validation_passed:
                 state = "ready"
@@ -506,7 +534,14 @@ class EnvManager:
 
         return self.inspect_model_environment(model_name)
 
-    def environment_prefix(self, env_id: str) -> Path:
+    def environment_prefix(
+        self,
+        env_id: str,
+        *,
+        prefix_override: str | Path | None = None,
+    ) -> Path:
+        if prefix_override not in (None, ""):
+            return Path(str(prefix_override))
         return CONDA_ENVS_ROOT / env_id
 
     def conda_process_env(self) -> dict[str, str]:
@@ -533,7 +568,7 @@ class EnvManager:
         last_validation = dict(metadata.get("last_validation", {}))
 
         if conda_available:
-            exists, env_path = self.environment_exists(env_id)
+            exists, env_path = self.environment_exists(env_id, prefix_override=spec.reuse_prefix)
             if exists:
                 validation_passed, validation_error = self.validate_environment(env_id, spec)
                 last_validation = {

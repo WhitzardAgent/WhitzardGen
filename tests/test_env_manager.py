@@ -121,6 +121,53 @@ envs:
 
         self.assertEqual(spec.requirements_file, alternate_requirements)
 
+    def test_reuse_prefix_skips_environment_creation(self) -> None:
+        reused_prefix = self.tmpdir / "prebuilt_env"
+        reused_prefix.mkdir(parents=True, exist_ok=True)
+        local_envs_path = self.tmpdir / "local_envs_reuse.yaml"
+        local_envs_path.write_text(
+            f"""
+envs:
+  zimage:
+    reuse_prefix: {reused_prefix}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        manager = FakeForegroundEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_reuse.json",
+            local_envs_path=local_envs_path,
+        )
+
+        record = manager.ensure_ready("Z-Image", foreground=True)
+
+        self.assertEqual(record.state, "ready")
+        self.assertEqual(record.path, str(reused_prefix))
+        self.assertEqual(manager.create_calls, 0)
+
+    def test_reuse_prefix_missing_fails_clearly(self) -> None:
+        missing_prefix = self.tmpdir / "missing_prebuilt_env"
+        local_envs_path = self.tmpdir / "local_envs_missing_reuse.yaml"
+        local_envs_path.write_text(
+            f"""
+envs:
+  zimage:
+    reuse_prefix: {missing_prefix}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        manager = FakeForegroundEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_missing_reuse.json",
+            local_envs_path=local_envs_path,
+        )
+
+        with self.assertRaises(EnvManagerError) as context:
+            manager.ensure_ready("Z-Image", foreground=True)
+
+        self.assertIn("Configured reuse_prefix", str(context.exception))
+        self.assertIn(str(missing_prefix), str(context.exception))
+
     def test_doctor_json_output(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "aigc", "doctor", "--model", "Z-Image", "--output", "json"],
@@ -209,9 +256,15 @@ envs:
 
 
 class FakeForegroundEnvManager(EnvManager):
-    def __init__(self, metadata_path: Path, fail_stage: str | None = None) -> None:
-        super().__init__(metadata_path=metadata_path)
+    def __init__(
+        self,
+        metadata_path: Path,
+        fail_stage: str | None = None,
+        local_envs_path: Path | None = None,
+    ) -> None:
+        super().__init__(metadata_path=metadata_path, local_envs_path=local_envs_path)
         self.fail_stage = fail_stage
+        self.create_calls = 0
 
     def conda_available(self) -> bool:
         return True
@@ -219,8 +272,12 @@ class FakeForegroundEnvManager(EnvManager):
     def validate_environment(self, env_id: str, spec) -> tuple[bool, str | None]:
         if self.fail_stage == "validate":
             return False, "validation failed"
-        exists, _env_path = self.environment_exists(env_id)
+        exists, _env_path = self.environment_exists(env_id, prefix_override=spec.reuse_prefix)
         return (exists, None) if exists else (False, "environment missing")
+
+    def create_environment(self, model_name: str, *, foreground: bool = False, progress=None):
+        self.create_calls += 1
+        return super().create_environment(model_name, foreground=foreground, progress=progress)
 
     def _run_command(self, command, *, env, foreground, cwd=None):
         env_text = " ".join(str(item) for item in command)
