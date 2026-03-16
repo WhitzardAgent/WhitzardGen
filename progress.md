@@ -4,6 +4,27 @@
 - Phase 8 - Cluster Readiness & Real-Execution Hardening
 
 ## Completed
+- Added local YAML-based environment install overrides for restricted cluster machines:
+  - added `configs/local_envs.yaml` as the user-editable entry point
+  - added env-manager support for env-level and model-level local install overrides
+  - supports `requirements_file` replacement, `pip_requirement_overrides`, and extra `pip_install_args`
+- Added requirement rewriting support so GitHub-based pip entries such as `git+https://github.com/huggingface/diffusers` can be replaced with local wheels, internal mirrors, or alternate package specs without editing code.
+- Updated deployment docs so the new `local_envs.yaml` override path is documented in `README.md`.
+- Added lightweight regression coverage for:
+  - rewriting a GitHub requirement like `diffusers` through local YAML overrides
+  - replacing an env spec's requirements file via local YAML overrides
+- Ran lightweight regression after the local env override feature:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager tests.test_registry tests.test_run_flow -v`
+  - result: 20 tests passed
+- Ran lightweight full regression after the local env override feature:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 37 tests passed
+- Improved foreground env creation visibility for real runs:
+  - foreground `conda run` wrappers now use `--no-capture-output`
+  - pip install and post-install hook output now stream directly into the active CLI session during `aigc run`
+- Ran lightweight regression after the foreground output fix:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager tests.test_run_flow -v`
+  - result: 13 tests passed
 - Switched the environment-management strategy to the simpler per-spec model requested for cluster operation:
   - create environments with `conda create --prefix ... python=<version> pip`
   - store Python version in `envs/<spec>/python_version.txt`
@@ -174,6 +195,9 @@
 
 ## Files Added/Modified
 - /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/README.md
+- /Users/morinop/coding/whitzardgen/configs/local_envs.yaml
+- /Users/morinop/coding/whitzardgen/src/aigc/env/local_overrides.py
 - /Users/morinop/coding/whitzardgen/docs/env_manager_spec.md
 - /Users/morinop/coding/whitzardgen/docs/codex_tasks.md
 - /Users/morinop/coding/whitzardgen/README.md
@@ -271,11 +295,13 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-16 21:53:49 CST.
+- Updated at 2026-03-16 22:04:44 CST.
 - Phase 8 env hardening is now in a good state. `aigc run` real-mode execution will synchronously create and validate missing environments in the foreground, print progress, recover stale `creating` metadata when practical, and fail clearly instead of exiting early on a non-ready env state.
 - Local mock mode, explicit mock/real execution mode, run manifests, run-management CLI commands, doctor path visibility, canary prompt assets, and installation/deployment entrypoints remain intact after the env-flow fix.
 - The new `task_p1.md` comparison confirms the project is ready for cluster real-mode bring-up, but is not yet fully docs-complete: the main remaining implementation gaps are scheduler core plus retry/resume support, while real-model execution for the current adapters still needs cluster proof.
 - The environment strategy has now been simplified for cluster operation: every env spec uses `python_version.txt` plus `requirements.txt`, and the manager creates envs with `conda create ... python=<version> pip` before pip-installing model-family dependencies.
+- Foreground environment creation is now more observable on the cluster: `conda create`, `pip install`, and post-install output can all be surfaced directly in the CLI during `aigc run`.
+- Restricted cluster environments can now override GitHub/public-internet pip dependencies through `configs/local_envs.yaml`, so packages like `diffusers` can be redirected to local wheels, alternate requirement files, or internal package sources without changing repository code.
 
 ## Blockers
 - Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.

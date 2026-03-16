@@ -1,0 +1,28 @@
+# Optional local environment installation overrides for restricted cluster setups.
+#
+# Use this file when a machine cannot install some packages from GitHub or the
+# public internet. You can either:
+# 1. replace the entire requirements file for one env spec, or
+# 2. replace only selected requirement lines/packages.
+#
+# Example:
+# envs:
+#   zimage:
+#     pip_install_args:
+#       - --no-index
+#       - --find-links
+#       - /shared/wheelhouse
+#     pip_requirement_overrides:
+#       diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
+#       git+https://github.com/huggingface/diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
+#   flux_image:
+#     requirements_file: /shared/configs/flux_requirements_cluster.txt
+#
+# Model-specific overrides are also supported:
+# models:
+#   Z-Image-Turbo:
+#     pip_requirement_overrides:
+#       diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
+
+envs: {}
+models: {}

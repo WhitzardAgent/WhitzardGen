@@ -13,6 +13,7 @@ The current repository is optimized for:
 - prompt loading from `.txt`, `.csv`, and `.jsonl`
 - model registry for all current MVP image/video targets
 - local override config via `configs/local_models.yaml`
+- local env-install override config via `configs/local_envs.yaml`
 - mock-capable image and video adapters for local testing
 - JSONL dataset export
 - per-run manifests and failure summaries
@@ -204,6 +205,30 @@ conda create --prefix <env_path> python=<version> pip
 ```
 
 and then install the corresponding `requirements.txt`.
+
+If a cluster machine cannot install packages directly from GitHub or the public
+internet, use `configs/local_envs.yaml` to override env-install behavior.
+
+Supported patterns:
+
+- replace a specific pip requirement such as `diffusers`
+- replace an exact requirement line such as `git+https://github.com/huggingface/diffusers`
+- provide extra pip install args such as `--no-index` / `--find-links`
+- replace the entire requirements file for one env spec
+
+Example:
+
+```yaml
+envs:
+  zimage:
+    pip_install_args:
+      - --no-index
+      - --find-links
+      - /shared/wheelhouse
+    pip_requirement_overrides:
+      diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
+      git+https://github.com/huggingface/diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
+```
 
 ## Test
 

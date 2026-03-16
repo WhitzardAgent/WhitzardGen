@@ -57,6 +57,70 @@ class EnvManagerTests(unittest.TestCase):
         self.assertEqual(command[:3], ["conda", "run", "--prefix"])
         self.assertEqual(command[-2:], ["python", "-V"])
 
+        foreground_command = self.manager.wrap_command(
+            "env_demo",
+            ["python", "-V"],
+            foreground=True,
+        )
+        self.assertEqual(
+            foreground_command[:4],
+            ["conda", "run", "--no-capture-output", "--prefix"],
+        )
+        self.assertEqual(foreground_command[-2:], ["python", "-V"])
+
+    def test_local_env_override_rewrites_github_requirement(self) -> None:
+        local_envs_path = self.tmpdir / "local_envs.yaml"
+        local_envs_path.write_text(
+            """
+envs:
+  zimage:
+    pip_requirement_overrides:
+      diffusers: /wheelhouse/diffusers-0.35.0-py3-none-any.whl
+      git+https://github.com/huggingface/diffusers: /wheelhouse/diffusers-0.35.0-py3-none-any.whl
+    pip_install_args:
+      - --no-index
+      - --find-links
+      - /wheelhouse
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        manager = EnvManager(
+            metadata_path=self.tmpdir / "env_metadata_override.json",
+            local_envs_path=local_envs_path,
+        )
+
+        spec = manager.resolve_spec_for_model("Z-Image")
+        effective_file = manager._build_effective_requirements_file(env_id="env_demo", spec=spec)
+        content = effective_file.read_text(encoding="utf-8")
+
+        self.assertEqual(spec.local_override_source, str(local_envs_path))
+        self.assertEqual(spec.pip_install_args, ["--no-index", "--find-links", "/wheelhouse"])
+        self.assertIn("/wheelhouse/diffusers-0.35.0-py3-none-any.whl", content)
+        self.assertNotIn("git+https://github.com/huggingface/diffusers", content)
+
+    def test_local_env_override_can_replace_requirements_file(self) -> None:
+        alternate_requirements = self.tmpdir / "zimage_alt_requirements.txt"
+        alternate_requirements.write_text("torch\n/local/wheels/diffusers.whl\n", encoding="utf-8")
+        local_envs_path = self.tmpdir / "local_envs_requirements.yaml"
+        local_envs_path.write_text(
+            f"""
+envs:
+  zimage:
+    requirements_file: {alternate_requirements}
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        manager = EnvManager(
+            metadata_path=self.tmpdir / "env_metadata_override_file.json",
+            local_envs_path=local_envs_path,
+        )
+
+        spec = manager.resolve_spec_for_model("Z-Image")
+
+        self.assertEqual(spec.requirements_file, alternate_requirements)
+
     def test_doctor_json_output(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "aigc", "doctor", "--model", "Z-Image", "--output", "json"],

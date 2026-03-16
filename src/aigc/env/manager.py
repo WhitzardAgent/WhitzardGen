@@ -13,6 +13,11 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from aigc.env.local_overrides import (
+    LOCAL_ENVS_ENV_VAR,
+    load_local_env_overrides,
+    resolve_local_env_override,
+)
 from aigc.registry import ModelRegistry, load_registry
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -22,7 +27,9 @@ LOCKS_ROOT = RUNTIME_ROOT / "locks"
 CONDA_ENVS_ROOT = RUNTIME_ROOT / "conda_envs"
 CONDA_PKGS_ROOT = RUNTIME_ROOT / "conda_pkgs"
 CONDA_CACHE_ROOT = RUNTIME_ROOT / "cache"
+EFFECTIVE_REQUIREMENTS_ROOT = RUNTIME_ROOT / "effective_requirements"
 DEFAULT_ENV_METADATA_PATH = RUNTIME_ROOT / "env_metadata.json"
+DEFAULT_LOCAL_ENVS_PATH = REPO_ROOT / "configs" / "local_envs.yaml"
 
 
 class EnvManagerError(RuntimeError):
@@ -36,9 +43,12 @@ class EnvSpec:
     python_version_file: Path
     python_version: str
     requirements_file: Path | None
+    pip_install_args: list[str]
+    pip_requirement_overrides: dict[str, str]
     post_install_file: Path | None
     validation_file: Path | None
     validation_imports: list[str]
+    local_override_source: str | None = None
 
 
 @dataclass(slots=True)
@@ -67,14 +77,20 @@ class EnvManager:
         self,
         registry: ModelRegistry | None = None,
         metadata_path: Path = DEFAULT_ENV_METADATA_PATH,
+        local_envs_path: str | Path | None = None,
     ) -> None:
         self.registry = registry or load_registry()
         self.metadata_path = metadata_path
+        resolved_local_envs_path = self._resolve_local_envs_path(local_envs_path)
+        self.local_envs_path, self.local_env_overrides = load_local_env_overrides(
+            resolved_local_envs_path
+        )
         RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
         LOCKS_ROOT.mkdir(parents=True, exist_ok=True)
         CONDA_ENVS_ROOT.mkdir(parents=True, exist_ok=True)
         CONDA_PKGS_ROOT.mkdir(parents=True, exist_ok=True)
         CONDA_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+        EFFECTIVE_REQUIREMENTS_ROOT.mkdir(parents=True, exist_ok=True)
 
     def resolve_spec_for_model(self, model_name: str) -> EnvSpec:
         model = self.registry.get_model(model_name)
@@ -97,25 +113,62 @@ class EnvManager:
         if validation_file.exists():
             payload = json.loads(validation_file.read_text(encoding="utf-8"))
             validation_imports = list(payload.get("imports", []))
+        local_override = resolve_local_env_override(
+            self.local_env_overrides,
+            model_name=model_name,
+            env_spec=spec_name,
+        )
+        effective_python_version = str(local_override.get("python_version", python_version)).strip()
+        requirements_override = local_override.get("requirements_file")
+        effective_requirements_file = (
+            Path(str(requirements_override)) if requirements_override else requirements_file
+        )
+        if effective_requirements_file is not None and not effective_requirements_file.exists():
+            raise EnvManagerError(
+                f"Effective requirements file for {model_name} does not exist: {effective_requirements_file}"
+            )
+        raw_pip_install_args = local_override.get("pip_install_args", [])
+        if raw_pip_install_args in (None, ""):
+            raw_pip_install_args = []
+        if not isinstance(raw_pip_install_args, list):
+            raise EnvManagerError(
+                f"Local env override for {model_name} has invalid pip_install_args; expected a list."
+            )
+        pip_install_args = [str(item) for item in raw_pip_install_args if str(item).strip()]
+        raw_requirement_overrides = local_override.get("pip_requirement_overrides", {})
+        if raw_requirement_overrides in (None, ""):
+            raw_requirement_overrides = {}
+        if not isinstance(raw_requirement_overrides, dict):
+            raise EnvManagerError(
+                f"Local env override for {model_name} has invalid pip_requirement_overrides; expected a mapping."
+            )
+        pip_requirement_overrides = {
+            str(key): str(value)
+            for key, value in raw_requirement_overrides.items()
+            if str(value).strip()
+        }
         return EnvSpec(
             spec_name=spec_name,
             directory=spec_dir,
             python_version_file=python_version_file,
-            python_version=python_version,
-            requirements_file=requirements_file if requirements_file.exists() else None,
+            python_version=effective_python_version,
+            requirements_file=effective_requirements_file if effective_requirements_file.exists() else None,
+            pip_install_args=pip_install_args,
+            pip_requirement_overrides=pip_requirement_overrides,
             post_install_file=post_install_file if post_install_file.exists() else None,
             validation_file=validation_file if validation_file.exists() else None,
             validation_imports=validation_imports,
+            local_override_source=str(self.local_envs_path) if local_override else None,
         )
 
     def compute_env_id(self, spec: EnvSpec) -> str:
         digest = sha256()
-        for file_path in (
-            spec.python_version_file,
-            spec.requirements_file,
-            spec.post_install_file,
-            spec.validation_file,
-        ):
+        digest.update(spec.python_version.encode("utf-8"))
+        digest.update(json.dumps(spec.pip_install_args, sort_keys=True).encode("utf-8"))
+        digest.update(
+            json.dumps(spec.pip_requirement_overrides, sort_keys=True).encode("utf-8")
+        )
+        for file_path in (spec.requirements_file, spec.post_install_file, spec.validation_file):
             if file_path is None or not file_path.exists():
                 continue
             digest.update(file_path.read_bytes())
@@ -138,7 +191,7 @@ class EnvManager:
         if not spec.validation_imports:
             return True, None
         import_statements = "; ".join(f"import {module}" for module in spec.validation_imports)
-        command = self.wrap_command(env_id, ["python", "-c", import_statements])
+        command = self.wrap_command(env_id, ["python", "-c", import_statements], foreground=False)
         result = subprocess.run(
             command,
             env=self.conda_process_env(),
@@ -151,8 +204,18 @@ class EnvManager:
             return False, error
         return True, None
 
-    def wrap_command(self, env_id: str, command: list[str]) -> list[str]:
-        return ["conda", "run", "--prefix", str(self.environment_prefix(env_id)), *command]
+    def wrap_command(
+        self,
+        env_id: str,
+        command: list[str],
+        *,
+        foreground: bool = False,
+    ) -> list[str]:
+        wrapped = ["conda", "run"]
+        if foreground:
+            wrapped.append("--no-capture-output")
+        wrapped.extend(["--prefix", str(self.environment_prefix(env_id)), *command])
+        return wrapped
 
     def ensure_ready(
         self,
@@ -274,6 +337,11 @@ class EnvManager:
                 progress_cb,
                 f"Using Python version: {spec.python_version} ({spec.python_version_file})",
             )
+            if spec.local_override_source:
+                self._emit_progress(
+                    progress_cb,
+                    f"Using local env overrides: {spec.local_override_source}",
+                )
             if spec.requirements_file is not None:
                 self._emit_progress(
                     progress_cb,
@@ -321,9 +389,28 @@ class EnvManager:
                 raise EnvManagerError(error)
 
             if spec.requirements_file is not None:
+                effective_requirements_file = self._build_effective_requirements_file(
+                    env_id=env_id,
+                    spec=spec,
+                )
                 self._emit_progress(progress_cb, "Installing pip requirements...")
+                if effective_requirements_file != spec.requirements_file:
+                    self._emit_progress(
+                        progress_cb,
+                        f"Using effective requirements: {effective_requirements_file}",
+                    )
                 pip_command = self.wrap_command(
-                    env_id, ["python", "-m", "pip", "install", "-r", str(spec.requirements_file)]
+                    env_id,
+                    [
+                        "python",
+                        "-m",
+                        "pip",
+                        "install",
+                        *spec.pip_install_args,
+                        "-r",
+                        str(effective_requirements_file),
+                    ],
+                    foreground=foreground,
                 )
                 pip_result = self._run_command(
                     pip_command,
@@ -349,7 +436,11 @@ class EnvManager:
 
             if spec.post_install_file is not None:
                 self._emit_progress(progress_cb, f"Running post-install hook: {spec.post_install_file}")
-                post_install_command = self.wrap_command(env_id, ["bash", str(spec.post_install_file)])
+                post_install_command = self.wrap_command(
+                    env_id,
+                    ["bash", str(spec.post_install_file)],
+                    foreground=foreground,
+                )
                 post_install_result = self._run_command(
                     post_install_command,
                     env=self.conda_process_env(),
@@ -552,6 +643,57 @@ class EnvManager:
     def _command_logs(self, result: subprocess.CompletedProcess[str]) -> str:
         return ((result.stdout or "") + ("\n" + result.stderr if result.stderr else "")).strip()
 
+    def _build_effective_requirements_file(self, *, env_id: str, spec: EnvSpec) -> Path:
+        if spec.requirements_file is None:
+            raise EnvManagerError(f"No requirements file is configured for env spec {spec.spec_name}.")
+        if not spec.pip_requirement_overrides:
+            return spec.requirements_file
+
+        effective_lines: list[str] = []
+        raw_lines = spec.requirements_file.read_text(encoding="utf-8").splitlines()
+        for line in raw_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                effective_lines.append(line)
+                continue
+            replacement = self._resolve_requirement_override(stripped, spec.pip_requirement_overrides)
+            effective_lines.append(replacement or line)
+
+        output_path = EFFECTIVE_REQUIREMENTS_ROOT / f"{env_id}.requirements.txt"
+        output_path.write_text("\n".join(effective_lines) + "\n", encoding="utf-8")
+        return output_path
+
+    def _resolve_requirement_override(
+        self,
+        requirement: str,
+        overrides: dict[str, str],
+    ) -> str | None:
+        candidate_keys = [requirement, requirement.lower()]
+        package_name = self._extract_requirement_name(requirement)
+        if package_name:
+            candidate_keys.extend([package_name, package_name.lower()])
+        for key in candidate_keys:
+            if key in overrides:
+                return overrides[key]
+        return None
+
+    def _extract_requirement_name(self, requirement: str) -> str | None:
+        if "#egg=" in requirement:
+            return requirement.split("#egg=", maxsplit=1)[1].strip()
+        if requirement.startswith(("git+", "http://", "https://")):
+            tail = requirement.rstrip("/").split("/")[-1]
+            if tail.endswith(".git"):
+                tail = tail[:-4]
+            if tail:
+                return tail
+        separators = ["==", ">=", "<=", "!=", "~=", ">", "<", "[", " "]
+        token = requirement
+        for separator in separators:
+            if separator in token:
+                token = token.split(separator, maxsplit=1)[0]
+        token = token.strip()
+        return token or None
+
     def _remove_stale_environment_prefix(
         self,
         *,
@@ -613,6 +755,14 @@ class EnvManager:
 
     def _creation_lock_path(self, env_id: str) -> Path:
         return LOCKS_ROOT / f"{env_id}.lock"
+
+    def _resolve_local_envs_path(self, path: str | Path | None) -> Path | None:
+        if path is not None:
+            return Path(path)
+        env_value = os.environ.get(LOCAL_ENVS_ENV_VAR)
+        if env_value:
+            return Path(env_value)
+        return DEFAULT_LOCAL_ENVS_PATH
 
     @contextmanager
     def _env_lock(self, env_id: str) -> Iterator[None]:
