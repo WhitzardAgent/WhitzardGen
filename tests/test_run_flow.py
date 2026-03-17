@@ -10,10 +10,12 @@ from aigc.run_flow import (
     RunFlowError,
     _assign_gpus_to_replicas,
     _calculate_replica_count,
+    _limit_available_gpus_for_model,
     _shard_tasks_across_replicas,
     run_models,
     run_single_model,
 )
+from aigc.registry import load_registry
 from aigc.runtime.payloads import TaskPayload
 from aigc.runtime.worker import execute_task_payload
 from aigc.utils.progress import TextRunProgress
@@ -74,6 +76,25 @@ class RunFlowTests(unittest.TestCase):
             replica_count=3,
         )
         self.assertEqual(shards, [["task_1", "task_4"], ["task_2", "task_5"], ["task_3", "task_6"]])
+
+    def test_available_gpu_list_is_capped_by_model_max_gpus(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("Wan2.2-T2V-A14B-Diffusers")
+
+        self.assertEqual(
+            _limit_available_gpus_for_model([0, 1, 2, 3, 4, 5, 6, 7], model),
+            [0, 1, 2, 3, 4, 5, 6, 7],
+        )
+
+        capped_model = type(
+            "ModelStub",
+            (),
+            {"max_gpus": 4},
+        )()
+        self.assertEqual(
+            _limit_available_gpus_for_model([0, 1, 2, 3, 4, 5, 6, 7], capped_model),  # type: ignore[arg-type]
+            [0, 1, 2, 3],
+        )
 
     def test_selected_model_uses_persistent_worker_strategy_in_mock_mode(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())

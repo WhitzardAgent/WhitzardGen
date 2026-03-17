@@ -34,6 +34,7 @@ class RegistryTests(unittest.TestCase):
                     "Z-Image": {
                         "local_path": "/models/Z-Image",
                         "hf_cache_dir": "/cache/hf",
+                        "max_gpus": 2,
                     },
                     "LongCat-Video": {
                         "repo_path": "/repos/LongCat-Video",
@@ -50,7 +51,10 @@ class RegistryTests(unittest.TestCase):
 
         self.assertEqual(zimage.weights["local_path"], "/models/Z-Image")
         self.assertEqual(zimage.weights["hf_cache_dir"], "/cache/hf")
+        self.assertEqual(zimage.runtime["max_gpus"], 2)
+        self.assertEqual(zimage.max_gpus, 2)
         self.assertEqual(zimage.local_paths["local_path"], "/models/Z-Image")
+        self.assertEqual(zimage.local_paths["max_gpus"], 2)
         self.assertEqual(zimage.local_override_source, str(local_models_path))
         self.assertEqual(longcat.weights["repo_path"], "/repos/LongCat-Video")
         self.assertEqual(longcat.weights["weights_path"], "/models/LongCat-Video")

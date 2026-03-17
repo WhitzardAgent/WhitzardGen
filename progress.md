@@ -1,9 +1,34 @@
 # Progress
 
 ## Current Phase
-- Logging & Terminal UX Hardening Before Multi-Replica Scheduling
+- Wan torchrun real-path hardening and per-model max GPU cap wiring
 
 ## Completed
+- 2026-03-17 10:25:33 CST
+- Switched `Wan2.2-T2V-A14B-Diffusers` real execution toward the reference repo script path instead of the in-process Diffusers loader:
+  - keeps mock mode unchanged
+  - uses `python generate.py ...` for single-GPU fallback
+  - uses `torchrun --nproc_per_node=N generate.py ... --dit_fsdp --t5_fsdp --ulysses_size N` when `max_gpus > 1`
+  - treats `repo_path` as the Wan2.2 checkout root and `weights_path` / `local_path` as the checkpoint directory
+  - recovers the generated `.mp4` from the task workdir into the framework-managed artifact path
+- Wired per-model `max_gpus` through the existing local model override system:
+  - local overrides now merge `max_gpus` into `runtime`
+  - `ModelInfo.max_gpus` is now available to runtime planning
+  - GPU planning now caps the effective visible GPU list per model before replica planning
+  - replica logs now report the capped GPU list and the configured `max_gpus` when present
+- Added lightweight regression coverage for:
+  - `max_gpus` override merge into registry/runtime
+  - Wan multi-GPU `torchrun` command generation
+  - Wan single-GPU fallback command generation
+  - Wan repo/checkpoint validation failures
+  - Wan generated-video recovery from the task workdir
+  - run-flow GPU capping by model `max_gpus`
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry tests.test_video_adapter tests.test_run_flow -v`
+  - result: 28 tests passed
+- Ran lightweight full regression:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 65 tests passed
 - 2026-03-17 10:09:49 CST
 - Implemented a proper runtime logging / terminal observability foundation for `aigc run`:
   - added `src/aigc/utils/runtime_logging.py` with a lightweight timestamped run logger
@@ -640,12 +665,16 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 10:09:49 CST.
+- Updated at 2026-03-17 17:45:03 CST.
 - The runtime now has a real logging / terminal observability foundation:
   - every run writes `running.log`
   - major run/env/worker events are timestamped
   - worker and persistent-worker lifecycle logs flow back into the run log
   - terminal progress remains readable while the file log stays more complete
+- Wan now supports the reference repo-script execution pattern with a configurable per-model GPU cap:
+  - single-GPU fallback still exists
+  - multi-GPU real execution can be steered by `max_gpus` in `configs/local_models.yaml`
+- This slice is now covered by lightweight regression and is ready for remote GPU-server validation.
 - Existing run behavior still works across:
   - mock mode
   - real mode
@@ -659,8 +688,8 @@
 - Real cluster validation is still needed to confirm log usefulness and worker visibility under long heavy runs.
 
 ## Next Task
-- The next practical step is to take this logging layer onto the remote GPU server:
-  - verify `running.log` completeness on real image/video runs
-  - confirm worker/model-load visibility is sufficient for long debugging sessions
-  - then resume deeper multi-replica scheduling work on top of the new observability foundation
-  - later add replica/GPU scheduling without regressing the new load-once execution path
+- Validate the new Wan runtime path on the remote GPU server:
+  - set `max_gpus` for `Wan2.2-T2V-A14B-Diffusers` in `configs/local_models.yaml`
+  - confirm `torchrun generate.py` is used when `max_gpus > 1`
+  - confirm generated `.mp4` artifacts are recovered into the framework-managed workdir
+  - continue real-run debugging from the remote results if needed

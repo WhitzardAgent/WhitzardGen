@@ -1050,8 +1050,10 @@ def _log_replica_plan(
     model: ModelInfo,
     replica_plans: list[ReplicaPlan],
 ) -> None:
-    available_gpus = _resolve_available_gpus()
+    available_gpus = _limit_available_gpus_for_model(_resolve_available_gpus(), model)
     progress.env_message(f"[run][{model.name}] available_gpus={available_gpus}")
+    if model.max_gpus is not None:
+        progress.env_message(f"[run][{model.name}] max_gpus={model.max_gpus}")
     progress.env_message(f"[run][{model.name}] gpus_per_replica={model.gpus_per_replica}")
     progress.env_message(f"[run][{model.name}] starting {len(replica_plans)} replicas")
     for replica_plan in replica_plans:
