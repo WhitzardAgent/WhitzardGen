@@ -4,6 +4,14 @@
 - Phase 8.5 / 9-prep — Terminal UI Hardening and Real-Mode Cluster Diagnostics
 
 ## Completed
+- 2026-03-17 09:16:44 CST
+- Fixed the next `CogVideoX-5B` tokenizer dependency issue discovered during remote validation:
+  - added `sentencepiece` and `protobuf` to `envs/cogvideox_5b/requirements.txt`
+  - this addresses the remote `spiece.model` parsing path where transformers was falling back into the wrong tokenizer backend
+- Expanded the lightweight env-manager regression so `CogVideoX-5B` now asserts both `tiktoken` and `sentencepiece` are present in the resolved env spec.
+- Ran targeted lightweight regression only:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager -v`
+  - result: 12 tests passed
 - 2026-03-17 09:11:40 CST
 - Fixed the first real `CogVideoX-5B` env dependency issue discovered during remote validation:
   - added `tiktoken` to `envs/cogvideox_5b/requirements.txt`
@@ -441,12 +449,12 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 09:11:40 CST.
+- Updated at 2026-03-17 09:16:44 CST.
 - Phase 8.5 terminal UI hardening remains in place, and real cluster debugging has now advanced the `Wan2.2-T2V-A14B-Diffusers` path past env/package issues into concrete local-path validation.
 - The framework now explicitly distinguishes between the Wan2.2 code repo checkout and the local Diffusers weights directory for the diffusers-based Wan adapter.
 - JSON output paths remain clean and machine-readable because the progress layer automatically degrades to a no-op reporter when `--output json` is requested.
 - `CogVideoX-5B` is now structurally integrated into the framework and ready for remote real-mode validation once the model weights are present on the target cluster.
-- The next expected remote step for `CogVideoX-5B` is to rebuild or invalidate the old `cogvideox_5b` env so the newly added `tiktoken` dependency is actually installed.
+- The next expected remote step for `CogVideoX-5B` is to rebuild or invalidate the old `cogvideox_5b` env so the newly added tokenizer dependencies (`tiktoken`, `sentencepiece`, `protobuf`) are actually installed.
 
 ## Blockers
 - The correct local Diffusers weights directory for `Wan2.2-T2V-A14B-Diffusers` still needs to be configured on the remote cluster; the previously used path was not a valid Diffusers checkpoint layout.

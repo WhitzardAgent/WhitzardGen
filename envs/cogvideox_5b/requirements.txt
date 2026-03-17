@@ -7,3 +7,5 @@ safetensors
 imageio
 imageio-ffmpeg
 tiktoken
+sentencepiece
+protobuf
