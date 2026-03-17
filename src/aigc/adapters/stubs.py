@@ -19,6 +19,7 @@ from aigc.adapters.image_family import (
     ZImageTurboAdapter,
 )
 from aigc.adapters.video_family import (
+    CogVideoX5BAdapter,
     HunyuanVideo15Adapter,
     LongCatVideoAdapter,
     MOVAVideoAdapter,

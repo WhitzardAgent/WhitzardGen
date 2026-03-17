@@ -583,6 +583,22 @@ def _default_generation_params(model: ModelInfo, prompts: list[PromptRecord]) ->
                 else None,
             }
         )
+    elif model.name == "CogVideoX-5B":
+        params.update(
+            {
+                "width": 720,
+                "height": 480,
+                "fps": 8,
+                "num_frames": 49,
+                "num_inference_steps": 50,
+                "guidance_scale": 6.0,
+                "local_model_path": str(
+                    model.weights.get("weights_path") or model.weights.get("local_path")
+                )
+                if (model.weights.get("weights_path") or model.weights.get("local_path"))
+                else None,
+            }
+        )
     elif model.name == "Wan2.2-TI2V-5B":
         params.update(
             {

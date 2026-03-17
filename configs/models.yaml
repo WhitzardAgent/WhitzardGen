@@ -226,6 +226,31 @@
         "hf_repo": "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
       }
     },
+    "CogVideoX-5B": {
+      "version": "5B",
+      "adapter": "CogVideoX5BAdapter",
+      "modality": "video",
+      "task_type": "t2v",
+      "capabilities": {
+        "supports_batch_prompts": false,
+        "max_batch_size": 1,
+        "preferred_batch_size": 1,
+        "supports_negative_prompt": false,
+        "supports_seed": true,
+        "output_types": ["video"],
+        "supported_languages": ["en"]
+      },
+      "runtime": {
+        "execution_mode": "in_process",
+        "gpu_required": true,
+        "min_vram_gb": 24,
+        "recommended_vram_gb": 48,
+        "env_spec": "cogvideox_5b"
+      },
+      "weights": {
+        "hf_repo": "THUDM/CogVideoX-5b"
+      }
+    },
     "MOVA-720p": {
       "version": "720p",
       "adapter": "MOVAAdapter",

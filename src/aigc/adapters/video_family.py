@@ -34,7 +34,11 @@ class MockCapableVideoAdapter(BaseAdapter):
         workdir: str,
     ) -> ExecutionPlan:
         runtime = dict(params.get("_runtime_config", {}))
-        width, height = resolve_video_dimensions(params)
+        width, height = resolve_video_dimensions(
+            params,
+            default_width=self.default_width,
+            default_height=self.default_height,
+        )
         fps = int(params.get("fps", self.default_fps))
         num_frames = int(params.get("num_frames", self.default_num_frames))
         num_inference_steps = int(
@@ -572,6 +576,78 @@ class HunyuanVideo15Adapter(DiffusersVideoAdapterBase):
         return pipe
 
 
+class CogVideoX5BAdapter(DiffusersVideoAdapterBase):
+    capabilities = AdapterCapabilities(
+        supports_batch_prompts=False,
+        max_batch_size=1,
+        preferred_batch_size=1,
+        supports_negative_prompt=False,
+        supports_seed=True,
+        output_types=["video"],
+    )
+    pipeline_class_name = "CogVideoXPipeline"
+    default_width = 720
+    default_height = 480
+    default_fps = 8
+    default_num_frames = 49
+    default_num_inference_steps = 50
+    default_guidance_scale = 6.0
+
+    def load_pipeline(
+        self,
+        *,
+        pipeline_class: Any,
+        torch: Any,
+        device: str,
+        dtype: Any,
+    ) -> Any:
+        load_kwargs: dict[str, Any] = {"torch_dtype": dtype}
+        cache_dir = resolve_video_cache_dir(self.model_config)
+        if cache_dir:
+            load_kwargs["cache_dir"] = cache_dir
+        model_ref = resolve_video_model_reference(self.model_config)
+        self.validate_model_reference(model_ref)
+        pipe = pipeline_class.from_pretrained(model_ref, **load_kwargs)
+        if hasattr(pipe, "enable_model_cpu_offload"):
+            pipe.enable_model_cpu_offload()
+        elif hasattr(pipe, "to"):
+            pipe.to(device)
+        if getattr(pipe, "vae", None) is not None and hasattr(pipe.vae, "enable_tiling"):
+            pipe.vae.enable_tiling()
+        return pipe
+
+    def generate_frames(
+        self,
+        *,
+        pipe: Any,
+        plan: ExecutionPlan,
+        prompt: str,
+        negative_prompt: str,
+        width: int,
+        height: int,
+        num_frames: int,
+        num_inference_steps: int,
+        guidance_scale: float,
+        seed: int,
+        torch: Any,
+        device: str,
+    ) -> list[Any]:
+        generator_device = "cuda" if device == "cuda" else "cpu"
+        generator = torch.Generator(generator_device).manual_seed(seed)
+        output = pipe(
+            prompt=prompt,
+            num_videos_per_prompt=1,
+            num_inference_steps=num_inference_steps,
+            num_frames=num_frames,
+            guidance_scale=guidance_scale,
+            generator=generator,
+        )
+        frames = getattr(output, "frames", None)
+        if not frames:
+            raise RuntimeError(f"{self.model_config.name} did not return video frames.")
+        return list(frames[0])
+
+
 class ExternalProcessVideoAdapterBase(MockCapableVideoAdapter):
     real_execution_mode = "external_process"
 
@@ -735,13 +811,18 @@ class MOVAVideoAdapter(ExternalProcessVideoAdapterBase):
         return command
 
 
-def resolve_video_dimensions(params: dict[str, Any]) -> tuple[int, int]:
+def resolve_video_dimensions(
+    params: dict[str, Any],
+    *,
+    default_width: int = 1280,
+    default_height: int = 720,
+) -> tuple[int, int]:
     resolution = params.get("resolution")
     if isinstance(resolution, str) and "x" in resolution:
         left, right = resolution.lower().split("x", maxsplit=1)
         return int(left), int(right)
-    width = int(params.get("width", 1280))
-    height = int(params.get("height", 720))
+    width = int(params.get("width", default_width))
+    height = int(params.get("height", default_height))
     return width, height
 
 

@@ -15,9 +15,10 @@ class RegistryTests(unittest.TestCase):
     def test_registry_loads_all_target_models(self) -> None:
         registry = load_registry()
         names = [model.name for model in registry.list_models()]
-        self.assertEqual(len(names), 11)
+        self.assertEqual(len(names), 12)
         self.assertIn("Z-Image", names)
         self.assertIn("Wan2.2-T2V-A14B-Diffusers", names)
+        self.assertIn("CogVideoX-5B", names)
 
     def test_registry_resolves_adapter_class(self) -> None:
         registry = load_registry()
@@ -65,7 +66,7 @@ class RegistryTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
-        self.assertEqual(len(payload), 11)
+        self.assertEqual(len(payload), 12)
 
     def test_models_inspect_text_output(self) -> None:
         result = subprocess.run(

@@ -43,6 +43,9 @@ envs:
   wan_t2v_diffusers:
     pip_requirement_overrides:
       diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers
+  cogvideox_5b:
+    pip_requirement_overrides:
+      diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers
   hunyuan_video_15:
     pip_requirement_overrides:
       diffusers: /inspire/qb-ilm/project/control-technology/25015/deps/diffusers

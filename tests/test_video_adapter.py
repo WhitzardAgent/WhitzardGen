@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from aigc.adapters.video_family import (
+    CogVideoX5BAdapter,
     WanT2VDiffusersAdapter,
     extract_video_metadata,
     metadata_sidecar_path,
@@ -123,3 +124,37 @@ class VideoAdapterTests(unittest.TestCase):
             resolve_video_model_reference(model),
             "/models/Wan2.2-T2V-A14B-Diffusers",
         )
+
+    def test_cogvideox_mock_video_defaults_match_reference_shape(self) -> None:
+        registry = load_registry()
+        adapter = CogVideoX5BAdapter(model_config=registry.get_model("CogVideoX-5B"))
+        tmpdir = Path(tempfile.mkdtemp())
+        plan = adapter.prepare(
+            prompts=["A panda plays guitar in a bamboo forest."],
+            prompt_ids=["c001"],
+            params={"_runtime_config": {"execution_mode": "mock"}},
+            workdir=str(tmpdir),
+        )
+        plan.inputs["batch_id"] = "batch_cog_001"
+
+        result = adapter.execute(
+            plan=plan,
+            prompts=["A panda plays guitar in a bamboo forest."],
+            params={},
+            workdir=str(tmpdir),
+        )
+        collected = adapter.collect(
+            plan=plan,
+            exec_result=result,
+            prompts=["A panda plays guitar in a bamboo forest."],
+            prompt_ids=["c001"],
+            workdir=str(tmpdir),
+        )
+
+        self.assertEqual(collected.status, "success")
+        item = collected.batch_items[0]
+        self.assertEqual(item.artifacts[0].metadata["width"], 720)
+        self.assertEqual(item.artifacts[0].metadata["height"], 480)
+        self.assertEqual(item.artifacts[0].metadata["fps"], 8)
+        self.assertEqual(item.artifacts[0].metadata["num_frames"], 49)
+        self.assertEqual(item.artifacts[0].metadata["guidance_scale"], 6.0)

@@ -4,6 +4,37 @@
 - Phase 8.5 / 9-prep — Terminal UI Hardening and Real-Mode Cluster Diagnostics
 
 ## Completed
+- 2026-03-17 08:56:13 CST
+- Implemented structural `CogVideoX-5B` support using the existing in-process diffusers video path.
+- Added a real `CogVideoX5BAdapter` in the shared video family:
+  - uses `CogVideoXPipeline.from_pretrained(...)`
+  - enables model CPU offload when available
+  - enables VAE tiling when available
+  - follows the reference defaults from `docs/model_references/CogVideoX-5B.md`
+  - `720x480`, `49` frames, `8` fps, `50` inference steps, `guidance_scale=6.0`
+- Added `CogVideoX-5B` to the model registry:
+  - modality `video`
+  - task type `t2v`
+  - in-process execution mode
+  - env spec `cogvideox_5b`
+- Added cluster configuration placeholders for `CogVideoX-5B`:
+  - `configs/local_models.yaml` now includes `weights_path` / `local_path` / `hf_cache_dir`
+  - `configs/local_envs.yaml` now routes `cogvideox_5b` diffusers installs through the cluster-local diffusers checkout
+- Added a dedicated environment spec for `CogVideoX-5B`:
+  - `envs/cogvideox_5b/python_version.txt`
+  - `envs/cogvideox_5b/requirements.txt`
+  - `envs/cogvideox_5b/validation.json`
+- Fixed a shared video-family bug uncovered by the new adapter:
+  - video adapters now honor subclass-specific default resolutions instead of always falling back to `1280x720`
+- Added lightweight regression coverage for:
+  - registry visibility of `CogVideoX-5B`
+  - `aigc models inspect CogVideoX-5B`
+  - mock CogVideoX video generation using the reference defaults
+- Ran targeted lightweight regression only:
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry tests.test_video_adapter -v`
+  - result: 10 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow -v`
+  - result: 7 tests passed
 - 2026-03-17 00:05:01 CST
 - Hardened `Wan2.2-T2V-A14B-Diffusers` real-path handling after remote cluster debugging showed the framework was not clearly separating the Wan2.2 repo checkout from the local Diffusers weights directory.
 - Added local Diffusers directory validation for video diffusers adapters before `from_pretrained(...)` so bad local paths now fail with actionable framework errors instead of vague downstream loader messages.
@@ -276,6 +307,18 @@
 
 ## Files Added/Modified
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/stubs.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/configs/models.yaml
+- /Users/morinop/coding/whitzardgen/configs/local_models.yaml
+- /Users/morinop/coding/whitzardgen/configs/local_envs.yaml
+- /Users/morinop/coding/whitzardgen/envs/cogvideox_5b/python_version.txt
+- /Users/morinop/coding/whitzardgen/envs/cogvideox_5b/requirements.txt
+- /Users/morinop/coding/whitzardgen/envs/cogvideox_5b/validation.json
+- /Users/morinop/coding/whitzardgen/tests/test_registry.py
+- /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
 - /Users/morinop/coding/whitzardgen/configs/local_models.yaml
 - /Users/morinop/coding/whitzardgen/README.md
@@ -388,15 +431,17 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 00:05:01 CST.
+- Updated at 2026-03-17 08:56:13 CST.
 - Phase 8.5 terminal UI hardening remains in place, and real cluster debugging has now advanced the `Wan2.2-T2V-A14B-Diffusers` path past env/package issues into concrete local-path validation.
 - The framework now explicitly distinguishes between the Wan2.2 code repo checkout and the local Diffusers weights directory for the diffusers-based Wan adapter.
 - JSON output paths remain clean and machine-readable because the progress layer automatically degrades to a no-op reporter when `--output json` is requested.
+- `CogVideoX-5B` is now structurally integrated into the framework and ready for remote real-mode validation once the model weights are present on the target cluster.
 
 ## Blockers
 - The correct local Diffusers weights directory for `Wan2.2-T2V-A14B-Diffusers` still needs to be configured on the remote cluster; the previously used path was not a valid Diffusers checkpoint layout.
 - Per user instruction, do not continue local real-run validation on this machine.
 - Real non-mock validation for the remaining image/video models is still deferred to the GPU cluster environment, where model repositories, weights, and GPU runtime constraints can be validated properly.
+- `CogVideoX-5B` still needs an actual remote `weights_path` before first real validation through `aigc run`.
 
 ## Next Task
-- Continue remote real-mode validation for `Wan2.2-T2V-A14B-Diffusers` with the correct local Diffusers weights directory, then use the resulting diagnostics to harden the next real video-model path.
+- Use the newly integrated `CogVideoX-5B` path for the next remote real-mode validation cycle, starting with `aigc models inspect`, `aigc doctor --model CogVideoX-5B`, and then a small canary `aigc run`.
