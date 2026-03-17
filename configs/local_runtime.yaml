@@ -1,0 +1,14 @@
+# Optional local runtime/output overrides.
+#
+# Use this file to move the default run output location away from the repository
+# root. All default run directories, manifests, failures, task files, workdirs,
+# artifacts, and dataset exports will be created under `runs_root`.
+#
+# Example:
+# paths:
+#   runs_root: /shared/aigc_runs
+#
+# `aigc run --out ...` still takes precedence for one-off runs.
+
+paths:
+  runs_root: null

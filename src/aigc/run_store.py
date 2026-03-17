@@ -5,9 +5,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from aigc.settings import get_runs_root
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-RUNS_ROOT = REPO_ROOT / "runs"
+RUNS_ROOT = get_runs_root()
 RUN_MANIFEST_NAME = "run_manifest.json"
 RUN_FAILURES_NAME = "failures.json"
 
@@ -30,8 +30,9 @@ def write_failures_summary(run_root: str | Path, failures: list[dict[str, Any]])
     return target
 
 
-def load_run_manifest(run_id: str, runs_root: str | Path = RUNS_ROOT) -> dict[str, Any]:
-    run_root = Path(runs_root) / run_id
+def load_run_manifest(run_id: str, runs_root: str | Path | None = None) -> dict[str, Any]:
+    root = Path(runs_root) if runs_root is not None else get_runs_root()
+    run_root = root / run_id
     manifest_path = run_root / RUN_MANIFEST_NAME
     legacy_manifest_path = run_root / "run.json"
     if manifest_path.exists():
@@ -44,8 +45,9 @@ def load_run_manifest(run_id: str, runs_root: str | Path = RUNS_ROOT) -> dict[st
     raise RunStoreError(f"Run manifest not found for run_id={run_id}")
 
 
-def load_failures_summary(run_id: str, runs_root: str | Path = RUNS_ROOT) -> list[dict[str, Any]]:
-    failures_path = Path(runs_root) / run_id / RUN_FAILURES_NAME
+def load_failures_summary(run_id: str, runs_root: str | Path | None = None) -> list[dict[str, Any]]:
+    root = Path(runs_root) if runs_root is not None else get_runs_root()
+    failures_path = root / run_id / RUN_FAILURES_NAME
     if not failures_path.exists():
         return []
     payload = json.loads(failures_path.read_text(encoding="utf-8"))
@@ -54,8 +56,8 @@ def load_failures_summary(run_id: str, runs_root: str | Path = RUNS_ROOT) -> lis
     return payload
 
 
-def list_runs(runs_root: str | Path = RUNS_ROOT) -> list[dict[str, Any]]:
-    root = Path(runs_root)
+def list_runs(runs_root: str | Path | None = None) -> list[dict[str, Any]]:
+    root = Path(runs_root) if runs_root is not None else get_runs_root()
     if not root.exists():
         return []
 
@@ -75,7 +77,7 @@ def list_runs(runs_root: str | Path = RUNS_ROOT) -> list[dict[str, Any]]:
 def export_dataset_for_run(
     run_id: str,
     *,
-    runs_root: str | Path = RUNS_ROOT,
+    runs_root: str | Path | None = None,
     output_path: str | Path | None = None,
 ) -> Path:
     manifest = load_run_manifest(run_id, runs_root=runs_root)

@@ -1,9 +1,11 @@
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from aigc.run_flow import run_single_model
 
@@ -22,6 +24,46 @@ class FakeEnvManager:
 
 
 class RunsCliTests(unittest.TestCase):
+    def test_run_store_commands_use_configured_runs_root(self) -> None:
+        from aigc.cli.main import handle_runs_inspect, handle_runs_list
+
+        tmpdir = Path(tempfile.mkdtemp())
+        runtime_config = tmpdir / "local_runtime.yaml"
+        configured_root = tmpdir / "configured_runs"
+        runtime_config.write_text(
+            f"paths:\n  runs_root: {configured_root}\n",
+            encoding="utf-8",
+        )
+        run_root = configured_root / "run_configured"
+        run_root.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "run_id": "run_configured",
+            "status": "completed",
+            "execution_mode": "mock",
+            "models": ["Z-Image"],
+            "prompt_source": "prompts/example.txt",
+            "prompt_count": 1,
+            "task_count": 1,
+            "output_dir": str(run_root),
+            "records_exported": 1,
+            "export_path": str(run_root / "exports" / "dataset.jsonl"),
+        }
+        (run_root / "run_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        list_args = type("Args", (), {"output": "json"})()
+        inspect_args = type("Args", (), {"run_id": "run_configured", "output": "json"})()
+
+        with patch.dict(os.environ, {"AIGC_LOCAL_RUNTIME_FILE": str(runtime_config)}, clear=False):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_runs_list(list_args), 0)
+                listed = json.loads(stream.getvalue())
+            self.assertEqual(listed[0]["run_id"], "run_configured")
+
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_runs_inspect(inspect_args), 0)
+                inspected = json.loads(stream.getvalue())
+            self.assertEqual(inspected["output_dir"], str(run_root))
+
     def test_run_store_commands_have_manifest_and_dataset_visibility(self) -> None:
         from aigc.cli.main import handle_export_dataset, handle_runs_failures, handle_runs_inspect, handle_runs_list
 

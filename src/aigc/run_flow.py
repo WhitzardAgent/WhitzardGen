@@ -18,6 +18,7 @@ from aigc.registry.models import ModelInfo
 from aigc.registry import load_registry
 from aigc.run_store import write_failures_summary, write_run_manifest
 from aigc.runtime.payloads import TaskPayload, TaskPrompt
+from aigc.settings import get_runs_root
 from aigc.utils.progress import (
     RunProgress,
     RunSummaryData,
@@ -127,7 +128,7 @@ def run_models(
 
     progress.stage_start(stage_index, total_stages, "Resolving models")
     run_id = _generate_run_id(run_name)
-    run_root = Path(out_dir) if out_dir else REPO_ROOT / "runs" / run_id
+    run_root = Path(out_dir) if out_dir else get_runs_root() / run_id
     tasks_dir = run_root / "tasks"
     workdir_root = run_root / "workdir"
     exports_dir = run_root / "exports"

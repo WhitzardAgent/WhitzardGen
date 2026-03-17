@@ -4,6 +4,36 @@
 - Phase 8.5 / 9-prep — Terminal UI Hardening and Real-Mode Cluster Diagnostics
 
 ## Completed
+- 2026-03-17 09:29:15 CST
+- Added a global local runtime configuration entry point for output storage:
+  - added `configs/local_runtime.yaml`
+  - added `src/aigc/settings.py`
+  - supports a user-configurable `runs_root` / `output_root`
+- The default output location for all run outputs can now be moved away from the repository root:
+  - run directories
+  - manifests
+  - failures summaries
+  - task files
+  - workdirs
+  - artifacts
+  - dataset exports
+- Updated `run_flow` so default runs now resolve to the configured global runs root when `--out` is not provided.
+- Updated `run_store` and CLI run-inspection commands so:
+  - `runs list`
+  - `runs inspect`
+  - `runs failures`
+  - `export dataset`
+  all look under the configured global runs root by default.
+- Kept `aigc run --out ...` as the highest-priority one-off override for explicit run placement.
+- Updated `README.md` with a dedicated `Global Output Root` section.
+- Added lightweight regression coverage for:
+  - runtime settings loading from YAML
+  - env-var override for runtime settings file
+  - `aigc run` defaulting to the configured runs root
+  - CLI run-inspection commands honoring the configured runs root
+- Ran targeted lightweight regression only:
+  - `PYTHONPATH=src python3 -m unittest tests.test_settings tests.test_run_flow tests.test_cli_runs -v`
+  - result: 12 tests passed
 - 2026-03-17 09:16:44 CST
 - Fixed the next `CogVideoX-5B` tokenizer dependency issue discovered during remote validation:
   - added `sentencepiece` and `protobuf` to `envs/cogvideox_5b/requirements.txt`
@@ -322,6 +352,15 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/settings.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_store.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
+- /Users/morinop/coding/whitzardgen/configs/local_runtime.yaml
+- /Users/morinop/coding/whitzardgen/README.md
+- /Users/morinop/coding/whitzardgen/tests/test_settings.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/tests/test_cli_runs.py
 - /Users/morinop/coding/whitzardgen/envs/cogvideox_5b/requirements.txt
 - /Users/morinop/coding/whitzardgen/tests/test_env_manager.py
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
@@ -449,12 +488,13 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 09:16:44 CST.
+- Updated at 2026-03-17 09:29:15 CST.
 - Phase 8.5 terminal UI hardening remains in place, and real cluster debugging has now advanced the `Wan2.2-T2V-A14B-Diffusers` path past env/package issues into concrete local-path validation.
 - The framework now explicitly distinguishes between the Wan2.2 code repo checkout and the local Diffusers weights directory for the diffusers-based Wan adapter.
 - JSON output paths remain clean and machine-readable because the progress layer automatically degrades to a no-op reporter when `--output json` is requested.
 - `CogVideoX-5B` is now structurally integrated into the framework and ready for remote real-mode validation once the model weights are present on the target cluster.
 - The next expected remote step for `CogVideoX-5B` is to rebuild or invalidate the old `cogvideox_5b` env so the newly added tokenizer dependencies (`tiktoken`, `sentencepiece`, `protobuf`) are actually installed.
+- The framework now has a simple global output-root configuration path, so remote cluster runs no longer need to dump all outputs under the repository-local `runs/` directory unless explicitly desired.
 
 ## Blockers
 - The correct local Diffusers weights directory for `Wan2.2-T2V-A14B-Diffusers` still needs to be configured on the remote cluster; the previously used path was not a valid Diffusers checkpoint layout.
@@ -463,4 +503,4 @@
 - `CogVideoX-5B` still needs an actual remote `weights_path` before first real validation through `aigc run`.
 
 ## Next Task
-- Recreate or invalidate the existing `cogvideox_5b` Conda environment on the remote cluster, then rerun the smallest `CogVideoX-5B` canary job to surface the next real execution issue.
+- Use `configs/local_runtime.yaml` on the remote cluster to move run outputs to the desired shared storage root, then continue real `CogVideoX-5B` validation with the refreshed environment.

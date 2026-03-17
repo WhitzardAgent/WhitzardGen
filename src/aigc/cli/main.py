@@ -12,7 +12,6 @@ from aigc.env import EnvManager, EnvManagerError
 from aigc.registry import DEFAULT_LOCAL_MODELS_PATH, RegistryError, load_registry
 from aigc.registry.local_overrides import summarize_local_path_overrides
 from aigc.run_store import (
-    RUNS_ROOT,
     RunStoreError,
     export_dataset_for_run,
     list_runs,
@@ -20,6 +19,7 @@ from aigc.run_store import (
     load_run_manifest,
 )
 from aigc.run_flow import RunFlowError, run_models
+from aigc.settings import get_runs_root
 from aigc.utils.progress import build_run_progress
 
 
@@ -189,7 +189,7 @@ def handle_runs_list(args: argparse.Namespace) -> int:
         return 0
 
     if not manifests:
-        print(f"No runs found under {RUNS_ROOT}")
+        print(f"No runs found under {get_runs_root()}")
         return 0
 
     header = f"{'RUN_ID':<28} {'STATUS':<10} {'MODE':<8} {'MODELS':<32} {'RECORDS'}"

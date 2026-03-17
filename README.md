@@ -109,6 +109,7 @@ aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/canary_video.csv -
 Before real execution on a GPU cluster, edit:
 
 - `configs/local_models.yaml`
+- `configs/local_runtime.yaml` if you want all run outputs under a shared root
 
 Example:
 
@@ -156,6 +157,38 @@ Check readiness:
 ```bash
 aigc doctor
 aigc doctor --model Z-Image
+```
+
+## Global Output Root
+
+If you do not want runs to be created under the repository's default `runs/`
+directory, edit:
+
+- `configs/local_runtime.yaml`
+
+Example:
+
+```yaml
+paths:
+  runs_root: /shared/aigc_runs
+```
+
+After that, the default output location for:
+
+- run directories
+- manifests
+- failures summaries
+- task files
+- workdirs
+- artifacts
+- dataset exports
+
+will all move under `/shared/aigc_runs/<run_id>/...`.
+
+One-off runs can still override this with:
+
+```bash
+aigc run --models Z-Image --prompts prompts/example.txt --out /tmp/my_run
 ```
 
 ## Run Diagnostics
