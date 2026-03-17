@@ -1,9 +1,61 @@
 # Progress
 
 ## Current Phase
-- CogVideoX single-GPU-per-replica runtime alignment
+- Wan diffusers persistent-worker realignment
 
 ## Completed
+- 2026-03-17 20:44:32 CST
+- Switched `Wan2.2-T2V-A14B-Diffusers` back from the repo-script path to the reference diffusers in-process path so it can benefit from load-once persistent workers:
+  - `WanT2VDiffusersAdapter` now inherits the diffusers video base again
+  - real execution no longer uses `generate.py` / `torchrun`
+  - local diffusers validation now requires both `model_index.json` and `vae/config.json`
+  - Wan now loads `AutoencoderKLWan` separately and constructs `WanPipeline` with the VAE, matching the reference usage pattern
+  - real generation now forwards `guidance_scale_2` through the in-process pipeline call
+  - Wan adapter capabilities now explicitly opt into `persistent_worker`
+- Realigned runtime defaults and model config with the restored Wan execution path:
+  - `configs/models.yaml` now marks `Wan2.2-T2V-A14B-Diffusers` as `in_process`
+  - Wan runtime now prefers `persistent_worker`
+  - removed the old Wan repo-script defaults from `run_flow.py` (`repo_dir`, `local_model_path`, `max_gpus`)
+- Replaced Wan-specific tests that were asserting old external-process command construction with tests for the new intended behavior:
+  - persistent-worker capability enabled
+  - diffusers directory validation requires `vae/config.json`
+  - `guidance_scale_2` is passed into the pipeline call
+  - Wan mock run selects `persistent_worker`
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter -v`
+  - result: 7 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_selected_wan_video_model_uses_persistent_worker_strategy_in_mock_mode tests.test_run_flow.RunFlowTests.test_selected_video_model_uses_persistent_worker_strategy_in_mock_mode -v`
+  - result: 2 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
+  - result: 5 tests passed
+- 2026-03-17 20:24:10 CST
+- Replaced the old pipe-driven persistent-worker control path with a queue-supervised control plane:
+  - removed stdin/stdout JSON as the control protocol for persistent workers
+  - added a parent-owned queue supervisor for `run_task` / `task_started` / `task_complete` / `worker_failed` / `shutdown`
+  - kept task/result files as the persistent execution boundary
+  - preserved existing `per_task_worker` fallback behavior
+- Refactored persistent worker runtime and parent session behavior:
+  - `persistent_worker.py` now connects to the parent queue manager instead of reading commands from stdin
+  - worker logs are now independent from control flow and are mirrored into the run log plus per-replica log files
+  - parent-side session state now tracks startup / ready / running / failed / shutdown phases
+  - worker crashes before startup, before task acceptance, and during task execution now surface structured `RunFlowError` messages instead of secondary `BrokenPipeError` cleanup failures
+  - shutdown on already-dead workers is now idempotent
+- Added focused regression coverage for the new failure model:
+  - load-once / many-tasks through the queue-supervised persistent worker
+  - startup crash attribution
+  - crash before task acceptance
+  - crash during task execution
+  - single-replica and multi-replica run-flow paths still working for image/video mock runs
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_persistent_worker -v`
+  - result: 4 tests passed
+- Ran focused run-flow regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_selected_model_uses_persistent_worker_strategy_in_mock_mode -v`
+  - result: 1 test passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_selected_video_model_uses_persistent_worker_strategy_in_mock_mode -v`
+  - result: 1 test passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_multi_replica_mock_run_shards_image_tasks_and_exports_replica_metadata tests.test_run_flow.RunFlowTests.test_multi_replica_mock_run_shards_video_tasks_and_uses_gpu_groups -v`
+  - result: 2 tests passed
 - 2026-03-17 20:03:53 CST
 - Aligned `CogVideoX-5B` runtime planning back to the intended single-GPU-per-replica behavior:
   - set `gpus_per_replica=1` in the model registry
@@ -556,6 +608,7 @@
 - /Users/morinop/coding/whitzardgen/src/aigc/env/manager.py
 - /Users/morinop/coding/whitzardgen/src/aigc/runtime/worker.py
 - /Users/morinop/coding/whitzardgen/src/aigc/runtime/persistent_worker.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/persistent_ipc.py
 - /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
 - /Users/morinop/coding/whitzardgen/tests/test_progress.py
 - /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
@@ -712,31 +765,44 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 20:03:53 CST.
+- Updated at 2026-03-17 20:44:32 CST.
+- `Wan2.2-T2V-A14B-Diffusers` is back on the diffusers in-process execution path and can again benefit from persistent-worker model reuse.
+- The Wan adapter now matches the reference-style loading pattern more closely:
+  - `AutoencoderKLWan.from_pretrained(..., subfolder="vae", torch_dtype=torch.float32)`
+  - `WanPipeline.from_pretrained(..., vae=vae, torch_dtype=torch.bfloat16/float32)`
+  - persistent in-process generation with `guidance_scale_2`
+- The persistent-worker control plane no longer depends on stdout protocol correctness:
+  - parent/worker coordination now happens through a queue-supervised IPC path
+  - worker logs are separated from control messages and mirrored into the run log plus per-replica logs
+  - shutdown on dead workers is idempotent, so the old `BrokenPipeError` cleanup failure mode is removed
+- The parent run flow now reports real worker crash context:
+  - startup crash
+  - crash before task acceptance
+  - crash during task execution
 - The runtime now has a real logging / terminal observability foundation:
   - every run writes `running.log`
   - major run/env/worker events are timestamped
   - worker and persistent-worker lifecycle logs flow back into the run log
   - terminal progress remains readable while the file log stays more complete
-- Wan now supports the reference repo-script execution pattern with a configurable per-model GPU cap:
-  - single-GPU fallback still exists
-  - multi-GPU real execution can be steered by `max_gpus` in `configs/local_models.yaml`
 - Repeated real runs should now spend much less time in `Ensuring environments` when the environment is already `ready` and was validated recently.
-- Wan repo-script execution now includes the `easydict` runtime dependency required by `generate.py`.
 - Persistent real workers are now more robust against third-party model-loading output that writes stray text or blank lines to stdout during startup.
 - `CogVideoX-5B` is now explicitly configured as one GPU per replica, matching the user's confirmed intended runtime behavior.
-- This slice is now covered by lightweight regression and is ready for remote GPU-server validation.
+- This slice is now covered by focused lightweight regression and is ready for remote GPU-server validation.
 - Existing run behavior still works across:
   - mock mode
   - real mode
   - per-task workers
-  - persistent workers
+  - single persistent workers
+  - multi-replica persistent workers
 - The multi-replica scheduling work from Phase 11 remains in place underneath this improved logging layer.
 
 ## Blockers
 - No code blockers in the local framework path.
 - Per user instruction, do not continue local heavy real-run validation on this machine.
-- Real cluster validation is still needed to confirm log usefulness and worker visibility under long heavy runs.
+- The restored Wan diffusers path now needs real remote validation to confirm:
+  - local `weights_path` points to a complete `Wan2.2-T2V-A14B-Diffusers` directory
+  - persistent-worker reuse behaves correctly under real GPU inference
+- The queue-supervisor path still needs real remote validation to confirm the old persistent-worker `Broken pipe` failure mode is gone under cluster execution.
 
 ## Next Task
-- Re-run the real `CogVideoX-5B` workload on the remote GPU server after syncing both the persistent-worker hardening and the single-GPU-per-replica config, then continue from the next true model/runtime issue if one appears.
+- Sync the Wan diffusers rollback to the remote GPU server, then re-run `Wan2.2-T2V-A14B-Diffusers` in real mode and continue from the next true model/runtime issue if one appears.

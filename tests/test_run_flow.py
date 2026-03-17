@@ -166,6 +166,32 @@ class RunFlowTests(unittest.TestCase):
             "persistent_worker",
         )
 
+    def test_selected_wan_video_model_uses_persistent_worker_strategy_in_mock_mode(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "wan_video.txt"
+        prompts_path.write_text("two cats spar under a spotlight\n", encoding="utf-8")
+
+        summary = run_single_model(
+            model_name="Wan2.2-T2V-A14B-Diffusers",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "persistent_wan_video_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "wan2_2-t2v-a14b-diffusers"
+        task_file = next(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        payload = json.loads(task_file.read_text(encoding="utf-8"))
+        self.assertEqual(payload["worker_strategy"], "persistent_worker")
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["per_model_summary"]["Wan2.2-T2V-A14B-Diffusers"]["worker_strategy"],
+            "persistent_worker",
+        )
+
     def test_multi_replica_mock_run_shards_image_tasks_and_exports_replica_metadata(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "replica_image.txt"

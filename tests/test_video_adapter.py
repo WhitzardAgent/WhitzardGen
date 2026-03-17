@@ -90,130 +90,36 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertEqual(metadata["width"], 1280)
         self.assertEqual(metadata["height"], 720)
 
-    def test_wan_real_command_uses_torchrun_when_max_gpus_exceeds_one(self) -> None:
+    def test_wan_capabilities_enable_persistent_worker(self) -> None:
+        registry = load_registry()
+        adapter = WanT2VDiffusersAdapter(
+            model_config=registry.get_model("Wan2.2-T2V-A14B-Diffusers")
+        )
+
+        self.assertTrue(adapter.capabilities.supports_persistent_worker)
+        self.assertEqual(adapter.capabilities.preferred_worker_strategy, "persistent_worker")
+        self.assertEqual(adapter.real_execution_mode, "in_process")
+
+    def test_wan_validate_model_reference_requires_diffusers_layout(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
-        repo_dir = tmpdir / "Wan2.2"
-        ckpt_dir = tmpdir / "Wan2.2-T2V-A14B"
-        repo_dir.mkdir()
-        ckpt_dir.mkdir()
-        (repo_dir / "generate.py").write_text("print('stub')\n", encoding="utf-8")
+        weights_dir = tmpdir / "Wan2.2-T2V-A14B-Diffusers"
+        weights_dir.mkdir()
+        (weights_dir / "model_index.json").write_text("{}", encoding="utf-8")
         registry = load_registry()
         model = replace(
             registry.get_model("Wan2.2-T2V-A14B-Diffusers"),
             weights={
                 **registry.get_model("Wan2.2-T2V-A14B-Diffusers").weights,
-                "repo_path": str(repo_dir),
-                "weights_path": str(ckpt_dir),
-            },
-            runtime={
-                **registry.get_model("Wan2.2-T2V-A14B-Diffusers").runtime,
-                "max_gpus": 8,
-            },
-        )
-        adapter = WanT2VDiffusersAdapter(model_config=model)
-
-        command = adapter.build_real_command(
-            prompts=["Two anthropomorphic cats fight on stage."],
-            prompt_ids=["p001"],
-            params={"max_gpus": 8},
-            workdir=str(tmpdir),
-            inputs={"width": 1280, "height": 720},
-        )
-
-        self.assertEqual(
-            command,
-            [
-                "torchrun",
-                "--nproc_per_node=8",
-                str(repo_dir / "generate.py"),
-                "--task",
-                "t2v-A14B",
-                "--size",
-                "1280*720",
-                "--ckpt_dir",
-                str(ckpt_dir),
-                "--dit_fsdp",
-                "--t5_fsdp",
-                "--ulysses_size",
-                "8",
-                "--prompt",
-                "Two anthropomorphic cats fight on stage.",
-            ],
-        )
-
-    def test_wan_real_command_uses_single_gpu_python_fallback(self) -> None:
-        tmpdir = Path(tempfile.mkdtemp())
-        repo_dir = tmpdir / "Wan2.2"
-        ckpt_dir = tmpdir / "Wan2.2-T2V-A14B"
-        repo_dir.mkdir()
-        ckpt_dir.mkdir()
-        (repo_dir / "generate.py").write_text("print('stub')\n", encoding="utf-8")
-        registry = load_registry()
-        model = replace(
-            registry.get_model("Wan2.2-T2V-A14B-Diffusers"),
-            weights={
-                **registry.get_model("Wan2.2-T2V-A14B-Diffusers").weights,
-                "repo_path": str(repo_dir),
-                "weights_path": str(ckpt_dir),
-            },
-            runtime={
-                **registry.get_model("Wan2.2-T2V-A14B-Diffusers").runtime,
-                "max_gpus": 1,
-            },
-        )
-        adapter = WanT2VDiffusersAdapter(model_config=model)
-
-        command = adapter.build_real_command(
-            prompts=["Two anthropomorphic cats fight on stage."],
-            prompt_ids=["p001"],
-            params={"max_gpus": 1},
-            workdir=str(tmpdir),
-            inputs={"width": 1280, "height": 720},
-        )
-
-        self.assertEqual(
-            command,
-            [
-                "python",
-                str(repo_dir / "generate.py"),
-                "--task",
-                "t2v-A14B",
-                "--size",
-                "1280*720",
-                "--ckpt_dir",
-                str(ckpt_dir),
-                "--offload_model",
-                "True",
-                "--convert_model_dtype",
-                "--prompt",
-                "Two anthropomorphic cats fight on stage.",
-            ],
-        )
-
-    def test_wan_real_command_reports_repo_and_weights_expectations(self) -> None:
-        registry = load_registry()
-        base_model = registry.get_model("Wan2.2-T2V-A14B-Diffusers")
-        model = replace(
-            base_model,
-            weights={
-                **base_model.weights,
-                "repo_path": "/deps/Wan2.2",
-                "weights_path": tempfile.mkdtemp(),
+                "weights_path": str(weights_dir),
             },
         )
         adapter = WanT2VDiffusersAdapter(model_config=model)
 
         with self.assertRaisesRegex(
             RuntimeError,
-            "repo_path does not exist",
+            "Missing required files: vae/config.json",
         ):
-            adapter.build_real_command(
-                prompts=["Two anthropomorphic cats fight on stage."],
-                prompt_ids=["p001"],
-                params={},
-                workdir=tempfile.mkdtemp(),
-                inputs={"width": 1280, "height": 720},
-            )
+            adapter.validate_model_reference(str(weights_dir))
 
     def test_video_model_reference_prefers_weights_path(self) -> None:
         registry = load_registry()
@@ -231,49 +137,62 @@ class VideoAdapterTests(unittest.TestCase):
             "/models/Wan2.2-T2V-A14B-Diffusers",
         )
 
-    def test_wan_collect_recovers_generated_mp4_from_workdir(self) -> None:
+    def test_wan_generate_frames_passes_guidance_scale_2(self) -> None:
         registry = load_registry()
-        tmpdir = Path(tempfile.mkdtemp())
-        repo_dir = tmpdir / "Wan2.2"
-        ckpt_dir = tmpdir / "Wan2.2-T2V-A14B"
-        repo_dir.mkdir()
-        ckpt_dir.mkdir()
-        (repo_dir / "generate.py").write_text("print('stub')\n", encoding="utf-8")
-        model = replace(
-            registry.get_model("Wan2.2-T2V-A14B-Diffusers"),
-            weights={
-                **registry.get_model("Wan2.2-T2V-A14B-Diffusers").weights,
-                "repo_path": str(repo_dir),
-                "weights_path": str(ckpt_dir),
-            },
+        adapter = WanT2VDiffusersAdapter(
+            model_config=registry.get_model("Wan2.2-T2V-A14B-Diffusers")
         )
-        adapter = WanT2VDiffusersAdapter(model_config=model)
-        generated_path = tmpdir / "t2v_out.mp4"
-        generated_path.write_bytes(b"mock-video")
         plan = adapter.prepare(
             prompts=["a cinematic duel in heavy rain"],
             prompt_ids=["p003"],
             params={
                 "_runtime_config": {"execution_mode": "real"},
-                "repo_dir": str(repo_dir),
-                "local_model_path": str(ckpt_dir),
+                "guidance_scale_2": 3.5,
             },
-            workdir=str(tmpdir),
+            workdir=tempfile.mkdtemp(),
         )
-        plan.inputs["batch_id"] = "batch_recover_001"
 
-        collected = adapter.collect(
+        class _FakeGenerator:
+            def __init__(self, device: str) -> None:
+                self.device = device
+                self.seed = None
+
+            def manual_seed(self, seed: int):
+                self.seed = seed
+                return self
+
+        class _FakeTorch:
+            class Generator(_FakeGenerator):
+                pass
+
+        class _FakePipe:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(kwargs)
+                return type("Output", (), {"frames": [[b"frame-1", b"frame-2"]]})()
+
+        pipe = _FakePipe()
+        frames = adapter.generate_frames(
+            pipe=pipe,
             plan=plan,
-            exec_result=type("ExecResult", (), {"logs": "ok", "outputs": {}})(),
-            prompts=["a cinematic duel in heavy rain"],
-            prompt_ids=["p003"],
-            workdir=str(tmpdir),
+            prompt="a cinematic duel in heavy rain",
+            negative_prompt="low quality",
+            width=1280,
+            height=720,
+            num_frames=81,
+            num_inference_steps=40,
+            guidance_scale=4.0,
+            seed=42,
+            torch=_FakeTorch,
+            device="cuda",
         )
 
-        item = collected.batch_items[0]
-        self.assertEqual(item.status, "success")
-        self.assertTrue(Path(item.artifacts[0].path).exists())
-        self.assertEqual(Path(item.artifacts[0].path).name, "p003.mp4")
+        self.assertEqual(frames, [b"frame-1", b"frame-2"])
+        self.assertEqual(pipe.calls[0]["guidance_scale_2"], 3.5)
+        self.assertEqual(pipe.calls[0]["negative_prompt"], "low quality")
+        self.assertEqual(pipe.calls[0]["num_frames"], 81)
 
     def test_cogvideox_mock_video_defaults_match_reference_shape(self) -> None:
         registry = load_registry()

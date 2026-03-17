@@ -1,59 +1,170 @@
 import json
-import subprocess
+import os
 import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from aigc.run_flow import _PersistentWorkerSession
+from aigc.run_flow import REPO_ROOT, RunFlowError, _PersistentWorkerSession
+from aigc.registry import load_registry
 
-ROOT = Path(__file__).resolve().parents[1]
+
+class _FakeEnvRecord:
+    env_id = "env_test"
+    state = "ready"
 
 
 class PersistentWorkerTests(unittest.TestCase):
-    def test_persistent_worker_session_ignores_blank_and_non_json_stdout_lines(self) -> None:
-        logged_lines: list[str] = []
-        session = _PersistentWorkerSession(
-            model=SimpleNamespace(name="Noise-Test"),
-            env_record=SimpleNamespace(),
-            execution_mode="real",
-            replica_id=0,
-            gpu_assignment=[0],
-            log_callback=logged_lines.append,
-        )
-        session.process = SimpleNamespace(
-            stdout=SimpleNamespace(
-                readline=self._readline_from(
-                    [
-                        "\n",
-                        "Loading pipeline components... 20%\n",
-                        '{"event":"ready","replica_id":0}\n',
-                    ]
-                )
-            )
-        )
-
-        event = session._read_event()
-
-        self.assertEqual(event["event"], "ready")
-        self.assertEqual(
-            logged_lines,
-            ["[worker][Noise-Test][replica=0] stdout: Loading pipeline components... 20%"],
-        )
-
     def test_persistent_worker_loads_once_and_runs_multiple_tasks(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
+        registry_path = self._write_registry(tmpdir, {})
+        registry = load_registry(registry_path)
+        model = registry.get_model("Echo-Test")
+        load_counter_path = Path(str(model.weights["load_counter_file"]))
+
+        task_one = self._write_task(
+            tmpdir=tmpdir,
+            task_id="task_001",
+            prompt_id="p001",
+            prompt_text="hello world",
+        )
+        task_two = self._write_task(
+            tmpdir=tmpdir,
+            task_id="task_002",
+            prompt_id="p002",
+            prompt_text="hello again",
+        )
+        logged_lines: list[str] = []
+        replica_log_path = tmpdir / "replica_0.log"
+
+        with self._patched_worker_command():
+            with _PersistentWorkerSession(
+                model=model,
+                env_record=_FakeEnvRecord(),
+                execution_mode="real",
+                replica_id=0,
+                gpu_assignment=[],
+                replica_log_path=replica_log_path,
+                log_callback=logged_lines.append,
+            ) as session:
+                rc_one, logs_one = session.run_task(task_one)
+                rc_two, logs_two = session.run_task(task_two)
+
+        self.assertEqual((rc_one, logs_one), (0, ""))
+        self.assertEqual((rc_two, logs_two), (0, ""))
+        self.assertEqual(load_counter_path.read_text(encoding="utf-8"), "1")
+        self.assertTrue((Path(task_one.payload.workdir) / "p001.txt").exists())
+        self.assertTrue((Path(task_two.payload.workdir) / "p002.txt").exists())
+        self.assertTrue(replica_log_path.exists())
+        replica_log = replica_log_path.read_text(encoding="utf-8")
+        self.assertIn("starting persistent worker", replica_log)
+        self.assertIn("running task task_001 batch_size=1", replica_log)
+        self.assertIn("running task task_002 batch_size=1", replica_log)
+        self.assertIn("shutting down", replica_log)
+        self.assertTrue(any("ready" in line for line in logged_lines))
+
+    def test_startup_crash_surfaces_worker_failure_not_broken_pipe(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        registry_path = tmpdir / "broken_registry.json"
+        registry_path.write_text(
+            json.dumps(
+                {
+                    "models": {
+                        "Broken-Start": {
+                            "version": "0.0",
+                            "adapter": "EchoTestAdapter",
+                            "modality": "text",
+                            "task_type": "t2t",
+                            "capabilities": {"output_types": ["text"]},
+                            "runtime": {"execution_mode": "in_process", "env_spec": "flux_image"},
+                            "weights": {"crash_on_load": True},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        model = SimpleNamespace(name="Broken-Start", registry_source=str(registry_path))
+
+        with self.assertRaises(RunFlowError) as context:
+            with self._patched_worker_command():
+                with _PersistentWorkerSession(
+                    model=model,
+                    env_record=_FakeEnvRecord(),
+                    execution_mode="real",
+                    replica_id=0,
+                    gpu_assignment=[0],
+                ):
+                    pass
+
+        message = str(context.exception)
+        self.assertIn("failed during startup", message)
+        self.assertIn("EchoTestAdapter crash_on_load", message)
+        self.assertNotIn("Broken pipe", message)
+
+    def test_worker_exit_before_task_started_reports_accept_failure(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        registry_path = self._write_registry(tmpdir, {})
+        registry = load_registry(registry_path)
+        model = registry.get_model("Echo-Test")
+        missing_task_path = tmpdir / "missing_task.json"
+        result_path = tmpdir / "missing_task.result.json"
+        prepared_task = SimpleNamespace(
+            task_file=missing_task_path,
+            result_file=result_path,
+            payload=SimpleNamespace(task_id="task_missing"),
+        )
+
+        session = _PersistentWorkerSession(
+            model=model,
+            env_record=_FakeEnvRecord(),
+            execution_mode="real",
+            replica_id=0,
+            gpu_assignment=[],
+        )
+        with self._patched_worker_command():
+            with session:
+                with self.assertRaises(RunFlowError) as context:
+                    session.run_task(prepared_task)  # type: ignore[arg-type]
+        self.assertIn("before accepting task task_missing", str(context.exception))
+        session.close()
+
+    def test_worker_exit_during_task_reports_last_task_context(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        registry_path = self._write_registry(tmpdir, {"hard_exit_in_execute": True})
+        registry = load_registry(registry_path)
+        model = registry.get_model("Echo-Test")
+        prepared_task = self._write_task(
+            tmpdir=tmpdir,
+            task_id="task_001",
+            prompt_id="p001",
+            prompt_text="boom",
+        )
+
+        session = _PersistentWorkerSession(
+            model=model,
+            env_record=_FakeEnvRecord(),
+            execution_mode="real",
+            replica_id=0,
+            gpu_assignment=[],
+        )
+        with self._patched_worker_command():
+            with session:
+                with self.assertRaises(RunFlowError) as context:
+                    session.run_task(prepared_task)
+
+        message = str(context.exception)
+        self.assertIn("while executing task task_001", message)
+        self.assertIn("Worker exit code", message)
+        self.assertNotIn("Broken pipe", message)
+
+    def _write_registry(self, tmpdir: Path, weight_overrides: dict[str, object]) -> Path:
         registry_path = tmpdir / "test_models.json"
         load_counter_path = tmpdir / "load_counter.txt"
-        workdir_one = tmpdir / "workdir_one"
-        workdir_two = tmpdir / "workdir_two"
-        task_path_one = tmpdir / "task_001.json"
-        task_path_two = tmpdir / "task_002.json"
-        result_path_one = tmpdir / "task_001.result.json"
-        result_path_two = tmpdir / "task_002.result.json"
-
+        weights = {"load_counter_file": str(load_counter_path), **weight_overrides}
         registry_path.write_text(
             textwrap.dedent(
                 f"""
@@ -75,9 +186,7 @@ class PersistentWorkerTests(unittest.TestCase):
                         "gpu_required": false,
                         "env_spec": "flux_image"
                       }},
-                      "weights": {{
-                        "load_counter_file": "{load_counter_path}"
-                      }}
+                      "weights": {json.dumps(weights)}
                     }}
                   }}
                 }}
@@ -85,126 +194,56 @@ class PersistentWorkerTests(unittest.TestCase):
             ).strip(),
             encoding="utf-8",
         )
+        return registry_path
 
-        for task_path, result_path, workdir, task_id, prompt_id, prompt_text in (
-            (task_path_one, result_path_one, workdir_one, "task_001", "p001", "hello world"),
-            (task_path_two, result_path_two, workdir_two, "task_002", "p002", "hello again"),
-        ):
-            task_path.write_text(
-                json.dumps(
-                    {
-                        "task_id": task_id,
-                        "model_name": "Echo-Test",
-                        "execution_mode": "real",
-                        "worker_strategy": "persistent_worker",
-                        "prompts": [
-                            {
-                                "prompt_id": prompt_id,
-                                "prompt": prompt_text,
-                                "language": "en",
-                            }
-                        ],
-                        "params": {},
-                        "workdir": str(workdir),
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "aigc.runtime.persistent_worker",
-                "--model-name",
-                "Echo-Test",
-                "--execution-mode",
-                "real",
-                "--registry-file",
-                str(registry_path),
+    def _write_task(
+        self,
+        *,
+        tmpdir: Path,
+        task_id: str,
+        prompt_id: str,
+        prompt_text: str,
+    ):
+        workdir = tmpdir / task_id
+        task_path = tmpdir / f"{task_id}.json"
+        result_path = tmpdir / f"{task_id}.result.json"
+        payload = {
+            "task_id": task_id,
+            "model_name": "Echo-Test",
+            "execution_mode": "real",
+            "worker_strategy": "persistent_worker",
+            "prompts": [
+                {
+                    "prompt_id": prompt_id,
+                    "prompt": prompt_text,
+                    "language": "en",
+                }
             ],
-            cwd=ROOT,
-            env={"PYTHONPATH": str(ROOT / "src")},
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
+            "params": {},
+            "workdir": str(workdir),
+        }
+        task_path.write_text(json.dumps(payload), encoding="utf-8")
+        return SimpleNamespace(
+            task_file=task_path,
+            result_file=result_path,
+            payload=SimpleNamespace(task_id=task_id, workdir=str(workdir)),
         )
 
-        try:
-            ready_event = json.loads(process.stdout.readline())
-            self.assertEqual(ready_event["event"], "ready")
+    def _patched_worker_command(self):
+        def fake_build_worker_command_and_env(
+            *,
+            env_record,
+            model_name,
+            execution_mode,
+            module_name,
+            extra_args,
+            env_overrides=None,
+        ):
+            env = os.environ.copy()
+            pythonpath = str(REPO_ROOT / "src")
+            env["PYTHONPATH"] = pythonpath
+            if env_overrides:
+                env.update(env_overrides)
+            return [sys.executable, "-m", module_name, *extra_args], env
 
-            process.stdin.write(
-                json.dumps(
-                    {
-                        "command": "run_task",
-                        "task_file": str(task_path_one),
-                        "result_file": str(result_path_one),
-                    }
-                )
-                + "\n"
-            )
-            process.stdin.flush()
-            event_one = json.loads(process.stdout.readline())
-            self.assertEqual(event_one["event"], "task_complete")
-            self.assertEqual(event_one["status"], "success")
-
-            process.stdin.write(
-                json.dumps(
-                    {
-                        "command": "run_task",
-                        "task_file": str(task_path_two),
-                        "result_file": str(result_path_two),
-                    }
-                )
-                + "\n"
-            )
-            process.stdin.flush()
-            event_two = json.loads(process.stdout.readline())
-            self.assertEqual(event_two["event"], "task_complete")
-            self.assertEqual(event_two["status"], "success")
-
-            process.stdin.write(json.dumps({"command": "shutdown"}) + "\n")
-            process.stdin.flush()
-            shutdown_event = json.loads(process.stdout.readline())
-            self.assertEqual(shutdown_event["event"], "shutdown")
-        finally:
-            if process.stdin is not None:
-                process.stdin.close()
-            stderr_output = process.stderr.read() if process.stderr is not None else ""
-            if process.stdout is not None:
-                process.stdout.close()
-            if process.stderr is not None:
-                process.stderr.close()
-            process.wait(timeout=10)
-
-        self.assertEqual(process.returncode, 0, msg=stderr_output)
-        self.assertEqual(load_counter_path.read_text(encoding="utf-8"), "1")
-
-        result_one = json.loads(result_path_one.read_text(encoding="utf-8"))
-        result_two = json.loads(result_path_two.read_text(encoding="utf-8"))
-        self.assertEqual(result_one["model_result"]["status"], "success")
-        self.assertEqual(result_two["model_result"]["status"], "success")
-        self.assertTrue((workdir_one / "p001.txt").exists())
-        self.assertTrue((workdir_two / "p002.txt").exists())
-
-        self.assertRegex(
-            stderr_output,
-            r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[worker\]\[Echo-Test\]\[replica=0\] GPUs=\[\] starting persistent worker",
-        )
-        self.assertIn("[worker][Echo-Test][replica=0] GPUs=[] loading model...", stderr_output)
-        self.assertIn("[worker][Echo-Test][replica=0] GPUs=[] model loaded successfully", stderr_output)
-        self.assertIn("[worker][Echo-Test][replica=0] GPUs=[] ready", stderr_output)
-        self.assertIn("[worker][Echo-Test][replica=0] GPUs=[] running task task_001 batch_size=1", stderr_output)
-        self.assertIn("[worker][Echo-Test][replica=0] GPUs=[] running task task_002 batch_size=1", stderr_output)
-        self.assertIn("[worker][Echo-Test][replica=0] GPUs=[] shutting down", stderr_output)
-
-    def _readline_from(self, lines: list[str]):
-        iterator = iter(lines)
-
-        def readline() -> str:
-            return next(iterator, "")
-
-        return readline
+        return patch("aigc.run_flow._build_worker_command_and_env", side_effect=fake_build_worker_command_and_env)

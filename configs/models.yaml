@@ -222,11 +222,14 @@
         "supported_languages": ["en", "zh"]
       },
       "runtime": {
-        "execution_mode": "external_process",
+        "execution_mode": "in_process",
         "gpu_required": true,
         "min_vram_gb": 80,
         "recommended_vram_gb": 80,
-        "env_spec": "wan_t2v_diffusers"
+        "env_spec": "wan_t2v_diffusers",
+        "worker_strategy": "persistent_worker",
+        "gpus_per_replica": 1,
+        "supports_multi_replica": false
       },
       "weights": {
         "hf_repo": "Wan-AI/Wan2.2-T2V-A14B-Diffusers"

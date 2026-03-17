@@ -467,7 +467,7 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
         return list(frames[0])
 
 
-class WanT2VDiffusersAdapter(MockCapableVideoAdapter):
+class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
     capabilities = AdapterCapabilities(
         supports_batch_prompts=False,
         max_batch_size=1,
@@ -475,8 +475,9 @@ class WanT2VDiffusersAdapter(MockCapableVideoAdapter):
         supports_negative_prompt=True,
         supports_seed=True,
         output_types=["video"],
+        supports_persistent_worker=True,
+        preferred_worker_strategy="persistent_worker",
     )
-    real_execution_mode = "external_process"
     pipeline_class_name = "WanPipeline"
     default_width = 1280
     default_height = 720
@@ -488,119 +489,83 @@ class WanT2VDiffusersAdapter(MockCapableVideoAdapter):
     def extra_prepare_inputs(self, params: dict[str, Any]) -> dict[str, Any]:
         return {"guidance_scale_2": float(params.get("guidance_scale_2", 3.0))}
 
-    def build_real_command(
+    def validate_model_reference(self, model_ref: str) -> None:
+        validate_local_diffusers_reference(
+            model_config=self.model_config,
+            model_ref=model_ref,
+            required_files=("model_index.json", "vae/config.json"),
+            adapter_specific_hint=(
+                "For Wan2.2-T2V-A14B-Diffusers, weights_path/local_path should point to the "
+                "local Diffusers weights directory for Wan-AI/Wan2.2-T2V-A14B-Diffusers."
+            ),
+        )
+
+    def load_pipeline(
         self,
         *,
-        prompts: list[str],
-        prompt_ids: list[str],
-        params: dict[str, Any],
-        workdir: str,
-        inputs: dict[str, Any],
-    ) -> list[str]:
-        prompt = prompts[0]
-        script_path, checkpoint_dir = self._resolve_wan_script_and_checkpoint(params=params)
-        size = f"{inputs['width']}*{inputs['height']}"
-        max_gpus = int(
-            params.get("max_gpus")
-            or self.model_config.runtime.get("max_gpus")
-            or 1
+        pipeline_class: Any,
+        torch: Any,
+        device: str,
+        dtype: Any,
+    ) -> Any:
+        from diffusers import AutoencoderKLWan
+
+        load_kwargs: dict[str, Any] = {"torch_dtype": dtype}
+        cache_dir = resolve_video_cache_dir(self.model_config)
+        if cache_dir:
+            load_kwargs["cache_dir"] = cache_dir
+        model_ref = resolve_video_model_reference(self.model_config)
+        self.validate_model_reference(model_ref)
+        vae = AutoencoderKLWan.from_pretrained(
+            model_ref,
+            subfolder="vae",
+            torch_dtype=torch.float32,
+            **({"cache_dir": cache_dir} if cache_dir else {}),
         )
-        if max_gpus > 1:
-            return [
-                "torchrun",
-                f"--nproc_per_node={max_gpus}",
-                str(script_path),
-                "--task",
-                "t2v-A14B",
-                "--size",
-                size,
-                "--ckpt_dir",
-                checkpoint_dir,
-                "--dit_fsdp",
-                "--t5_fsdp",
-                "--ulysses_size",
-                str(max_gpus),
-                "--prompt",
-                prompt,
-            ]
-        return [
-            "python",
-            str(script_path),
-            "--task",
-            "t2v-A14B",
-            "--size",
-            size,
-            "--ckpt_dir",
-            checkpoint_dir,
-            "--offload_model",
-            "True",
-            "--convert_model_dtype",
-            "--prompt",
-            prompt,
-        ]
+        pipe = pipeline_class.from_pretrained(
+            model_ref,
+            vae=vae,
+            **load_kwargs,
+        )
+        if hasattr(pipe, "to"):
+            pipe.to(device)
+        if getattr(pipe, "vae", None) is not None and hasattr(pipe.vae, "enable_tiling"):
+            pipe.vae.enable_tiling()
+        return pipe
 
-    def real_command_cwd(self, *, params: dict[str, Any], workdir: str) -> str | None:
-        return workdir
-
-    def collect(
+    def generate_frames(
         self,
+        *,
+        pipe: Any,
         plan: ExecutionPlan,
-        exec_result: ExecutionResult,
-        prompts: list[str],
-        prompt_ids: list[str],
-        workdir: str,
-    ) -> ModelResult:
-        expected_outputs = dict(plan.inputs.get("expected_outputs", {}))
-        if len(prompt_ids) == 1:
-            expected_path = Path(str(expected_outputs.get(prompt_ids[0], {}).get("path", "")))
-            if not expected_path.exists():
-                recovered = recover_single_video_output(workdir=workdir, exclude=expected_path)
-                if recovered is not None:
-                    expected_path.parent.mkdir(parents=True, exist_ok=True)
-                    recovered.replace(expected_path)
-        return super().collect(
-            plan=plan,
-            exec_result=exec_result,
-            prompts=prompts,
-            prompt_ids=prompt_ids,
-            workdir=workdir,
+        prompt: str,
+        negative_prompt: str,
+        width: int,
+        height: int,
+        num_frames: int,
+        num_inference_steps: int,
+        guidance_scale: float,
+        seed: int,
+        torch: Any,
+        device: str,
+    ) -> list[Any]:
+        generator_device = "cuda" if device == "cuda" else "cpu"
+        generator = torch.Generator(generator_device).manual_seed(seed)
+        output = pipe(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            guidance_scale=guidance_scale,
+            guidance_scale_2=float(plan.inputs.get("guidance_scale_2", 3.0)),
+            num_inference_steps=num_inference_steps,
+            generator=generator,
         )
-
-    def _resolve_wan_script_and_checkpoint(self, *, params: dict[str, Any]) -> tuple[Path, str]:
-        repo_dir = Path(
-            str(
-                params.get("repo_dir")
-                or self.model_config.weights.get("repo_path")
-                or ""
-            )
-        )
-        if not repo_dir.exists():
-            raise RuntimeError(
-                f"{self.model_config.name} repo_path does not exist: {repo_dir}. "
-                "Set repo_path to the local Wan2.2 GitHub checkout."
-            )
-        script_path = repo_dir / "generate.py"
-        if not script_path.exists():
-            raise RuntimeError(
-                f"{self.model_config.name} repo_path does not contain generate.py: {repo_dir}. "
-                "Set repo_path to the local Wan2.2 GitHub checkout root."
-            )
-        checkpoint_dir = str(
-            params.get("checkpoint_dir")
-            or params.get("local_model_path")
-            or self.model_config.weights.get("weights_path")
-            or self.model_config.weights.get("local_path")
-            or ""
-        )
-        if not checkpoint_dir:
-            raise RuntimeError(
-                f"{self.model_config.name} is missing weights_path/local_path for the Wan2.2 checkpoint directory."
-            )
-        if not Path(checkpoint_dir).exists():
-            raise RuntimeError(
-                f"{self.model_config.name} checkpoint directory does not exist: {checkpoint_dir}"
-            )
-        return script_path, checkpoint_dir
+        frames = getattr(output, "frames", None)
+        if not frames:
+            raise RuntimeError(f"{self.model_config.name} did not return video frames.")
+        return list(frames[0])
 
 
 class HunyuanVideo15Adapter(DiffusersVideoAdapterBase):

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import inspect
 import os
 import re
+import secrets
 import shlex
+import queue
 import subprocess
 import sys
 import threading
-from dataclasses import asdict, dataclass
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
@@ -19,6 +23,12 @@ from aigc.prompts import PromptRecord, load_prompts
 from aigc.registry.models import ModelInfo
 from aigc.registry import load_registry
 from aigc.run_store import write_failures_summary, write_run_manifest
+from aigc.runtime.persistent_ipc import (
+    PersistentWorkerQueueManager,
+    create_queue_method_names,
+    register_parent_queues,
+    unregister_parent_queues,
+)
 from aigc.runtime.payloads import TaskPayload, TaskPrompt
 from aigc.settings import get_runs_root
 from aigc.utils.progress import (
@@ -78,6 +88,16 @@ class ReplicaPlan:
     replica_id: int
     gpu_assignment: list[int]
     tasks: list[PreparedTask]
+
+
+@dataclass(slots=True)
+class _WorkerCrashContext:
+    phase: str
+    task_id: str | None
+    exitcode: int | None
+    error: str
+    traceback_text: str = ""
+    log_tail: list[str] = field(default_factory=list)
 
 
 def run_single_model(
@@ -142,7 +162,8 @@ def run_models(
     workdir_root = run_root / "workdir"
     exports_dir = run_root / "exports"
     artifacts_root = run_root / "artifacts"
-    for directory in (run_root, tasks_dir, workdir_root, exports_dir, artifacts_root):
+    workers_root = run_root / "workers"
+    for directory in (run_root, tasks_dir, workdir_root, exports_dir, artifacts_root, workers_root):
         directory.mkdir(parents=True, exist_ok=True)
     base_progress = progress or NullRunProgress()
     console_logging_enabled = not isinstance(base_progress, NullRunProgress)
@@ -296,6 +317,7 @@ def run_models(
                         execution_mode=resolved_execution_mode,
                         replica_id=replica_plan.replica_id,
                         gpu_assignment=replica_plan.gpu_assignment,
+                        replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
                         log_callback=lambda line: run_logger.log(
                             line,
                             to_console=console_logging_enabled,
@@ -319,6 +341,7 @@ def run_models(
                             replica_plans=replica_plans,
                             execution_mode=resolved_execution_mode,
                             run_root=run_root,
+                            workers_root=workers_root,
                             failures=failures,
                             progress=progress,
                             log_callback=lambda line: run_logger.log(
@@ -517,6 +540,7 @@ class _PersistentWorkerSession:
         execution_mode: str,
         replica_id: int = 0,
         gpu_assignment: list[int] | None = None,
+        replica_log_path: Path | None = None,
         log_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.model = model
@@ -524,17 +548,32 @@ class _PersistentWorkerSession:
         self.execution_mode = execution_mode
         self.replica_id = replica_id
         self.gpu_assignment = list(gpu_assignment or [])
+        self.replica_log_path = replica_log_path
         self.log_callback = log_callback
         self.process: subprocess.Popen[str] | None = None
+        self._stdout_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
+        self._replica_log_handle = None
+        self._state = "starting"
+        self._current_task_id: str | None = None
+        self._recent_log_lines: deque[str] = deque(maxlen=50)
+        self._authkey_hex = secrets.token_hex(16)
+        self._command_method, self._event_method, self._log_method = create_queue_method_names()
+        self._manager_socket_path = Path("/tmp") / (
+            f"aigc_{_slugify(self.model.name)}_{self.replica_id}_{self._authkey_hex[:10]}.sock"
+        )
+        self._manager = None
+        self._manager_server = None
+        self._manager_thread: threading.Thread | None = None
+        self._command_queue = None
+        self._event_queue = None
+        self._log_queue = None
 
     def __enter__(self) -> "_PersistentWorkerSession":
-        command, env = _build_worker_command_and_env(
-            env_record=self.env_record,
-            model_name=self.model.name,
-            execution_mode=self.execution_mode,
-            module_name="aigc.runtime.persistent_worker",
-            extra_args=[
+        try:
+            self._open_replica_log()
+            self._start_queue_manager()
+            extra_args = [
                 "--model-name",
                 self.model.name,
                 "--execution-mode",
@@ -543,31 +582,63 @@ class _PersistentWorkerSession:
                 str(self.replica_id),
                 "--gpu-assignment",
                 ",".join(str(gpu_id) for gpu_id in self.gpu_assignment),
-            ],
-            env_overrides=_build_replica_env_overrides(self.gpu_assignment),
-        )
-        self.process = subprocess.Popen(
-            command,
-            cwd=REPO_ROOT,
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-        self._start_stderr_pump()
-        event = self._read_event()
-        if event.get("event") != "ready":
-            raise RunFlowError(
-                f"Persistent worker for {self.model.name} replica={self.replica_id} did not become ready: {event}"
+                "--manager-address",
+                str(self._manager.address),
+                "--manager-authkey",
+                self._authkey_hex,
+                "--command-method",
+                self._command_method,
+                "--event-method",
+                self._event_method,
+                "--log-method",
+                self._log_method,
+            ]
+            if self.model.registry_source:
+                extra_args.extend(["--registry-file", str(self.model.registry_source)])
+            command, env = _build_worker_command_and_env(
+                env_record=self.env_record,
+                model_name=self.model.name,
+                execution_mode=self.execution_mode,
+                module_name="aigc.runtime.persistent_worker",
+                extra_args=extra_args,
+                env_overrides=_build_replica_env_overrides(self.gpu_assignment),
             )
-        return self
+            self.process = subprocess.Popen(
+                command,
+                cwd=REPO_ROOT,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+            self._start_stdout_pump()
+            self._start_stderr_pump()
+            event = self._wait_for_event(
+                expected_event="ready",
+                phase="startup",
+                task_id=None,
+            )
+            self._state = "ready"
+            if event.get("event") != "ready":
+                raise RunFlowError(
+                    f"Persistent worker for {self.model.name} replica={self.replica_id} did not become ready: {event}"
+                )
+            return self
+        except Exception:
+            self.close()
+            raise
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            if exc_type is None:
+                raise
 
     def run_task(self, prepared_task: PreparedTask) -> tuple[int, str]:
+        self._current_task_id = prepared_task.payload.task_id
+        self._state = "running_task"
         self._write_command(
             {
                 "command": "run_task",
@@ -575,68 +646,114 @@ class _PersistentWorkerSession:
                 "result_file": str(prepared_task.result_file),
             }
         )
-        event = self._read_event()
+        started_event = self._wait_for_event(
+            expected_event="task_started",
+            phase="accept_task",
+            task_id=prepared_task.payload.task_id,
+        )
+        if started_event.get("task_id") != prepared_task.payload.task_id:
+            raise RunFlowError(
+                f"Persistent worker for {self.model.name} replica={self.replica_id} accepted an unexpected task event: {started_event}"
+            )
+        event = self._wait_for_event(
+            expected_event="task_complete",
+            phase="task_execution",
+            task_id=prepared_task.payload.task_id,
+        )
         if event.get("event") != "task_complete":
             raise RunFlowError(
                 f"Persistent worker for {self.model.name} replica={self.replica_id} returned unexpected event: {event}"
             )
+        self._state = "ready"
+        self._current_task_id = None
         status = str(event.get("status", "failed"))
         error = str(event.get("error", "")).strip()
         return (0 if status != "failed" else 1), error
 
     def close(self) -> None:
+        try:
+            self._close_process()
+        finally:
+            self._shutdown_queue_manager()
+            self._close_replica_log()
+
+    def _close_process(self) -> None:
         if self.process is None:
+            self._state = "stopped"
             return
         try:
-            if self.process.poll() is None and self.process.stdin is not None:
+            if self.process.poll() is None and self._state not in {"failed", "stopped"}:
+                self._state = "shutting_down"
                 self._write_command({"command": "shutdown"})
-                self._read_event(allow_eof=True)
-                self.process.stdin.close()
+                self._wait_for_event(
+                    expected_event="shutdown",
+                    phase="shutdown",
+                    task_id=self._current_task_id,
+                    allow_process_exit=True,
+                )
         finally:
             returncode = self.process.wait(timeout=30)
+            self._drain_log_queue()
             if self._stderr_thread is not None:
                 self._stderr_thread.join(timeout=5)
+            if self._stdout_thread is not None:
+                self._stdout_thread.join(timeout=5)
             if self.process.stdout is not None:
                 self.process.stdout.close()
             if self.process.stderr is not None:
                 self.process.stderr.close()
             self.process = None
-            if returncode != 0:
+            if returncode != 0 and self._state != "failed":
                 raise RunFlowError(
                     f"Persistent worker for {self.model.name} replica={self.replica_id} exited with code {returncode}."
                 )
+            self._state = "stopped"
 
     def _write_command(self, payload: dict[str, object]) -> None:
-        if self.process is None or self.process.stdin is None:
+        if self._command_queue is None:
             raise RunFlowError(
                 f"Persistent worker for {self.model.name} replica={self.replica_id} is not writable."
             )
-        self.process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        self.process.stdin.flush()
+        if self.process is None or self.process.poll() is not None:
+            return
+        self._command_queue.put(payload)
 
-    def _read_event(self, *, allow_eof: bool = False) -> dict[str, object]:
-        if self.process is None or self.process.stdout is None:
+    def _wait_for_event(
+        self,
+        *,
+        expected_event: str,
+        phase: str,
+        task_id: str | None,
+        allow_process_exit: bool = False,
+    ) -> dict[str, object]:
+        if self._event_queue is None:
             raise RunFlowError(
                 f"Persistent worker for {self.model.name} replica={self.replica_id} is not readable."
             )
         while True:
-            line = self.process.stdout.readline()
-            if not line:
-                if allow_eof:
-                    return {}
-                raise RunFlowError(
-                    f"Persistent worker for {self.model.name} replica={self.replica_id} exited before emitting the next event."
-                )
-            if not line.strip():
-                continue
             try:
-                return json.loads(line)
-            except json.JSONDecodeError:
-                if self.log_callback is not None:
-                    self.log_callback(
-                        f"[worker][{self.model.name}][replica={self.replica_id}] stdout: {line.rstrip()}"
-                    )
+                event = self._event_queue.get(timeout=0.2)
+            except queue.Empty:
+                self._drain_log_queue()
+                if self.process is not None and self.process.poll() is not None:
+                    if allow_process_exit:
+                        return {}
+                    raise self._build_process_exit_error(phase=phase, task_id=task_id)
                 continue
+            self._drain_log_queue()
+            event_name = str(event.get("event", ""))
+            if event_name == expected_event:
+                return event
+            if event_name == "worker_failed":
+                if event.get("task_id") is None and task_id is not None:
+                    event["task_id"] = task_id
+                self._state = "failed"
+                raise self._build_worker_failed_error(event)
+            if event_name == "shutdown" and expected_event == "shutdown":
+                return event
+            self._log_line(
+                f"[worker][{self.model.name}][replica={self.replica_id}] supervisor ignored event={event_name}"
+            )
 
     def _start_stderr_pump(self) -> None:
         if self.process is None or self.process.stderr is None:
@@ -646,8 +763,8 @@ class _PersistentWorkerSession:
             assert self.process is not None and self.process.stderr is not None
             for raw_line in self.process.stderr:
                 text = raw_line.rstrip("\n")
-                if text and self.log_callback is not None:
-                    self.log_callback(text)
+                if text:
+                    self._log_line(text)
 
         self._stderr_thread = threading.Thread(
             target=pump,
@@ -655,6 +772,159 @@ class _PersistentWorkerSession:
             daemon=True,
         )
         self._stderr_thread.start()
+
+    def _start_stdout_pump(self) -> None:
+        if self.process is None or self.process.stdout is None:
+            return
+
+        def pump() -> None:
+            assert self.process is not None and self.process.stdout is not None
+            for raw_line in self.process.stdout:
+                text = raw_line.rstrip("\n")
+                if text:
+                    self._log_line(
+                        f"[worker][{self.model.name}][replica={self.replica_id}] stdout: {text}"
+                    )
+
+        self._stdout_thread = threading.Thread(
+            target=pump,
+            name=f"{_slugify(self.model.name)}-replica-{self.replica_id}-stdout",
+            daemon=True,
+        )
+        self._stdout_thread.start()
+
+    def _start_queue_manager(self) -> None:
+        command_queue = queue.Queue()
+        event_queue = queue.Queue()
+        log_queue = queue.Queue()
+        self._manager_socket_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._manager_socket_path.exists():
+            self._manager_socket_path.unlink()
+        register_parent_queues(
+            command_method=self._command_method,
+            event_method=self._event_method,
+            log_method=self._log_method,
+            command_queue=command_queue,
+            event_queue=event_queue,
+            log_queue=log_queue,
+        )
+        manager = PersistentWorkerQueueManager(
+            address=str(self._manager_socket_path),
+            authkey=bytes.fromhex(self._authkey_hex),
+        )
+        server = manager.get_server()
+        thread = threading.Thread(
+            target=server.serve_forever,
+            name=f"{_slugify(self.model.name)}-replica-{self.replica_id}-ipc",
+            daemon=True,
+        )
+        thread.start()
+        self._manager = manager
+        self._manager_server = server
+        self._manager_thread = thread
+        self._command_queue = command_queue
+        self._event_queue = event_queue
+        self._log_queue = log_queue
+
+    def _shutdown_queue_manager(self) -> None:
+        self._drain_log_queue()
+        if self._manager_server is not None:
+            stop_event = getattr(self._manager_server, "stop_event", None)
+            if stop_event is not None:
+                stop_event.set()
+            listener = getattr(self._manager_server, "listener", None)
+            if listener is not None:
+                with contextlib.suppress(Exception):
+                    listener.close()
+            self._manager_server = None
+        if self._manager_thread is not None:
+            self._manager_thread.join(timeout=2)
+            self._manager_thread = None
+        self._manager = None
+        if self._manager_socket_path.exists():
+            self._manager_socket_path.unlink()
+        unregister_parent_queues(self._command_method, self._event_method, self._log_method)
+        self._command_queue = None
+        self._event_queue = None
+        self._log_queue = None
+
+    def _drain_log_queue(self) -> None:
+        if self._log_queue is None:
+            return
+        while True:
+            try:
+                line = self._log_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._log_line(str(line))
+
+    def _build_process_exit_error(self, *, phase: str, task_id: str | None) -> RunFlowError:
+        exitcode = self.process.poll() if self.process is not None else None
+        context = _WorkerCrashContext(
+            phase=phase,
+            task_id=task_id,
+            exitcode=exitcode,
+            error="worker exited unexpectedly",
+            log_tail=list(self._recent_log_lines),
+        )
+        self._state = "failed"
+        return RunFlowError(self._format_crash_context(context))
+
+    def _build_worker_failed_error(self, event: dict[str, object]) -> RunFlowError:
+        context = _WorkerCrashContext(
+            phase=str(event.get("phase", "unknown")),
+            task_id=str(event.get("task_id")) if event.get("task_id") is not None else None,
+            exitcode=self.process.poll() if self.process is not None else None,
+            error=str(event.get("error", "worker_failed")),
+            traceback_text=str(event.get("traceback", "")),
+            log_tail=list(self._recent_log_lines),
+        )
+        return RunFlowError(self._format_crash_context(context))
+
+    def _format_crash_context(self, context: _WorkerCrashContext) -> str:
+        lines = [
+            f"Persistent worker for {self.model.name} replica={self.replica_id} failed during {context.phase}.",
+        ]
+        if context.task_id:
+            if context.phase in {"accept_task", "task_dispatch"}:
+                lines.append(f"Worker died before accepting task {context.task_id}.")
+            elif context.phase == "task_execution":
+                lines.append(f"Worker died while executing task {context.task_id}.")
+            else:
+                lines.append(f"Last task: {context.task_id}")
+        if context.exitcode is not None:
+            lines.append(f"Worker exit code: {context.exitcode}")
+        if context.error:
+            lines.append(f"Reason: {context.error}")
+        if context.traceback_text.strip():
+            lines.append(f"Traceback:\n{context.traceback_text.strip()}")
+        if context.log_tail:
+            lines.append("Recent worker logs:")
+            lines.extend(context.log_tail[-10:])
+        return "\n".join(lines)
+
+    def _open_replica_log(self) -> None:
+        if self.replica_log_path is None:
+            return
+        self.replica_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._replica_log_handle = self.replica_log_path.open("a", encoding="utf-8")
+
+    def _close_replica_log(self) -> None:
+        if self._replica_log_handle is None:
+            return
+        self._replica_log_handle.close()
+        self._replica_log_handle = None
+
+    def _log_line(self, line: str) -> None:
+        text = line.rstrip("\n")
+        if not text:
+            return
+        self._recent_log_lines.append(text)
+        if self._replica_log_handle is not None:
+            self._replica_log_handle.write(text + "\n")
+            self._replica_log_handle.flush()
+        if self.log_callback is not None:
+            self.log_callback(text)
 
 
 def _execute_prepared_task(
@@ -1067,6 +1337,10 @@ def _log_replica_plan(
         )
 
 
+def _replica_log_path(workers_root: Path, model_name: str, replica_id: int) -> Path:
+    return workers_root / _slugify(model_name) / f"replica_{replica_id}.log"
+
+
 def _run_persistent_worker_replicas(
     *,
     model: ModelInfo,
@@ -1074,6 +1348,7 @@ def _run_persistent_worker_replicas(
     replica_plans: list[ReplicaPlan],
     execution_mode: str,
     run_root: Path,
+    workers_root: Path,
     failures: list[dict[str, object]],
     progress: RunProgress,
     log_callback: Callable[[str], None] | None = None,
@@ -1082,6 +1357,7 @@ def _run_persistent_worker_replicas(
     task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
     errors: list[BaseException] = []
     threads: list[threading.Thread] = []
+    stop_event = threading.Event()
 
     def run_replica(replica_plan: ReplicaPlan) -> None:
         try:
@@ -1091,9 +1367,12 @@ def _run_persistent_worker_replicas(
                 execution_mode=execution_mode,
                 replica_id=replica_plan.replica_id,
                 gpu_assignment=replica_plan.gpu_assignment,
+                replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
                 log_callback=log_callback,
             ) as session:
                 for prepared_task in replica_plan.tasks:
+                    if stop_event.is_set():
+                        break
                     result_payload = _execute_prepared_task(
                         prepared_task=prepared_task,
                         runner=lambda task, session=session: session.run_task(task),
@@ -1107,6 +1386,7 @@ def _run_persistent_worker_replicas(
         except BaseException as exc:  # pragma: no cover - exercised via thread/integration path
             with lock:
                 errors.append(exc)
+                stop_event.set()
 
     for replica_plan in replica_plans:
         thread = threading.Thread(
@@ -1213,13 +1493,6 @@ def _default_generation_params(model: ModelInfo, prompts: list[PromptRecord]) ->
                 "num_inference_steps": 40,
                 "guidance_scale": 4.0,
                 "guidance_scale_2": 3.0,
-                "max_gpus": model.max_gpus,
-                "repo_dir": str(model.weights["repo_path"]) if model.weights.get("repo_path") else None,
-                "local_model_path": str(
-                    model.weights.get("weights_path") or model.weights.get("local_path")
-                )
-                if (model.weights.get("weights_path") or model.weights.get("local_path"))
-                else None,
             }
         )
     elif model.name == "CogVideoX-5B":

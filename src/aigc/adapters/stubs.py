@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from aigc.adapters.base import (
@@ -70,6 +71,8 @@ class EchoTestAdapter(BaseAdapter):
 
     def load_for_persistent_worker(self) -> None:
         counter_file = self.model_config.weights.get("load_counter_file")
+        if self.model_config.weights.get("crash_on_load"):
+            raise RuntimeError("EchoTestAdapter crash_on_load")
         if not counter_file:
             return
         path = Path(str(counter_file))
@@ -83,6 +86,8 @@ class EchoTestAdapter(BaseAdapter):
         params: dict[str, object],
         workdir: str,
     ) -> ExecutionPlan:
+        if self.model_config.weights.get("crash_before_prepare"):
+            raise RuntimeError("EchoTestAdapter crash_before_prepare")
         return ExecutionPlan(mode="in_process", inputs={"prompt_ids": prompt_ids})
 
     def execute(
@@ -92,6 +97,10 @@ class EchoTestAdapter(BaseAdapter):
         params: dict[str, object],
         workdir: str,
     ) -> ExecutionResult:
+        if self.model_config.weights.get("hard_exit_in_execute"):
+            os._exit(17)
+        if self.model_config.weights.get("crash_in_execute"):
+            raise RuntimeError("EchoTestAdapter crash_in_execute")
         prompt_ids = list(plan.inputs.get("prompt_ids", []))
         outputs = {}
         for prompt_id, prompt in zip(prompt_ids, prompts, strict=True):
