@@ -8,6 +8,13 @@
 # paths:
 #   runs_root: /shared/aigc_runs
 #
+# Optional generation defaults:
+# generation:
+#   default_seed: 12345
+#
+# If `generation.default_seed` is omitted, runs are random by default unless a
+# per-prompt or per-run seed is provided explicitly.
+#
 # `aigc run --out ...` still takes precedence for one-off runs.
 
 paths:

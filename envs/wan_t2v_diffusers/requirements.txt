@@ -16,4 +16,3 @@ easydict
 ftfy
 dashscope
 imageio-ffmpeg
-flash_attn

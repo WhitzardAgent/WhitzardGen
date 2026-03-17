@@ -109,7 +109,7 @@ aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/canary_video.csv -
 Before real execution on a GPU cluster, edit:
 
 - `configs/local_models.yaml`
-- `configs/local_runtime.yaml` if you want all run outputs under a shared root
+- `configs/local_runtime.yaml` if you want all run outputs under a shared root or a global default seed
 
 Example:
 
@@ -171,6 +171,9 @@ Example:
 ```yaml
 paths:
   runs_root: /shared/aigc_runs
+
+generation:
+  default_seed: 12345
 ```
 
 After that, the default output location for:
@@ -184,6 +187,10 @@ After that, the default output location for:
 - dataset exports
 
 will all move under `/shared/aigc_runs/<run_id>/...`.
+
+If `generation.default_seed` is set, runs will reuse that seed unless a prompt
+or explicit run parameter overrides it. If it is omitted, the framework does
+not inject a fixed seed, so diffusers-based generation stays random by default.
 
 One-off runs can still override this with:
 

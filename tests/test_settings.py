@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.settings import get_runs_root, load_runtime_settings
+from aigc.settings import get_default_seed, get_runs_root, load_runtime_settings
 
 
 class RuntimeSettingsTests(unittest.TestCase):
@@ -20,7 +20,26 @@ class RuntimeSettingsTests(unittest.TestCase):
         settings = load_runtime_settings(config_path)
 
         self.assertEqual(settings.runs_root, tmpdir / "shared_runs")
+        self.assertIsNone(settings.default_seed)
         self.assertEqual(settings.config_path, config_path)
+
+    def test_load_runtime_settings_reads_default_seed(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        config_path = tmpdir / "local_runtime.yaml"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "paths": {"runs_root": str(tmpdir / "shared_runs")},
+                    "generation": {"default_seed": 321},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        settings = load_runtime_settings(config_path)
+
+        self.assertEqual(settings.default_seed, 321)
+        self.assertEqual(get_default_seed(config_path), 321)
 
     def test_get_runs_root_honors_env_override(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())

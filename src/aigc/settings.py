@@ -19,6 +19,7 @@ class RuntimeSettingsError(ValueError):
 @dataclass(slots=True)
 class RuntimeSettings:
     runs_root: Path
+    default_seed: int | None = None
     config_path: Path | None = None
 
 
@@ -26,22 +27,49 @@ def load_runtime_settings(path: str | Path | None = None) -> RuntimeSettings:
     config_path = _resolve_runtime_settings_path(path)
     default_runs_root = REPO_ROOT / "runs"
     if config_path is None or not config_path.exists():
-        return RuntimeSettings(runs_root=default_runs_root, config_path=config_path)
+        return RuntimeSettings(
+            runs_root=default_runs_root,
+            default_seed=None,
+            config_path=config_path,
+        )
 
     payload = _parse_settings_payload(config_path.read_text(encoding="utf-8"))
     paths_payload = payload.get("paths", payload)
     if not isinstance(paths_payload, dict):
         raise RuntimeSettingsError("Runtime settings 'paths' payload must be an object.")
 
+    generation_payload = payload.get("generation", {})
+    if generation_payload in (None, ""):
+        generation_payload = {}
+    if not isinstance(generation_payload, dict):
+        raise RuntimeSettingsError("Runtime settings 'generation' payload must be an object.")
+    default_seed = generation_payload.get("default_seed")
+    if default_seed in (None, ""):
+        parsed_seed = None
+    else:
+        parsed_seed = int(default_seed)
+
     configured_root = paths_payload.get("runs_root") or paths_payload.get("output_root")
     if configured_root in (None, ""):
-        return RuntimeSettings(runs_root=default_runs_root, config_path=config_path)
+        return RuntimeSettings(
+            runs_root=default_runs_root,
+            default_seed=parsed_seed,
+            config_path=config_path,
+        )
 
-    return RuntimeSettings(runs_root=Path(str(configured_root)).expanduser(), config_path=config_path)
+    return RuntimeSettings(
+        runs_root=Path(str(configured_root)).expanduser(),
+        default_seed=parsed_seed,
+        config_path=config_path,
+    )
 
 
 def get_runs_root(path: str | Path | None = None) -> Path:
     return load_runtime_settings(path).runs_root
+
+
+def get_default_seed(path: str | Path | None = None) -> int | None:
+    return load_runtime_settings(path).default_seed
 
 
 def _resolve_runtime_settings_path(path: str | Path | None) -> Path | None:

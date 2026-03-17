@@ -47,8 +47,9 @@ class MockCapableImageAdapter(BaseAdapter):
                 params.get("num_inference_steps", self.default_num_inference_steps)
             ),
             "guidance_scale": float(params.get("guidance_scale", self.default_guidance_scale)),
-            "seed": int(params.get("seed", 42)),
         }
+        if params.get("seed") not in (None, ""):
+            inputs["seed"] = int(params["seed"])
         if self.include_cfg_normalization:
             inputs["cfg_normalization"] = bool(params.get("cfg_normalization", False))
         inputs.update(self.extra_prepare_inputs(params))
@@ -177,22 +178,23 @@ class MockCapableImageAdapter(BaseAdapter):
         height = int(plan.inputs["height"])
         guidance_scale = float(plan.inputs["guidance_scale"])
         num_inference_steps = int(plan.inputs["num_inference_steps"])
-        seed = int(plan.inputs["seed"])
+        seed = int(plan.inputs["seed"]) if plan.inputs.get("seed") not in (None, "") else None
         batch_id = plan.inputs.get("batch_id")
 
         outputs: dict[str, dict[str, Any]] = {}
         for batch_index, (prompt_id, prompt) in enumerate(zip(prompt_ids, prompts, strict=True)):
             output_path = Path(workdir) / f"{prompt_id}.png"
+            effective_seed = seed + batch_index if seed is not None else None
             color = deterministic_color(
                 self.model_config.name,
                 prompt_id,
                 prompt,
-                str(seed + batch_index),
+                str(effective_seed) if effective_seed is not None else "mock-random",
             )
             write_mock_png(output_path, width=width, height=height, color=color)
             outputs[prompt_id] = {
                 "path": str(output_path),
-                "seed": seed + batch_index,
+                "seed": effective_seed,
                 "guidance_scale": guidance_scale,
                 "num_inference_steps": num_inference_steps,
                 "batch_id": batch_id,
@@ -244,24 +246,27 @@ class DiffusersImageAdapterBase(MockCapableImageAdapter):
         height = int(plan.inputs["height"])
         guidance_scale = float(plan.inputs["guidance_scale"])
         num_inference_steps = int(plan.inputs["num_inference_steps"])
-        seed = int(plan.inputs["seed"])
+        seed = int(plan.inputs["seed"]) if plan.inputs.get("seed") not in (None, "") else None
         batch_id = plan.inputs.get("batch_id")
         negative_prompts = list(plan.inputs.get("negative_prompts", []))
         pipe, torch, device = self._get_or_load_pipeline()
 
         generator_device = "cuda" if device == "cuda" else "cpu"
-        generators = [
-            torch.Generator(generator_device).manual_seed(seed + batch_index)
-            for batch_index in range(len(prompt_ids))
-        ]
+        generators = None
+        if seed is not None:
+            generators = [
+                torch.Generator(generator_device).manual_seed(seed + batch_index)
+                for batch_index in range(len(prompt_ids))
+            ]
         call_kwargs = {
             "prompt": prompts,
             "height": height,
             "width": width,
             "num_inference_steps": num_inference_steps,
             self.guidance_argument_name: guidance_scale,
-            "generator": generators,
         }
+        if generators is not None:
+            call_kwargs["generator"] = generators
         if self.capabilities.supports_negative_prompt:
             call_kwargs["negative_prompt"] = negative_prompts
         if self.include_cfg_normalization:
@@ -280,7 +285,7 @@ class DiffusersImageAdapterBase(MockCapableImageAdapter):
             image.save(output_path)
             outputs[prompt_id] = {
                 "path": str(output_path),
-                "seed": seed + batch_index,
+                "seed": seed + batch_index if seed is not None else None,
                 "guidance_scale": guidance_scale,
                 "num_inference_steps": num_inference_steps,
                 "batch_id": batch_id,
@@ -458,7 +463,7 @@ class HunyuanImageAdapter(MockCapableImageAdapter):
         return {
             prompt_id: {
                 "path": str(output_path),
-                "seed": int(plan.inputs["seed"]),
+                "seed": int(plan.inputs["seed"]) if plan.inputs.get("seed") not in (None, "") else None,
                 "guidance_scale": float(plan.inputs["guidance_scale"]),
                 "num_inference_steps": int(plan.inputs["num_inference_steps"]),
                 "batch_id": plan.inputs.get("batch_id"),

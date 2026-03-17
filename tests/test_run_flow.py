@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from aigc.run_flow import (
     RunFlowError,
+    _default_generation_params,
     _assign_gpus_to_replicas,
     _calculate_replica_count,
     _limit_available_gpus_for_model,
@@ -191,6 +192,85 @@ class RunFlowTests(unittest.TestCase):
             manifest["per_model_summary"]["Wan2.2-T2V-A14B-Diffusers"]["worker_strategy"],
             "persistent_worker",
         )
+
+    def test_wan_mock_run_batches_two_prompts_into_one_task(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "wan_batch.txt"
+        prompts_path.write_text(
+            "two cats spar under a spotlight\ncamera pans across a misty harbor\n",
+            encoding="utf-8",
+        )
+
+        summary = run_single_model(
+            model_name="Wan2.2-T2V-A14B-Diffusers",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "wan_batch_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "wan2_2-t2v-a14b-diffusers"
+        task_files = sorted(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        self.assertEqual(len(task_files), 1)
+        payload = json.loads(task_files[0].read_text(encoding="utf-8"))
+        self.assertEqual(len(payload["prompts"]), 2)
+
+    def test_cogvideox_mock_run_batches_two_prompts_into_one_task(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "cog_batch.txt"
+        prompts_path.write_text(
+            "neon tunnel flythrough\nslow orbit around a crystal tower\n",
+            encoding="utf-8",
+        )
+
+        summary = run_single_model(
+            model_name="CogVideoX-5B",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "cog_batch_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "cogvideox-5b"
+        task_files = sorted(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        self.assertEqual(len(task_files), 1)
+        payload = json.loads(task_files[0].read_text(encoding="utf-8"))
+        self.assertEqual(len(payload["prompts"]), 2)
+
+    def test_default_generation_params_omit_seed_without_global_default(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("Z-Image")
+        prompt = type(
+            "PromptStub",
+            (),
+            {"prompt": "a city at night", "language": "en", "negative_prompt": None, "parameters": {}, "metadata": {}},
+        )()
+
+        with patch.dict(os.environ, {"AIGC_LOCAL_RUNTIME_FILE": str(Path(tempfile.mkdtemp()) / "missing.yaml")}, clear=False):
+            params = _default_generation_params(model, [prompt])  # type: ignore[list-item]
+
+        self.assertNotIn("seed", params)
+
+    def test_default_generation_params_honor_global_default_seed(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("Z-Image")
+        prompt = type(
+            "PromptStub",
+            (),
+            {"prompt": "a city at night", "language": "en", "negative_prompt": None, "parameters": {}, "metadata": {}},
+        )()
+        tmpdir = Path(tempfile.mkdtemp())
+        runtime_config = tmpdir / "local_runtime.yaml"
+        runtime_config.write_text("generation:\n  default_seed: 123\n", encoding="utf-8")
+
+        with patch.dict(os.environ, {"AIGC_LOCAL_RUNTIME_FILE": str(runtime_config)}, clear=False):
+            params = _default_generation_params(model, [prompt])  # type: ignore[list-item]
+
+        self.assertEqual(params["seed"], 123)
 
     def test_multi_replica_mock_run_shards_image_tasks_and_exports_replica_metadata(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())

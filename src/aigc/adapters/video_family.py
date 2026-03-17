@@ -58,7 +58,6 @@ class MockCapableVideoAdapter(BaseAdapter):
             "num_frames": num_frames,
             "num_inference_steps": num_inference_steps,
             "guidance_scale": guidance_scale,
-            "seed": int(params.get("seed", 42)),
             "negative_prompts": negative_prompts,
             "runtime": runtime,
             "expected_outputs": {
@@ -66,6 +65,8 @@ class MockCapableVideoAdapter(BaseAdapter):
                 for prompt_id in prompt_ids
             },
         }
+        if params.get("seed") not in (None, ""):
+            inputs["seed"] = int(params["seed"])
         inputs.update(self.extra_prepare_inputs(params))
 
         if runtime.get("execution_mode") == "mock":
@@ -262,13 +263,14 @@ class MockCapableVideoAdapter(BaseAdapter):
         num_frames = int(plan.inputs["num_frames"])
         guidance_scale = float(plan.inputs["guidance_scale"])
         num_inference_steps = int(plan.inputs["num_inference_steps"])
-        seed = int(plan.inputs["seed"])
+        seed = int(plan.inputs["seed"]) if plan.inputs.get("seed") not in (None, "") else None
         batch_id = plan.inputs.get("batch_id")
         duration_sec = compute_duration_sec(num_frames=num_frames, fps=fps)
 
         outputs: dict[str, dict[str, Any]] = {}
         for batch_index, (prompt_id, prompt) in enumerate(zip(prompt_ids, prompts, strict=True)):
             output_path = Path(workdir) / f"{prompt_id}.mp4"
+            effective_seed = seed + batch_index if seed is not None else None
             write_mock_mp4(
                 output_path,
                 metadata={
@@ -277,7 +279,7 @@ class MockCapableVideoAdapter(BaseAdapter):
                     "fps": fps,
                     "num_frames": num_frames,
                     "duration_sec": duration_sec,
-                    "seed": seed + batch_index,
+                    "seed": effective_seed,
                     "guidance_scale": guidance_scale,
                     "num_inference_steps": num_inference_steps,
                     "mock": True,
@@ -285,13 +287,13 @@ class MockCapableVideoAdapter(BaseAdapter):
                         self.model_config.name,
                         prompt_id,
                         prompt,
-                        str(seed + batch_index),
+                        str(effective_seed) if effective_seed is not None else "mock-random",
                     ),
                 },
             )
             outputs[prompt_id] = {
                 "path": str(output_path),
-                "seed": seed + batch_index,
+                "seed": effective_seed,
                 "guidance_scale": guidance_scale,
                 "num_inference_steps": num_inference_steps,
                 "batch_id": batch_id,
@@ -333,28 +335,21 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
     ) -> dict[str, dict[str, Any]]:
         from diffusers.utils import export_to_video
 
-        if len(prompts) != 1:
-            raise RuntimeError(
-                f"{self.model_config.name} real execution currently expects single-prompt tasks."
-            )
-
-        prompt_id = str(plan.inputs["prompt_ids"][0])
-        prompt = prompts[0]
         width = int(plan.inputs["width"])
         height = int(plan.inputs["height"])
         fps = int(plan.inputs["fps"])
         num_frames = int(plan.inputs["num_frames"])
-        seed = int(plan.inputs["seed"])
+        seed = int(plan.inputs["seed"]) if plan.inputs.get("seed") not in (None, "") else None
         num_inference_steps = int(plan.inputs["num_inference_steps"])
         guidance_scale = float(plan.inputs["guidance_scale"])
-        negative_prompt = str(plan.inputs.get("negative_prompts", [""])[0])
+        negative_prompts = [str(value) for value in plan.inputs.get("negative_prompts", [""])]
+        prompt_ids = [str(value) for value in plan.inputs["prompt_ids"]]
         pipe, torch, device = self._get_or_load_pipeline()
-        output_path = Path(workdir) / f"{prompt_id}.mp4"
-        frames = self.generate_frames(
+        frame_batches = self.generate_frames_batch(
             pipe=pipe,
             plan=plan,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
+            prompts=prompts,
+            negative_prompts=negative_prompts,
             width=width,
             height=height,
             num_frames=num_frames,
@@ -364,15 +359,21 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
             torch=torch,
             device=device,
         )
-        export_to_video(frames, str(output_path), fps=fps)
-        return {
-            prompt_id: {
+        if len(frame_batches) != len(prompt_ids):
+            raise RuntimeError(
+                f"{self.model_config.name} returned {len(frame_batches)} videos for {len(prompt_ids)} prompts."
+            )
+        outputs: dict[str, dict[str, Any]] = {}
+        for batch_index, (prompt_id, frames) in enumerate(zip(prompt_ids, frame_batches, strict=True)):
+            output_path = Path(workdir) / f"{prompt_id}.mp4"
+            export_to_video(frames, str(output_path), fps=fps)
+            outputs[prompt_id] = {
                 "path": str(output_path),
-                "seed": seed,
+                "seed": seed + batch_index if seed is not None else None,
                 "guidance_scale": guidance_scale,
                 "num_inference_steps": num_inference_steps,
                 "batch_id": plan.inputs.get("batch_id"),
-                "batch_index": 0,
+                "batch_index": batch_index,
                 "width": width,
                 "height": height,
                 "fps": fps,
@@ -380,7 +381,7 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
                 "duration_sec": compute_duration_sec(num_frames=num_frames, fps=fps),
                 "mock": False,
             }
-        }
+        return outputs
 
     def _get_or_load_pipeline(self) -> tuple[Any, Any, str]:
         if self._loaded_pipeline is not None and self._loaded_torch is not None and self._loaded_device:
@@ -431,47 +432,60 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
             required_files=("model_index.json",),
         )
 
-    def generate_frames(
+    def build_pipeline_call_kwargs(self, plan: ExecutionPlan) -> dict[str, Any]:
+        return {}
+
+    def generate_frames_batch(
         self,
         *,
         pipe: Any,
         plan: ExecutionPlan,
-        prompt: str,
-        negative_prompt: str,
+        prompts: list[str],
+        negative_prompts: list[str],
         width: int,
         height: int,
         num_frames: int,
         num_inference_steps: int,
         guidance_scale: float,
-        seed: int,
+        seed: int | None,
         torch: Any,
         device: str,
-    ) -> list[Any]:
+    ) -> list[list[Any]]:
         generator_device = "cuda" if device == "cuda" else "cpu"
-        generator = torch.Generator(generator_device).manual_seed(seed)
+        generator = None
+        if seed is not None:
+            generators = [
+                torch.Generator(generator_device).manual_seed(seed + batch_index)
+                for batch_index in range(len(prompts))
+            ]
+            generator = generators[0] if len(generators) == 1 else generators
         kwargs = {
-            "prompt": prompt,
+            "prompt": prompts[0] if len(prompts) == 1 else prompts,
             "width": width,
             "height": height,
             "num_frames": num_frames,
             "num_inference_steps": num_inference_steps,
             "guidance_scale": guidance_scale,
-            "generator": generator,
         }
+        if generator is not None:
+            kwargs["generator"] = generator
         if self.capabilities.supports_negative_prompt:
-            kwargs["negative_prompt"] = negative_prompt
+            kwargs["negative_prompt"] = (
+                negative_prompts[0] if len(negative_prompts) == 1 else negative_prompts
+            )
+        kwargs.update(self.build_pipeline_call_kwargs(plan))
         output = pipe(**kwargs)
         frames = getattr(output, "frames", None)
         if not frames:
             raise RuntimeError(f"{self.model_config.name} did not return video frames.")
-        return list(frames[0])
+        return [list(video_frames) for video_frames in frames]
 
 
 class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
     capabilities = AdapterCapabilities(
-        supports_batch_prompts=False,
-        max_batch_size=1,
-        preferred_batch_size=1,
+        supports_batch_prompts=True,
+        max_batch_size=2,
+        preferred_batch_size=2,
         supports_negative_prompt=True,
         supports_seed=True,
         output_types=["video"],
@@ -533,49 +547,60 @@ class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
             pipe.vae.enable_tiling()
         return pipe
 
-    def generate_frames(
+    def build_pipeline_call_kwargs(self, plan: ExecutionPlan) -> dict[str, Any]:
+        return {"guidance_scale_2": float(plan.inputs.get("guidance_scale_2", 3.0))}
+
+    def generate_frames_batch(
         self,
         *,
         pipe: Any,
         plan: ExecutionPlan,
-        prompt: str,
-        negative_prompt: str,
+        prompts: list[str],
+        negative_prompts: list[str],
         width: int,
         height: int,
         num_frames: int,
         num_inference_steps: int,
         guidance_scale: float,
-        seed: int,
+        seed: int | None,
         torch: Any,
         device: str,
-    ) -> list[Any]:
+    ) -> list[list[Any]]:
         generator_device = "cuda" if device == "cuda" else "cpu"
-        generator = torch.Generator(generator_device).manual_seed(seed)
+        generator = None
+        if seed is not None:
+            generators = [
+                torch.Generator(generator_device).manual_seed(seed + batch_index)
+                for batch_index in range(len(prompts))
+            ]
+            generator = generators[0] if len(generators) == 1 else generators
         output = pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
+            prompt=prompts[0] if len(prompts) == 1 else prompts,
+            negative_prompt=negative_prompts[0] if len(negative_prompts) == 1 else negative_prompts,
             height=height,
             width=width,
             num_frames=num_frames,
             guidance_scale=guidance_scale,
             guidance_scale_2=float(plan.inputs.get("guidance_scale_2", 3.0)),
             num_inference_steps=num_inference_steps,
-            generator=generator,
+            **({"generator": generator} if generator is not None else {}),
         )
         frames = getattr(output, "frames", None)
         if not frames:
             raise RuntimeError(f"{self.model_config.name} did not return video frames.")
-        return list(frames[0])
+        return [list(video_frames) for video_frames in frames]
 
 
 class HunyuanVideo15Adapter(DiffusersVideoAdapterBase):
     capabilities = AdapterCapabilities(
-        supports_batch_prompts=False,
-        max_batch_size=1,
-        preferred_batch_size=1,
+        supports_batch_prompts=True,
+        max_batch_size=2,
+        preferred_batch_size=2,
         supports_negative_prompt=True,
         supports_seed=True,
         output_types=["video"],
+        supports_persistent_worker=True,
+        preferred_worker_strategy="persistent_worker",
     )
     pipeline_class_name = "HunyuanVideo15Pipeline"
     default_width = 1280
@@ -613,9 +638,9 @@ class HunyuanVideo15Adapter(DiffusersVideoAdapterBase):
 
 class CogVideoX5BAdapter(DiffusersVideoAdapterBase):
     capabilities = AdapterCapabilities(
-        supports_batch_prompts=False,
-        max_batch_size=1,
-        preferred_batch_size=1,
+        supports_batch_prompts=True,
+        max_batch_size=2,
+        preferred_batch_size=2,
         supports_negative_prompt=False,
         supports_seed=True,
         output_types=["video"],
@@ -653,36 +678,42 @@ class CogVideoX5BAdapter(DiffusersVideoAdapterBase):
             pipe.vae.enable_tiling()
         return pipe
 
-    def generate_frames(
+    def generate_frames_batch(
         self,
         *,
         pipe: Any,
         plan: ExecutionPlan,
-        prompt: str,
-        negative_prompt: str,
+        prompts: list[str],
+        negative_prompts: list[str],
         width: int,
         height: int,
         num_frames: int,
         num_inference_steps: int,
         guidance_scale: float,
-        seed: int,
+        seed: int | None,
         torch: Any,
         device: str,
-    ) -> list[Any]:
+    ) -> list[list[Any]]:
         generator_device = "cuda" if device == "cuda" else "cpu"
-        generator = torch.Generator(generator_device).manual_seed(seed)
+        generator = None
+        if seed is not None:
+            generators = [
+                torch.Generator(generator_device).manual_seed(seed + batch_index)
+                for batch_index in range(len(prompts))
+            ]
+            generator = generators[0] if len(generators) == 1 else generators
         output = pipe(
-            prompt=prompt,
+            prompt=prompts[0] if len(prompts) == 1 else prompts,
             num_videos_per_prompt=1,
             num_inference_steps=num_inference_steps,
             num_frames=num_frames,
             guidance_scale=guidance_scale,
-            generator=generator,
+            **({"generator": generator} if generator is not None else {}),
         )
         frames = getattr(output, "frames", None)
         if not frames:
             raise RuntimeError(f"{self.model_config.name} did not return video frames.")
-        return list(frames[0])
+        return [list(video_frames) for video_frames in frames]
 
 
 class ExternalProcessVideoAdapterBase(MockCapableVideoAdapter):
@@ -837,11 +868,11 @@ class MOVAVideoAdapter(ExternalProcessVideoAdapterBase):
             prompt,
             "--output_path",
             output_path,
-            "--seed",
-            str(inputs["seed"]),
             "--offload",
             str(params.get("offload", "cpu")),
         ]
+        if inputs.get("seed") not in (None, ""):
+            command.extend(["--seed", str(inputs["seed"])])
         ref_path = params.get("ref_path")
         if ref_path:
             command.extend(["--ref_path", str(ref_path)])

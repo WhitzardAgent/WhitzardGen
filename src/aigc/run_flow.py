@@ -30,7 +30,7 @@ from aigc.runtime.persistent_ipc import (
     unregister_parent_queues,
 )
 from aigc.runtime.payloads import TaskPayload, TaskPrompt
-from aigc.settings import get_runs_root
+from aigc.settings import get_default_seed, get_runs_root
 from aigc.utils.progress import (
     LoggedRunProgress,
     RunProgress,
@@ -1432,11 +1432,11 @@ def _default_generation_params(model: ModelInfo, prompts: list[PromptRecord]) ->
         raise RunFlowError(f"Cannot build generation params for {model.name} with no prompts.")
 
     prompt = prompts[0]
+    default_seed = get_default_seed()
     if model.modality == "image":
         params: dict[str, object] = {
             "width": 1024,
             "height": 1024,
-            "seed": 42,
         }
     elif model.modality == "video":
         params = {
@@ -1444,12 +1444,14 @@ def _default_generation_params(model: ModelInfo, prompts: list[PromptRecord]) ->
             "height": 720,
             "fps": 24,
             "num_frames": 121,
-            "seed": 42,
             "num_inference_steps": 40,
             "guidance_scale": 4.0,
         }
     else:
-        params = {"seed": 42}
+        params = {}
+
+    if default_seed is not None:
+        params["seed"] = default_seed
 
     if model.name == "Z-Image":
         params.update(

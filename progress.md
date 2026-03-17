@@ -1,9 +1,46 @@
 # Progress
 
 ## Current Phase
-- Wan diffusers persistent-worker realignment
+- Diffusers batch inference and random-seed semantics hardening
 
 ## Completed
+- 2026-03-17 21:09:18 CST
+- Extended diffusers-based generation to support real prompt batching consistently across the framework:
+  - confirmed image diffusers models were already using true batched inference by passing prompt lists to the pipeline in one call
+  - upgraded diffusers video execution to support batched prompt lists instead of single-prompt-only execution
+  - `Wan2.2-T2V-A14B-Diffusers`, `CogVideoX-5B`, and `HunyuanVideo-1.5` now advertise batched prompt support in both adapter capabilities and registry config
+  - `DiffusersVideoAdapterBase` now executes one pipeline call per prompt batch and exports one video artifact per prompt
+  - `Wan` and `CogVideoX` now pass batched prompts and generator lists through their diffusers pipeline calls
+- Removed implicit fixed-seed behavior from default generation params:
+  - the framework no longer injects `seed=42` by default
+  - if no prompt-level or global seed is set, diffusers runs now stay random by default
+  - deterministic generation now only happens when a seed is explicitly provided
+  - batch generation uses one `torch.Generator` per sample when a seed is present, matching the diffusers reproducibility guidance
+- Added global runtime support for a default seed:
+  - `configs/local_runtime.yaml` can now declare `generation.default_seed`
+  - `src/aigc/settings.py` now exposes `get_default_seed()`
+  - the default seed is honored even when only `generation` is configured and `paths.runs_root` is omitted
+- Hardened non-diffusers seed handling so optional seed semantics do not introduce regressions:
+  - mock image/video outputs now tolerate missing seeds without crashing
+  - external-process MOVA command building now omits `--seed` when no seed is configured
+  - Hunyuan image result metadata now tolerates missing seeds
+- Added focused regression coverage for:
+  - Wan/Cog batched prompt handling through the adapter layer
+  - HunyuanVideo batch capability exposure
+  - run-flow batching of two prompts into one task for Wan and Cog
+  - default random behavior with no global seed
+  - honoring `generation.default_seed` from runtime settings
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter -v`
+  - result: 9 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_settings -v`
+  - result: 3 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_zimage_adapter -v`
+  - result: 2 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_wan_mock_run_batches_two_prompts_into_one_task tests.test_run_flow.RunFlowTests.test_cogvideox_mock_run_batches_two_prompts_into_one_task tests.test_run_flow.RunFlowTests.test_default_generation_params_omit_seed_without_global_default tests.test_run_flow.RunFlowTests.test_default_generation_params_honor_global_default_seed tests.test_run_flow.RunFlowTests.test_selected_wan_video_model_uses_persistent_worker_strategy_in_mock_mode -v`
+  - result: 5 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
+  - result: 5 tests passed
 - 2026-03-17 20:44:32 CST
 - Switched `Wan2.2-T2V-A14B-Diffusers` back from the repo-script path to the reference diffusers in-process path so it can benefit from load-once persistent workers:
   - `WanT2VDiffusersAdapter` now inherits the diffusers video base again
@@ -765,7 +802,17 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 20:44:32 CST.
+- Updated at 2026-03-17 21:09:18 CST.
+- Diffusers-based image batching remains correctly implemented:
+  - image adapters pass prompt lists in one pipeline call
+  - when seeded, they build one `torch.Generator` per sample
+- Diffusers-based video batching is now implemented structurally for:
+  - `Wan2.2-T2V-A14B-Diffusers`
+  - `CogVideoX-5B`
+  - `HunyuanVideo-1.5`
+- Default generation is now random unless a seed is explicitly configured:
+  - no more implicit global `42`
+  - `generation.default_seed` in `configs/local_runtime.yaml` can restore deterministic defaults if desired
 - `Wan2.2-T2V-A14B-Diffusers` is back on the diffusers in-process execution path and can again benefit from persistent-worker model reuse.
 - The Wan adapter now matches the reference-style loading pattern more closely:
   - `AutoencoderKLWan.from_pretrained(..., subfolder="vae", torch_dtype=torch.float32)`
@@ -799,10 +846,14 @@
 ## Blockers
 - No code blockers in the local framework path.
 - Per user instruction, do not continue local heavy real-run validation on this machine.
+- Real remote validation is still needed to confirm the new diffusers video batch path behaves correctly under actual GPU memory pressure and pipeline output shape for:
+  - `Wan2.2-T2V-A14B-Diffusers`
+  - `CogVideoX-5B`
+  - `HunyuanVideo-1.5`
 - The restored Wan diffusers path now needs real remote validation to confirm:
   - local `weights_path` points to a complete `Wan2.2-T2V-A14B-Diffusers` directory
   - persistent-worker reuse behaves correctly under real GPU inference
 - The queue-supervisor path still needs real remote validation to confirm the old persistent-worker `Broken pipe` failure mode is gone under cluster execution.
 
 ## Next Task
-- Sync the Wan diffusers rollback to the remote GPU server, then re-run `Wan2.2-T2V-A14B-Diffusers` in real mode and continue from the next true model/runtime issue if one appears.
+- Sync the diffusers batch-inference and random-seed changes to the remote GPU server, then re-run real Wan/Cog/Hunyuan workloads and continue from the next true model/runtime or memory issue if one appears.

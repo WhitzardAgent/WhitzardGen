@@ -5,6 +5,7 @@ from pathlib import Path
 
 from aigc.adapters.video_family import (
     CogVideoX5BAdapter,
+    HunyuanVideo15Adapter,
     WanT2VDiffusersAdapter,
     extract_video_metadata,
     metadata_sidecar_path,
@@ -171,14 +172,14 @@ class VideoAdapterTests(unittest.TestCase):
 
             def __call__(self, **kwargs):
                 self.calls.append(kwargs)
-                return type("Output", (), {"frames": [[b"frame-1", b"frame-2"]]})()
+                return type("Output", (), {"frames": [[b"frame-1"], [b"frame-2"]]})()
 
         pipe = _FakePipe()
-        frames = adapter.generate_frames(
+        frames = adapter.generate_frames_batch(
             pipe=pipe,
             plan=plan,
-            prompt="a cinematic duel in heavy rain",
-            negative_prompt="low quality",
+            prompts=["a cinematic duel in heavy rain", "a city made of glass"],
+            negative_prompts=["low quality", "blurry"],
             width=1280,
             height=720,
             num_frames=81,
@@ -189,10 +190,71 @@ class VideoAdapterTests(unittest.TestCase):
             device="cuda",
         )
 
-        self.assertEqual(frames, [b"frame-1", b"frame-2"])
+        self.assertEqual(frames, [[b"frame-1"], [b"frame-2"]])
         self.assertEqual(pipe.calls[0]["guidance_scale_2"], 3.5)
-        self.assertEqual(pipe.calls[0]["negative_prompt"], "low quality")
+        self.assertEqual(pipe.calls[0]["negative_prompt"], ["low quality", "blurry"])
         self.assertEqual(pipe.calls[0]["num_frames"], 81)
+        self.assertEqual(pipe.calls[0]["prompt"], ["a cinematic duel in heavy rain", "a city made of glass"])
+        self.assertEqual(len(pipe.calls[0]["generator"]), 2)
+
+    def test_cogvideox_batch_generation_uses_prompt_list_and_generators(self) -> None:
+        registry = load_registry()
+        adapter = CogVideoX5BAdapter(model_config=registry.get_model("CogVideoX-5B"))
+        plan = adapter.prepare(
+            prompts=["prompt one", "prompt two"],
+            prompt_ids=["c001", "c002"],
+            params={"_runtime_config": {"execution_mode": "real"}, "seed": 100},
+            workdir=tempfile.mkdtemp(),
+        )
+
+        class _FakeGenerator:
+            def __init__(self, device: str) -> None:
+                self.device = device
+                self.seed = None
+
+            def manual_seed(self, seed: int):
+                self.seed = seed
+                return self
+
+        class _FakeTorch:
+            class Generator(_FakeGenerator):
+                pass
+
+        class _FakePipe:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(kwargs)
+                return type("Output", (), {"frames": [[b"a"], [b"b"]]})()
+
+        pipe = _FakePipe()
+        frames = adapter.generate_frames_batch(
+            pipe=pipe,
+            plan=plan,
+            prompts=["prompt one", "prompt two"],
+            negative_prompts=["", ""],
+            width=720,
+            height=480,
+            num_frames=49,
+            num_inference_steps=50,
+            guidance_scale=6.0,
+            seed=100,
+            torch=_FakeTorch,
+            device="cuda",
+        )
+
+        self.assertEqual(frames, [[b"a"], [b"b"]])
+        self.assertEqual(pipe.calls[0]["prompt"], ["prompt one", "prompt two"])
+        self.assertEqual(pipe.calls[0]["num_videos_per_prompt"], 1)
+        self.assertEqual(len(pipe.calls[0]["generator"]), 2)
+
+    def test_hunyuan_video_batch_capability_enabled(self) -> None:
+        registry = load_registry()
+        adapter = HunyuanVideo15Adapter(model_config=registry.get_model("HunyuanVideo-1.5"))
+        self.assertTrue(adapter.capabilities.supports_batch_prompts)
+        self.assertEqual(adapter.capabilities.preferred_batch_size, 2)
+        self.assertTrue(adapter.capabilities.supports_persistent_worker)
 
     def test_cogvideox_mock_video_defaults_match_reference_shape(self) -> None:
         registry = load_registry()
