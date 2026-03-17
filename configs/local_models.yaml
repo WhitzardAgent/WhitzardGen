@@ -25,6 +25,8 @@
     "hf_cache_dir": null
   },
   "Wan2.2-T2V-A14B-Diffusers": {
+    "repo_path": "/inspire/qb-ilm/project/control-technology/25015/deps/Wan2.2",
+    "weights_path": null,
     "local_path": null,
     "hf_cache_dir": null
   },

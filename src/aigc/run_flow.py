@@ -575,6 +575,12 @@ def _default_generation_params(model: ModelInfo, prompts: list[PromptRecord]) ->
                 "num_inference_steps": 40,
                 "guidance_scale": 4.0,
                 "guidance_scale_2": 3.0,
+                "repo_dir": str(model.weights["repo_path"]) if model.weights.get("repo_path") else None,
+                "local_model_path": str(
+                    model.weights.get("weights_path") or model.weights.get("local_path")
+                )
+                if (model.weights.get("weights_path") or model.weights.get("local_path"))
+                else None,
             }
         )
     elif model.name == "Wan2.2-TI2V-5B":

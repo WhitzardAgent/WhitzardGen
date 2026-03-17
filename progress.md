@@ -1,9 +1,27 @@
 # Progress
 
 ## Current Phase
-- Phase 8.5 / 9-prep — Terminal UI Hardening for Long-Running Runs
+- Phase 8.5 / 9-prep — Terminal UI Hardening and Real-Mode Cluster Diagnostics
 
 ## Completed
+- 2026-03-17 00:05:01 CST
+- Hardened `Wan2.2-T2V-A14B-Diffusers` real-path handling after remote cluster debugging showed the framework was not clearly separating the Wan2.2 repo checkout from the local Diffusers weights directory.
+- Added local Diffusers directory validation for video diffusers adapters before `from_pretrained(...)` so bad local paths now fail with actionable framework errors instead of vague downstream loader messages.
+- Added a Wan-specific validation hint:
+  - `repo_path` should point to the `Wan2.2` GitHub checkout
+  - `weights_path` / `local_path` should point to the local `Wan-AI/Wan2.2-T2V-A14B-Diffusers` weights directory
+  - the weights directory should contain at least `model_index.json` and `vae/config.json`
+- Changed video model reference resolution to prefer `weights_path` over `local_path`, which better matches the intended video-model config semantics.
+- Updated Wan run-parameter defaults so task payloads now carry `repo_dir` and `local_model_path` when configured, which will help future real-run diagnostics.
+- Updated `configs/local_models.yaml` so `Wan2.2-T2V-A14B-Diffusers` now includes the provided remote `repo_path`:
+  - `/inspire/qb-ilm/project/control-technology/25015/deps/Wan2.2`
+- Updated `README.md` cluster guidance to document the difference between code checkout paths and Diffusers weights paths for `Wan2.2-T2V-A14B-Diffusers`.
+- Added lightweight regression coverage for:
+  - preferring `weights_path` over `local_path`
+  - surfacing a clear Wan-specific error when a configured local directory is not a valid Diffusers checkpoint layout
+- Ran targeted lightweight regression only:
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter tests.test_run_flow -v`
+  - result: 11 tests passed
 - Implemented a reusable terminal progress UI abstraction for `aigc run`:
   - added `aigc.utils.progress` with `RunProgress` interface plus `TextRunProgress` and `NullRunProgress`
   - added `RunSummaryData` and helpers for final run summaries and simple task status aggregation
@@ -257,6 +275,11 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/configs/local_models.yaml
+- /Users/morinop/coding/whitzardgen/README.md
+- /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
 - /Users/morinop/coding/whitzardgen/progress.md
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
 - /Users/morinop/coding/whitzardgen/src/aigc/runtime/worker.py
@@ -365,16 +388,15 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-16 23:10:00 CST.
-- Phase 8.5 terminal UI hardening is in place: `aigc run` now has visible stage-level progress, per-task progress, integrated environment-creation messaging, and a final run summary, all funneled through a small reusable progress abstraction.
+- Updated at 2026-03-17 00:05:01 CST.
+- Phase 8.5 terminal UI hardening remains in place, and real cluster debugging has now advanced the `Wan2.2-T2V-A14B-Diffusers` path past env/package issues into concrete local-path validation.
+- The framework now explicitly distinguishes between the Wan2.2 code repo checkout and the local Diffusers weights directory for the diffusers-based Wan adapter.
 - JSON output paths remain clean and machine-readable because the progress layer automatically degrades to a no-op reporter when `--output json` is requested.
-- Existing env-hardening behavior, mock-mode support, run manifests, run-management CLI commands, dataset export paths, and worker diagnostics all remain intact after the progress wiring.
 
 ## Blockers
-- Full real Z-Image inference still depends on external Conda package downloads, model weights, and GPU resources that are not available in this local environment.
+- The correct local Diffusers weights directory for `Wan2.2-T2V-A14B-Diffusers` still needs to be configured on the remote cluster; the previously used path was not a valid Diffusers checkpoint layout.
 - Per user instruction, do not continue local real-run validation on this machine.
-- Real non-mock validation for the other five image models is intentionally deferred to the future GPU cluster environment.
-- Real non-mock validation for the five MVP video models is also intentionally deferred to the future GPU cluster environment, where model repositories, weights, and GPU runtime constraints can be validated properly.
+- Real non-mock validation for the remaining image/video models is still deferred to the GPU cluster environment, where model repositories, weights, and GPU runtime constraints can be validated properly.
 
 ## Next Task
-- Use the improved terminal progress UI on the GPU cluster to observe long-running real-mode jobs: ensure env preparation, task execution, and dataset export stages look healthy under real workloads, and then proceed toward scheduler core and retry/resume implementation in subsequent phases.
+- Continue remote real-mode validation for `Wan2.2-T2V-A14B-Diffusers` with the correct local Diffusers weights directory, then use the resulting diagnostics to harden the next real video-model path.

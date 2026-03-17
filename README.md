@@ -125,11 +125,25 @@ LongCat-Video:
   weights_path: /models/LongCat-Video
   script_root: /repos/LongCat-Video
 
+Wan2.2-T2V-A14B-Diffusers:
+  repo_path: /repos/Wan2.2
+  weights_path: /models/Wan2.2-T2V-A14B-Diffusers
+  hf_cache_dir: /models/hf-cache
+
 HunyuanVideo-1.5:
   local_path: /models/HunyuanVideo-1.5
   repo_path: /repos/HunyuanVideo-1.5
   weights_path: /models/HunyuanVideo-1.5
 ```
+
+For `Wan2.2-T2V-A14B-Diffusers`, the two path types are intentionally different:
+
+- `repo_path`: local checkout of the `Wan2.2` GitHub repository
+- `weights_path` or `local_path`: local Diffusers weights directory for `Wan-AI/Wan2.2-T2V-A14B-Diffusers`
+
+The Diffusers weights directory should contain files such as `model_index.json`
+and `vae/config.json`. Pointing `weights_path` at the raw non-Diffusers Wan
+checkpoint directory will fail during `from_pretrained(...)`.
 
 Inspect effective config:
 

@@ -1,11 +1,13 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from aigc.adapters.video_family import (
     WanT2VDiffusersAdapter,
     extract_video_metadata,
     metadata_sidecar_path,
+    resolve_video_model_reference,
 )
 from aigc.registry import load_registry
 
@@ -86,3 +88,38 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertEqual(metadata["format"], "mp4")
         self.assertEqual(metadata["width"], 1280)
         self.assertEqual(metadata["height"], 720)
+
+    def test_wan_diffusers_validation_reports_repo_and_weights_expectations(self) -> None:
+        registry = load_registry()
+        base_model = registry.get_model("Wan2.2-T2V-A14B-Diffusers")
+        model = replace(
+            base_model,
+            weights={
+                **base_model.weights,
+                "repo_path": "/deps/Wan2.2",
+                "weights_path": tempfile.mkdtemp(),
+            },
+        )
+        adapter = WanT2VDiffusersAdapter(model_config=model)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "repo_path should point to the Wan2.2 GitHub checkout",
+        ):
+            adapter.validate_model_reference(model.weights["weights_path"])
+
+    def test_video_model_reference_prefers_weights_path(self) -> None:
+        registry = load_registry()
+        model = replace(
+            registry.get_model("Wan2.2-T2V-A14B-Diffusers"),
+            weights={
+                **registry.get_model("Wan2.2-T2V-A14B-Diffusers").weights,
+                "local_path": "/models/raw-wan",
+                "weights_path": "/models/Wan2.2-T2V-A14B-Diffusers",
+            },
+        )
+
+        self.assertEqual(
+            resolve_video_model_reference(model),
+            "/models/Wan2.2-T2V-A14B-Diffusers",
+        )

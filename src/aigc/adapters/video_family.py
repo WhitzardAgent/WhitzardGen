@@ -382,12 +382,21 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
         cache_dir = resolve_video_cache_dir(self.model_config)
         if cache_dir:
             load_kwargs["cache_dir"] = cache_dir
-        pipe = pipeline_class.from_pretrained(resolve_video_model_reference(self.model_config), **load_kwargs)
+        model_ref = resolve_video_model_reference(self.model_config)
+        self.validate_model_reference(model_ref)
+        pipe = pipeline_class.from_pretrained(model_ref, **load_kwargs)
         if hasattr(pipe, "enable_model_cpu_offload"):
             pipe.enable_model_cpu_offload()
         elif hasattr(pipe, "to"):
             pipe.to(device)
         return pipe
+
+    def validate_model_reference(self, model_ref: str) -> None:
+        validate_local_diffusers_reference(
+            model_config=self.model_config,
+            model_ref=model_ref,
+            required_files=("model_index.json",),
+        )
 
     def generate_frames(
         self,
@@ -455,8 +464,10 @@ class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
     ) -> Any:
         from diffusers import AutoencoderKLWan
 
+        model_ref = resolve_video_model_reference(self.model_config)
+        self.validate_model_reference(model_ref)
         vae = AutoencoderKLWan.from_pretrained(
-            resolve_video_model_reference(self.model_config),
+            model_ref,
             subfolder="vae",
             torch_dtype=torch.float32,
         )
@@ -468,11 +479,23 @@ class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
         if cache_dir:
             load_kwargs["cache_dir"] = cache_dir
         pipe = pipeline_class.from_pretrained(
-            resolve_video_model_reference(self.model_config),
+            model_ref,
             **load_kwargs,
         )
         pipe.to(device)
         return pipe
+
+    def validate_model_reference(self, model_ref: str) -> None:
+        validate_local_diffusers_reference(
+            model_config=self.model_config,
+            model_ref=model_ref,
+            required_files=("model_index.json", "vae/config.json"),
+            adapter_specific_hint=(
+                "For Wan2.2-T2V-A14B-Diffusers, repo_path should point to the Wan2.2 GitHub "
+                "checkout, while weights_path/local_path should point to the local Diffusers "
+                "weights directory for Wan-AI/Wan2.2-T2V-A14B-Diffusers."
+            ),
+        )
 
     def generate_frames(
         self,
@@ -745,11 +768,64 @@ def compute_duration_sec(*, num_frames: int, fps: int) -> float:
 
 def resolve_video_model_reference(model_config: Any) -> str:
     return str(
-        model_config.weights.get("local_path")
-        or model_config.weights.get("weights_path")
+        model_config.weights.get("weights_path")
+        or model_config.weights.get("local_path")
         or model_config.weights.get("diffusers_repo")
         or model_config.weights.get("hf_repo")
     )
+
+
+def validate_local_diffusers_reference(
+    *,
+    model_config: Any,
+    model_ref: str,
+    required_files: tuple[str, ...],
+    adapter_specific_hint: str | None = None,
+) -> None:
+    configured_field = None
+    configured_path = None
+    for field in ("weights_path", "local_path"):
+        raw_value = model_config.weights.get(field)
+        if raw_value not in (None, ""):
+            configured_field = field
+            configured_path = Path(str(raw_value))
+            break
+
+    if configured_path is not None:
+        if not configured_path.exists():
+            raise RuntimeError(
+                f"{model_config.name} configured {configured_field} does not exist: {configured_path}"
+            )
+        missing = [
+            relative_path
+            for relative_path in required_files
+            if not (configured_path / relative_path).exists()
+        ]
+        if missing:
+            message_lines = [
+                f"{model_config.name} local weights path does not look like a Diffusers model directory: {configured_path}",
+                f"Configured field: {configured_field}",
+                f"Missing required files: {', '.join(missing)}",
+            ]
+            repo_path = model_config.weights.get("repo_path")
+            if repo_path not in (None, ""):
+                message_lines.append(f"Configured repo_path: {repo_path}")
+            if adapter_specific_hint:
+                message_lines.append(adapter_specific_hint)
+            raise RuntimeError("\n".join(message_lines))
+
+    candidate_path = Path(model_ref)
+    if candidate_path.exists():
+        missing = [
+            relative_path
+            for relative_path in required_files
+            if not (candidate_path / relative_path).exists()
+        ]
+        if missing:
+            raise RuntimeError(
+                f"{model_config.name} local model reference is missing required Diffusers files "
+                f"under {candidate_path}: {', '.join(missing)}"
+            )
 
 
 def resolve_video_cache_dir(model_config: Any) -> str | None:
