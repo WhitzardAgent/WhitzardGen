@@ -253,7 +253,7 @@
         "recommended_vram_gb": 48,
         "env_spec": "cogvideox_5b",
         "worker_strategy": "persistent_worker",
-        "gpus_per_replica": 2,
+        "gpus_per_replica": 1,
         "supports_multi_replica": true
       },
       "weights": {

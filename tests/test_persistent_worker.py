@@ -5,12 +5,44 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
+from aigc.run_flow import _PersistentWorkerSession
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class PersistentWorkerTests(unittest.TestCase):
+    def test_persistent_worker_session_ignores_blank_and_non_json_stdout_lines(self) -> None:
+        logged_lines: list[str] = []
+        session = _PersistentWorkerSession(
+            model=SimpleNamespace(name="Noise-Test"),
+            env_record=SimpleNamespace(),
+            execution_mode="real",
+            replica_id=0,
+            gpu_assignment=[0],
+            log_callback=logged_lines.append,
+        )
+        session.process = SimpleNamespace(
+            stdout=SimpleNamespace(
+                readline=self._readline_from(
+                    [
+                        "\n",
+                        "Loading pipeline components... 20%\n",
+                        '{"event":"ready","replica_id":0}\n',
+                    ]
+                )
+            )
+        )
+
+        event = session._read_event()
+
+        self.assertEqual(event["event"], "ready")
+        self.assertEqual(
+            logged_lines,
+            ["[worker][Noise-Test][replica=0] stdout: Loading pipeline components... 20%"],
+        )
+
     def test_persistent_worker_loads_once_and_runs_multiple_tasks(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         registry_path = tmpdir / "test_models.json"
@@ -168,3 +200,11 @@ class PersistentWorkerTests(unittest.TestCase):
         self.assertIn("[worker][Echo-Test][replica=0] GPUs=[] running task task_001 batch_size=1", stderr_output)
         self.assertIn("[worker][Echo-Test][replica=0] GPUs=[] running task task_002 batch_size=1", stderr_output)
         self.assertIn("[worker][Echo-Test][replica=0] GPUs=[] shutting down", stderr_output)
+
+    def _readline_from(self, lines: list[str]):
+        iterator = iter(lines)
+
+        def readline() -> str:
+            return next(iterator, "")
+
+        return readline

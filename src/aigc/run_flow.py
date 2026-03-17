@@ -619,19 +619,24 @@ class _PersistentWorkerSession:
             raise RunFlowError(
                 f"Persistent worker for {self.model.name} replica={self.replica_id} is not readable."
             )
-        line = self.process.stdout.readline()
-        if not line:
-            if allow_eof:
-                return {}
-            raise RunFlowError(
-                f"Persistent worker for {self.model.name} replica={self.replica_id} exited before emitting the next event."
-            )
-        try:
-            return json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise RunFlowError(
-                f"Persistent worker for {self.model.name} replica={self.replica_id} emitted invalid JSON: {line!r}"
-            ) from exc
+        while True:
+            line = self.process.stdout.readline()
+            if not line:
+                if allow_eof:
+                    return {}
+                raise RunFlowError(
+                    f"Persistent worker for {self.model.name} replica={self.replica_id} exited before emitting the next event."
+                )
+            if not line.strip():
+                continue
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                if self.log_callback is not None:
+                    self.log_callback(
+                        f"[worker][{self.model.name}][replica={self.replica_id}] stdout: {line.rstrip()}"
+                    )
+                continue
 
     def _start_stderr_pump(self) -> None:
         if self.process is None or self.process.stderr is None:

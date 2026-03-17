@@ -1,6 +1,6 @@
 {
   "Z-Image": {
-    "local_path": null,
+    "local_path": "/inspire/qb-ilm/project/control-technology/public/models/Z-Image",
     "hf_cache_dir": null
   },
   "Z-Image-Turbo": {
@@ -32,8 +32,8 @@
     "hf_cache_dir": null
   },
   "CogVideoX-5B": {
-    "weights_path": null,
-    "local_path": null,
+    "weights_path": "/inspire/qb-ilm/project/control-technology/public/models/CogVideoX-5B",
+    "local_path": "/inspire/qb-ilm/project/control-technology/public/models/CogVideoX-5B",
     "hf_cache_dir": null
   },
   "Wan2.2-TI2V-5B": {

@@ -235,30 +235,30 @@ class RunFlowTests(unittest.TestCase):
 
         manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
         per_model = manifest["per_model_summary"]["CogVideoX-5B"]
-        self.assertEqual(per_model["replica_count"], 2)
+        self.assertEqual(per_model["replica_count"], 4)
         self.assertEqual(
             [replica["gpu_assignment"] for replica in per_model["replicas"]],
-            [[0, 1], [2, 3]],
+            [[0], [1], [2], [3]],
         )
         self.assertEqual(
             [replica["task_count"] for replica in per_model["replicas"]],
-            [2, 2],
+            [1, 1, 1, 1],
         )
 
         records = [
             json.loads(line)
             for line in Path(summary.export_path).read_text(encoding="utf-8").strip().splitlines()
         ]
-        self.assertEqual({record["execution_metadata"]["replica_id"] for record in records}, {0, 1})
+        self.assertEqual({record["execution_metadata"]["replica_id"] for record in records}, {0, 1, 2, 3})
         self.assertEqual(
             {tuple(record["execution_metadata"]["gpu_assignment"]) for record in records},
-            {(0, 1), (2, 3)},
+            {(0,), (1,), (2,), (3,)},
         )
 
         progress_text = progress_stream.getvalue()
         self.assertIn("[run][CogVideoX-5B] available_gpus=[0, 1, 2, 3]", progress_text)
-        self.assertIn("[run][CogVideoX-5B] gpus_per_replica=2", progress_text)
-        self.assertIn("[run][CogVideoX-5B] starting 2 replicas", progress_text)
+        self.assertIn("[run][CogVideoX-5B] gpus_per_replica=1", progress_text)
+        self.assertIn("[run][CogVideoX-5B] starting 4 replicas", progress_text)
 
     def test_default_run_root_uses_runtime_settings(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())

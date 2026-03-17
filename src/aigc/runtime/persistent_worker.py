@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import time
@@ -40,7 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.execution_mode == "real":
         _log(args.model_name, args.replica_id, gpu_assignment, "loading model...")
         start = time.monotonic()
-        adapter.load_for_persistent_worker()
+        with contextlib.redirect_stdout(sys.stderr):
+            adapter.load_for_persistent_worker()
         elapsed = time.monotonic() - start
         _log(
             args.model_name,
@@ -91,11 +93,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"running task {payload.task_id} batch_size={len(payload.prompts)}",
             )
             try:
-                result = execute_task_payload(
-                    payload,
-                    registry_path=args.registry_file,
-                    adapter=adapter,
-                )
+                with contextlib.redirect_stdout(sys.stderr):
+                    result = execute_task_payload(
+                        payload,
+                        registry_path=args.registry_file,
+                        adapter=adapter,
+                    )
                 result_file.write_text(json.dumps(result, indent=2), encoding="utf-8")
                 status = str(result["model_result"]["status"])
                 artifact_count = _count_artifacts(result)

@@ -1,9 +1,32 @@
 # Progress
 
 ## Current Phase
-- Wan repo-runtime dependency fix for `generate.py`
+- CogVideoX single-GPU-per-replica runtime alignment
 
 ## Completed
+- 2026-03-17 20:03:53 CST
+- Aligned `CogVideoX-5B` runtime planning back to the intended single-GPU-per-replica behavior:
+  - set `gpus_per_replica=1` in the model registry
+  - updated the multi-replica mock-run expectations to match one GPU per persistent replica
+  - this keeps local tests aligned with the user's confirmed remote execution expectation
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow tests.test_persistent_worker -v`
+  - result: 17 tests passed
+- 2026-03-17 20:03:05 CST
+- Fixed a persistent-worker protocol fragility uncovered by real `CogVideoX-5B` loading:
+  - model-loading progress output could leak into the stdout JSON protocol stream
+  - blank or non-JSON stdout lines could cause the parent run loop to fail with `emitted invalid JSON`
+- Hardened the persistent-worker runtime path:
+  - model loading and task execution now redirect incidental stdout to stderr
+  - parent-side persistent-worker event reading now skips blank lines
+  - parent-side event reading now tolerates non-JSON stdout noise and forwards it into the run log instead of failing immediately
+- Restored `CogVideoX-5B` runtime planning to the intended `gpus_per_replica=2` configuration after catching a local config drift during regression.
+- Added lightweight regression coverage for:
+  - ignoring blank / noisy stdout lines in the persistent-worker event stream
+  - preserving the expected `CogVideoX-5B` two-GPU-per-replica mock scheduling behavior
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_persistent_worker tests.test_run_flow -v`
+  - result: 17 tests passed
 - 2026-03-17 19:17:20 CST
 - Fixed the next real `Wan2.2-T2V-A14B-Diffusers` repo-script dependency gap discovered during remote validation:
   - added `easydict` to `envs/wan_t2v_diffusers/requirements.txt`
@@ -689,7 +712,7 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 19:17:20 CST.
+- Updated at 2026-03-17 20:03:53 CST.
 - The runtime now has a real logging / terminal observability foundation:
   - every run writes `running.log`
   - major run/env/worker events are timestamped
@@ -700,6 +723,8 @@
   - multi-GPU real execution can be steered by `max_gpus` in `configs/local_models.yaml`
 - Repeated real runs should now spend much less time in `Ensuring environments` when the environment is already `ready` and was validated recently.
 - Wan repo-script execution now includes the `easydict` runtime dependency required by `generate.py`.
+- Persistent real workers are now more robust against third-party model-loading output that writes stray text or blank lines to stdout during startup.
+- `CogVideoX-5B` is now explicitly configured as one GPU per replica, matching the user's confirmed intended runtime behavior.
 - This slice is now covered by lightweight regression and is ready for remote GPU-server validation.
 - Existing run behavior still works across:
   - mock mode
@@ -714,4 +739,4 @@
 - Real cluster validation is still needed to confirm log usefulness and worker visibility under long heavy runs.
 
 ## Next Task
-- Rebuild or patch the existing remote `wan_t2v_diffusers` environment so the new `easydict` dependency is present, then continue Wan multi-GPU real validation on the GPU server.
+- Re-run the real `CogVideoX-5B` workload on the remote GPU server after syncing both the persistent-worker hardening and the single-GPU-per-replica config, then continue from the next true model/runtime issue if one appears.
