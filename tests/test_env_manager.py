@@ -45,6 +45,13 @@ class EnvManagerTests(unittest.TestCase):
         self.assertTrue(spec.requirements_file is not None and spec.requirements_file.exists())
         self.assertIn("diffusers", spec.validation_imports)
 
+    def test_resolve_spec_for_cogvideox_includes_tiktoken(self) -> None:
+        spec = self.manager.resolve_spec_for_model("CogVideoX-5B")
+        self.assertEqual(spec.spec_name, "cogvideox_5b")
+        self.assertTrue(spec.requirements_file is not None and spec.requirements_file.exists())
+        requirements_text = spec.requirements_file.read_text(encoding="utf-8")
+        self.assertIn("tiktoken", requirements_text)
+
     def test_compute_env_id_is_stable(self) -> None:
         spec = self.manager.resolve_spec_for_model("Z-Image")
         env_id_a = self.manager.compute_env_id(spec)

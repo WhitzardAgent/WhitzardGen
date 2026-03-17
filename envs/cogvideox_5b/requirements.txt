@@ -6,3 +6,4 @@ accelerate
 safetensors
 imageio
 imageio-ffmpeg
+tiktoken

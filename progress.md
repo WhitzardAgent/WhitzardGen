@@ -4,6 +4,14 @@
 - Phase 8.5 / 9-prep — Terminal UI Hardening and Real-Mode Cluster Diagnostics
 
 ## Completed
+- 2026-03-17 09:11:40 CST
+- Fixed the first real `CogVideoX-5B` env dependency issue discovered during remote validation:
+  - added `tiktoken` to `envs/cogvideox_5b/requirements.txt`
+  - this matches the tokenizer dependency surfaced by the remote transformers stack during real execution
+- Added lightweight env-manager coverage to ensure the resolved `CogVideoX-5B` env spec includes `tiktoken`.
+- Ran targeted lightweight regression only:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager -v`
+  - result: 12 tests passed
 - 2026-03-17 08:56:13 CST
 - Implemented structural `CogVideoX-5B` support using the existing in-process diffusers video path.
 - Added a real `CogVideoX5BAdapter` in the shared video family:
@@ -306,6 +314,8 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/envs/cogvideox_5b/requirements.txt
+- /Users/morinop/coding/whitzardgen/tests/test_env_manager.py
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/stubs.py
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/__init__.py
@@ -431,11 +441,12 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 08:56:13 CST.
+- Updated at 2026-03-17 09:11:40 CST.
 - Phase 8.5 terminal UI hardening remains in place, and real cluster debugging has now advanced the `Wan2.2-T2V-A14B-Diffusers` path past env/package issues into concrete local-path validation.
 - The framework now explicitly distinguishes between the Wan2.2 code repo checkout and the local Diffusers weights directory for the diffusers-based Wan adapter.
 - JSON output paths remain clean and machine-readable because the progress layer automatically degrades to a no-op reporter when `--output json` is requested.
 - `CogVideoX-5B` is now structurally integrated into the framework and ready for remote real-mode validation once the model weights are present on the target cluster.
+- The next expected remote step for `CogVideoX-5B` is to rebuild or invalidate the old `cogvideox_5b` env so the newly added `tiktoken` dependency is actually installed.
 
 ## Blockers
 - The correct local Diffusers weights directory for `Wan2.2-T2V-A14B-Diffusers` still needs to be configured on the remote cluster; the previously used path was not a valid Diffusers checkpoint layout.
@@ -444,4 +455,4 @@
 - `CogVideoX-5B` still needs an actual remote `weights_path` before first real validation through `aigc run`.
 
 ## Next Task
-- Use the newly integrated `CogVideoX-5B` path for the next remote real-mode validation cycle, starting with `aigc models inspect`, `aigc doctor --model CogVideoX-5B`, and then a small canary `aigc run`.
+- Recreate or invalidate the existing `cogvideox_5b` Conda environment on the remote cluster, then rerun the smallest `CogVideoX-5B` canary job to surface the next real execution issue.
