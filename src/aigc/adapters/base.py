@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from aigc.registry.models import ModelInfo
 
 ExecutionMode = Literal["external_process", "in_process"]
+WorkerStrategy = Literal["per_task_worker", "persistent_worker"]
 ArtifactType = Literal["image", "video", "audio", "text", "json"]
 BatchStatus = Literal["success", "failed"]
 ModelStatus = Literal["success", "partial_success", "failed"]
@@ -81,6 +82,8 @@ class AdapterCapabilities:
     supports_negative_prompt: bool = False
     supports_seed: bool = True
     output_types: list[str] = field(default_factory=list)
+    supports_persistent_worker: bool = False
+    preferred_worker_strategy: WorkerStrategy = "per_task_worker"
 
 
 class BaseAdapter(ABC):
@@ -88,6 +91,12 @@ class BaseAdapter(ABC):
 
     def __init__(self, model_config: "ModelInfo") -> None:
         self.model_config = model_config
+
+    def load_for_persistent_worker(self) -> None:
+        """Warm the adapter for a long-lived worker process."""
+
+    def unload_persistent_worker(self) -> None:
+        """Release any persistent-worker state."""
 
     @abstractmethod
     def prepare(

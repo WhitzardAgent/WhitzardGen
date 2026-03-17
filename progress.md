@@ -1,9 +1,135 @@
 # Progress
 
 ## Current Phase
-- Phase 8.5 / 9-prep — Terminal UI Hardening and Real-Mode Cluster Diagnostics
+- Logging & Terminal UX Hardening Before Multi-Replica Scheduling
 
 ## Completed
+- 2026-03-17 10:09:49 CST
+- Implemented a proper runtime logging / terminal observability foundation for `aigc run`:
+  - added `src/aigc/utils/runtime_logging.py` with a lightweight timestamped run logger
+  - every run now creates `runs/<run_id>/running.log` automatically
+  - all `running.log` lines are timestamped
+  - terminal-visible progress lines are now timestamped too
+- Hardened the progress layer so terminal readability and persistent file logging are separated cleanly:
+  - `TextRunProgress` now emits timestamped stage/task/summary lines
+  - added `LoggedRunProgress` to mirror progress events into the run log without sacrificing readable terminal output
+  - final summaries now include run status plus manifest/failures/running-log paths
+- Wired the new logging path through the run lifecycle:
+  - `run_flow` now creates the run directory and `running.log` before prompt loading so early failures are also captured
+  - run start, stage transitions, environment work, task execution, export, manifest writing, success summary, and failure summary are all logged
+  - run manifests now record `running_log_path`
+- Wired environment creation into the same timestamped logging flow:
+  - env-manager foreground progress now uses timestamped output
+  - streamed `conda` / `pip` lines are forwarded through the same progress callback path instead of raw un-timestamped prints
+  - added compatibility handling so older `_run_command(...)` test doubles still work without the new `progress` parameter
+- Wired worker and persistent-worker lifecycle logs into the run log:
+  - `worker.py` now emits timestamped lifecycle lines for task start / finish / failure
+  - `persistent_worker.py` now emits timestamped startup / model-load / task / shutdown lines
+  - `run_flow` now captures worker stderr and forwards it into `running.log`
+  - persistent-worker stderr is now pumped live back into the parent run log while preserving the JSON event protocol on stdout
+- Removed the duplicate non-timestamped text summary from `aigc run` CLI text mode so the timestamped progress summary is the single human-facing summary path.
+- Added/updated lightweight regression coverage for:
+  - timestamped progress formatting
+  - `running.log` creation
+  - run-summary logging
+  - persistent-worker timestamped logs
+  - prompt/terminal/run-log integration through `run_flow`
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_progress tests.test_run_flow tests.test_persistent_worker -v`
+  - result: 19 tests passed
+- Ran targeted env-manager compatibility regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager -v`
+  - result: 12 tests passed
+- Ran targeted CLI run-store regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 2 tests passed
+- Ran lightweight full regression:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 61 tests passed
+- 2026-03-17 10:00:37 CST
+- Implemented the first version of multi-replica resource-aware scheduling on top of the persistent-worker runtime:
+  - added runtime-facing model requirement accessors for `worker_strategy`, `gpus_per_replica`, and `supports_multi_replica`
+  - enabled explicit runtime requirements for the first pilot models:
+    - `Z-Image`
+    - `CogVideoX-5B`
+  - added replica planning in `run_flow`:
+    - resolves available GPUs from `AIGC_AVAILABLE_GPUS`, `CUDA_VISIBLE_DEVICES`, `nvidia-smi`, or `torch.cuda`
+    - computes replica count from GPU count and `gpus_per_replica`
+    - assigns contiguous GPU groups to replicas
+    - deterministically shards prepared tasks across replicas
+  - added replica-aware persistent-worker launch:
+    - each worker now receives `replica_id`
+    - each worker now receives `gpu_assignment`
+    - each worker now launches with replica-scoped `CUDA_VISIBLE_DEVICES`
+  - added clear multi-replica runtime logs:
+    - run-level logs show available GPUs, `gpus_per_replica`, replica count, and per-replica task assignment
+    - worker logs now include `[worker][Model][replica=N] GPUs=[...] ...`
+  - propagated replica metadata into task runtime config, artifact metadata, dataset export records, and final per-model manifest summaries
+  - preserved the existing fallback paths:
+    - `per_task_worker`
+    - single persistent worker
+    - models without multi-replica support still run safely
+- Added 100-prompt test assets for throughput / sharding validation:
+  - `prompts/test_image_100.txt`
+  - `prompts/test_video_100.txt`
+- Added lightweight regression coverage for:
+  - replica count calculation
+  - contiguous GPU assignment planning
+  - deterministic task sharding
+  - multi-replica image execution for `Z-Image`
+  - multi-replica video execution for `CogVideoX-5B`
+  - persistent-worker log format with replica context
+  - 100-prompt image/video test assets loading through the prompt loader
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow tests.test_persistent_worker tests.test_runtime_worker tests.test_video_adapter tests.test_registry -v`
+  - result: 27 tests passed
+- Ran targeted prompt-asset regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompts -v`
+  - result: 8 tests passed
+- Ran lightweight full regression:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 61 tests passed
+- 2026-03-17 09:47:00 CST
+- Implemented the first working persistent model worker architecture:
+  - added `src/aigc/runtime/persistent_worker.py`
+  - persistent workers now use a simple JSONL stdin/stdout protocol
+  - startup/task/shutdown logs are printed in the required `[worker][Model] ...` format
+- Refactored `run_flow.py` so task preparation and task execution are now separated:
+  - tasks are prepared first
+  - then executed grouped by model
+  - selected models can now use one worker for many tasks
+  - per-task subprocess workers remain available as fallback
+- Added worker-strategy selection and execution support:
+  - `per_task_worker`
+  - `persistent_worker`
+- Enabled actual persistent-worker execution for the first selected heavy models:
+  - `Z-Image`
+  - `CogVideoX-5B`
+- Added adapter-side model caching so persistent workers can load once and reuse:
+  - diffusers image family caches one pipeline per worker process
+  - diffusers video family caches one pipeline per worker process
+- Added lightweight regression coverage for:
+  - persistent worker protocol
+  - load-once / many-tasks behavior using a counter-backed test adapter
+  - run-flow strategy selection for `Z-Image`
+  - run-flow strategy selection for `CogVideoX-5B`
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_persistent_worker tests.test_run_flow tests.test_runtime_worker tests.test_video_adapter tests.test_registry -v`
+  - result: 22 tests passed
+- Ran lightweight full regression:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - result: 56 tests passed
+- 2026-03-17 09:42:03 CST
+- Re-read the Phase 10 runtime docs and current runtime implementation before starting the persistent-worker refactor.
+- Added persistent-worker strategy plumbing to the adapter/runtime foundations:
+  - introduced explicit worker-strategy capability fields on adapters
+  - added persistent-worker warmup / teardown hooks on the base adapter
+  - extended `TaskPayload` with explicit `worker_strategy`
+  - updated shared task execution so runtime metadata carries execution mode + worker strategy together
+- Marked the first persistent-worker trial adapters:
+  - `Z-Image`
+  - `CogVideoX-5B`
+- Added adapter-side persistent warmup/caching hooks for diffusers image/video families so selected adapters can keep one loaded pipeline alive across multiple task executions inside one process.
 - 2026-03-17 09:29:15 CST
 - Added a global local runtime configuration entry point for output storage:
   - added `configs/local_runtime.yaml`
@@ -352,6 +478,32 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/utils/runtime_logging.py
+- /Users/morinop/coding/whitzardgen/src/aigc/utils/progress.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/env/manager.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/worker.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/persistent_worker.py
+- /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
+- /Users/morinop/coding/whitzardgen/tests/test_progress.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/tests/test_persistent_worker.py
+- /Users/morinop/coding/whitzardgen/configs/models.yaml
+- /Users/morinop/coding/whitzardgen/prompts/test_image_100.txt
+- /Users/morinop/coding/whitzardgen/prompts/test_video_100.txt
+- /Users/morinop/coding/whitzardgen/src/aigc/exporters/jsonl.py
+- /Users/morinop/coding/whitzardgen/src/aigc/registry/models.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/persistent_worker.py
+- /Users/morinop/coding/whitzardgen/tests/test_persistent_worker.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/base.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/payloads.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime/worker.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/image_family.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/zimage.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/stubs.py
 - /Users/morinop/coding/whitzardgen/src/aigc/settings.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_store.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
@@ -488,19 +640,27 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 09:29:15 CST.
-- Phase 8.5 terminal UI hardening remains in place, and real cluster debugging has now advanced the `Wan2.2-T2V-A14B-Diffusers` path past env/package issues into concrete local-path validation.
-- The framework now explicitly distinguishes between the Wan2.2 code repo checkout and the local Diffusers weights directory for the diffusers-based Wan adapter.
-- JSON output paths remain clean and machine-readable because the progress layer automatically degrades to a no-op reporter when `--output json` is requested.
-- `CogVideoX-5B` is now structurally integrated into the framework and ready for remote real-mode validation once the model weights are present on the target cluster.
-- The next expected remote step for `CogVideoX-5B` is to rebuild or invalidate the old `cogvideox_5b` env so the newly added tokenizer dependencies (`tiktoken`, `sentencepiece`, `protobuf`) are actually installed.
-- The framework now has a simple global output-root configuration path, so remote cluster runs no longer need to dump all outputs under the repository-local `runs/` directory unless explicitly desired.
+- Updated at 2026-03-17 10:09:49 CST.
+- The runtime now has a real logging / terminal observability foundation:
+  - every run writes `running.log`
+  - major run/env/worker events are timestamped
+  - worker and persistent-worker lifecycle logs flow back into the run log
+  - terminal progress remains readable while the file log stays more complete
+- Existing run behavior still works across:
+  - mock mode
+  - real mode
+  - per-task workers
+  - persistent workers
+- The multi-replica scheduling work from Phase 11 remains in place underneath this improved logging layer.
 
 ## Blockers
-- The correct local Diffusers weights directory for `Wan2.2-T2V-A14B-Diffusers` still needs to be configured on the remote cluster; the previously used path was not a valid Diffusers checkpoint layout.
-- Per user instruction, do not continue local real-run validation on this machine.
-- Real non-mock validation for the remaining image/video models is still deferred to the GPU cluster environment, where model repositories, weights, and GPU runtime constraints can be validated properly.
-- `CogVideoX-5B` still needs an actual remote `weights_path` before first real validation through `aigc run`.
+- No code blockers in the local framework path.
+- Per user instruction, do not continue local heavy real-run validation on this machine.
+- Real cluster validation is still needed to confirm log usefulness and worker visibility under long heavy runs.
 
 ## Next Task
-- Use `configs/local_runtime.yaml` on the remote cluster to move run outputs to the desired shared storage root, then continue real `CogVideoX-5B` validation with the refreshed environment.
+- The next practical step is to take this logging layer onto the remote GPU server:
+  - verify `running.log` completeness on real image/video runs
+  - confirm worker/model-load visibility is sufficient for long debugging sessions
+  - then resume deeper multi-replica scheduling work on top of the new observability foundation
+  - later add replica/GPU scheduling without regressing the new load-once execution path

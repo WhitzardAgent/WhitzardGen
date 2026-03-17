@@ -7,6 +7,8 @@ from pathlib import Path
 from aigc.adapters import ADAPTER_REGISTRY
 from aigc.registry.local_overrides import (
     LOCAL_MODELS_ENV_VAR,
+    LOCAL_OVERRIDE_FIELDS,
+    LOCAL_RUNTIME_OVERRIDE_FIELDS,
     LocalOverrideError,
     load_local_model_overrides,
 )
@@ -87,7 +89,21 @@ def load_registry(
             raise RegistryError(f"Registry entry for {name} must be an object.")
         local_paths = dict(local_overrides.get(name, {}))
         weights = dict(config.get("weights", {}))
-        weights.update(local_paths)
+        runtime = dict(config.get("runtime", {}))
+        weights.update(
+            {
+                key: value
+                for key, value in local_paths.items()
+                if key in LOCAL_OVERRIDE_FIELDS
+            }
+        )
+        runtime.update(
+            {
+                key: value
+                for key, value in local_paths.items()
+                if key in LOCAL_RUNTIME_OVERRIDE_FIELDS
+            }
+        )
         model = ModelInfo(
             name=name,
             version=str(config.get("version", "")),
@@ -95,7 +111,7 @@ def load_registry(
             modality=str(config.get("modality", "")),
             task_type=str(config.get("task_type", "")),
             capabilities=dict(config.get("capabilities", {})),
-            runtime=dict(config.get("runtime", {})),
+            runtime=runtime,
             weights=weights,
             local_paths=local_paths,
             registry_source=str(registry_path),

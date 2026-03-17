@@ -12,6 +12,8 @@ class ZImageAdapter(DiffusersImageAdapterBase):
         supports_negative_prompt=True,
         supports_seed=True,
         output_types=["image"],
+        supports_persistent_worker=True,
+        preferred_worker_strategy="persistent_worker",
     )
     pipeline_class_name = "ZImagePipeline"
     default_guidance_scale = 4.0

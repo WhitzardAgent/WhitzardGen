@@ -15,6 +15,7 @@ if str(SRC_ROOT) not in sys.path:
 from aigc.adapters.base import ExecutionResult
 from aigc.registry import load_registry
 from aigc.runtime.payloads import TaskPayload
+from aigc.utils.runtime_logging import print_log_line
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,19 +26,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def execute_task_payload(payload: TaskPayload, registry_path: str | None = None) -> dict:
+def build_adapter(
+    model_name: str,
+    *,
+    registry_path: str | None = None,
+):
+    registry = load_registry(registry_path) if registry_path else load_registry()
+    model = registry.get_model(model_name)
+    adapter = registry.resolve_adapter_class(model_name)(model_config=model)
+    return registry, model, adapter
+
+
+def execute_task_payload(
+    payload: TaskPayload,
+    registry_path: str | None = None,
+    *,
+    adapter=None,
+) -> dict:
     workdir = Path(payload.workdir)
     workdir.mkdir(parents=True, exist_ok=True)
 
-    registry = load_registry(registry_path) if registry_path else load_registry()
-    model = registry.get_model(payload.model_name)
-    adapter = registry.resolve_adapter_class(payload.model_name)(model_config=model)
+    if adapter is None:
+        _registry, _model, adapter = build_adapter(
+            payload.model_name,
+            registry_path=registry_path,
+        )
 
     prompts = [item.prompt for item in payload.prompts]
     prompt_ids = [item.prompt_id for item in payload.prompts]
     prepare_params = dict(payload.params)
     runtime = dict(payload.runtime_config)
     runtime["execution_mode"] = payload.execution_mode
+    runtime["worker_strategy"] = payload.worker_strategy
     prepare_params["_runtime_config"] = runtime
     plan = adapter.prepare(
         prompts=prompts,
@@ -93,6 +113,7 @@ def execute_task_payload(payload: TaskPayload, registry_path: str | None = None)
         "task_id": payload.task_id,
         "model_name": payload.model_name,
         "execution_mode": payload.execution_mode,
+        "worker_strategy": payload.worker_strategy,
         "plan": plan.to_dict(),
         "execution_result": exec_result.to_dict(),
         "model_result": model_result.to_dict(),
@@ -103,16 +124,32 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     task_payload = TaskPayload.from_dict(json.loads(Path(args.task_file).read_text(encoding="utf-8")))
+    _log(
+        task_payload.model_name,
+        f"starting task {task_payload.task_id} strategy={task_payload.worker_strategy} mode={task_payload.execution_mode}",
+    )
     try:
         result = execute_task_payload(task_payload, registry_path=args.registry_file)
+        status = str(result["model_result"]["status"])
+        artifact_count = sum(
+            len(item.get("artifacts", []))
+            for item in result.get("model_result", {}).get("batch_items", [])
+            if item.get("status") == "success"
+        )
+        _log(
+            task_payload.model_name,
+            f"finished task {task_payload.task_id} status={status} artifacts={artifact_count}",
+        )
         status_code = 0
     except Exception as exc:  # pragma: no cover - exercised through integration boundaries
         traceback_text = traceback.format_exc()
         print(traceback_text, file=sys.stderr, flush=True)
+        _log(task_payload.model_name, f"failed task {task_payload.task_id}: {exc.__class__.__name__}: {exc}")
         result = {
             "task_id": task_payload.task_id,
             "model_name": task_payload.model_name,
             "execution_mode": task_payload.execution_mode,
+            "worker_strategy": task_payload.worker_strategy,
             "plan": None,
             "execution_result": {"exit_code": 1, "logs": traceback_text, "outputs": {}},
             "model_result": {
@@ -149,6 +186,10 @@ def _format_external_process_logs(
     if not clean_stdout and not clean_stderr:
         sections.append("No stdout/stderr captured from external process.")
     return "\n\n".join(sections)
+
+
+def _log(model_name: str, message: str) -> None:
+    print_log_line(f"[worker][{model_name}] {message}", stream=sys.stderr)
 
 
 if __name__ == "__main__":

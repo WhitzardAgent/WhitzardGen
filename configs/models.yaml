@@ -94,7 +94,10 @@
         "gpu_required": true,
         "min_vram_gb": 16,
         "recommended_vram_gb": 24,
-        "env_spec": "zimage"
+        "env_spec": "zimage",
+        "worker_strategy": "persistent_worker",
+        "gpus_per_replica": 1,
+        "supports_multi_replica": true
       },
       "weights": {
         "hf_repo": "Tongyi-MAI/Z-Image-Turbo"
@@ -119,7 +122,10 @@
         "gpu_required": true,
         "min_vram_gb": 16,
         "recommended_vram_gb": 24,
-        "env_spec": "zimage"
+        "env_spec": "zimage",
+        "worker_strategy": "persistent_worker",
+        "gpus_per_replica": 1,
+        "supports_multi_replica": true
       },
       "weights": {
         "hf_repo": "Tongyi-MAI/Z-Image"
@@ -216,7 +222,7 @@
         "supported_languages": ["en", "zh"]
       },
       "runtime": {
-        "execution_mode": "in_process",
+        "execution_mode": "external_process",
         "gpu_required": true,
         "min_vram_gb": 80,
         "recommended_vram_gb": 80,
@@ -245,7 +251,10 @@
         "gpu_required": true,
         "min_vram_gb": 24,
         "recommended_vram_gb": 48,
-        "env_spec": "cogvideox_5b"
+        "env_spec": "cogvideox_5b",
+        "worker_strategy": "persistent_worker",
+        "gpus_per_replica": 2,
+        "supports_multi_replica": true
       },
       "weights": {
         "hf_repo": "THUDM/CogVideoX-5b"

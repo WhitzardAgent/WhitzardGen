@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
+import inspect
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from aigc.env.local_overrides import (
     resolve_local_env_override,
 )
 from aigc.registry import ModelRegistry, load_registry
+from aigc.utils.runtime_logging import print_log_line
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENVS_ROOT = REPO_ROOT / "envs"
@@ -392,10 +394,11 @@ class EnvManager:
                 f"python={spec.python_version}",
                 "pip",
             ]
-            result = self._run_command(
+            result = self._invoke_run_command(
                 create_command,
                 env=self.conda_process_env(),
                 foreground=foreground,
+                progress=progress_cb,
             )
             if result.returncode != 0:
                 error = self._command_logs(result) or "conda create failed"
@@ -439,10 +442,11 @@ class EnvManager:
                     foreground=foreground,
                     env_path=spec.reuse_prefix,
                 )
-                pip_result = self._run_command(
+                pip_result = self._invoke_run_command(
                     pip_command,
                     env=self.conda_process_env(),
                     foreground=foreground,
+                    progress=progress_cb,
                 )
                 if pip_result.returncode != 0:
                     error = self._command_logs(pip_result) or "pip install failed"
@@ -469,10 +473,11 @@ class EnvManager:
                     foreground=foreground,
                     env_path=spec.reuse_prefix,
                 )
-                post_install_result = self._run_command(
+                post_install_result = self._invoke_run_command(
                     post_install_command,
                     env=self.conda_process_env(),
                     foreground=foreground,
+                    progress=progress_cb,
                 )
                 if post_install_result.returncode != 0:
                     error = self._command_logs(post_install_result) or "post-install hook failed"
@@ -633,7 +638,7 @@ class EnvManager:
             progress(message)
 
     def _default_progress(self, message: str) -> None:
-        print(message, file=sys.stderr, flush=True)
+        print_log_line(message, stream=sys.stderr)
 
     def _run_command(
         self,
@@ -642,6 +647,7 @@ class EnvManager:
         env: dict[str, str],
         foreground: bool,
         cwd: str | Path | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if not foreground:
             return subprocess.run(
@@ -665,7 +671,9 @@ class EnvManager:
         assert process.stdout is not None
         for line in process.stdout:
             output_lines.append(line)
-            print(line, file=sys.stderr, end="", flush=True)
+            text = line.rstrip("\n")
+            if text:
+                self._emit_progress(progress, text)
         returncode = process.wait()
         logs = "".join(output_lines).strip()
         return subprocess.CompletedProcess(
@@ -673,6 +681,34 @@ class EnvManager:
             returncode=returncode,
             stdout=logs,
             stderr="",
+        )
+
+    def _invoke_run_command(
+        self,
+        command: list[str],
+        *,
+        env: dict[str, str],
+        foreground: bool,
+        cwd: str | Path | None = None,
+        progress: Callable[[str], None] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        try:
+            signature = inspect.signature(self._run_command)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None and "progress" in signature.parameters:
+            return self._run_command(
+                command,
+                env=env,
+                foreground=foreground,
+                cwd=cwd,
+                progress=progress,
+            )
+        return self._run_command(
+            command,
+            env=env,
+            foreground=foreground,
+            cwd=cwd,
         )
 
     def _command_logs(self, result: subprocess.CompletedProcess[str]) -> str:

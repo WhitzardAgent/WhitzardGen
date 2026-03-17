@@ -2,12 +2,21 @@ import json
 import os
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.run_flow import RunFlowError, run_models, run_single_model
+from aigc.run_flow import (
+    RunFlowError,
+    _assign_gpus_to_replicas,
+    _calculate_replica_count,
+    _shard_tasks_across_replicas,
+    run_models,
+    run_single_model,
+)
 from aigc.runtime.payloads import TaskPayload
 from aigc.runtime.worker import execute_task_payload
+from aigc.utils.progress import TextRunProgress
 
 
 class FakeEnvRecord:
@@ -27,6 +36,209 @@ class FakeEnvManager:
 
 
 class RunFlowTests(unittest.TestCase):
+    def test_replica_count_calculation_uses_gpu_count_and_gpus_per_replica(self) -> None:
+        self.assertEqual(
+            _calculate_replica_count(
+                total_available_gpus=8,
+                gpus_per_replica=2,
+                supports_multi_replica=True,
+                execution_mode="real",
+                task_count=10,
+            ),
+            4,
+        )
+        self.assertEqual(
+            _calculate_replica_count(
+                total_available_gpus=1,
+                gpus_per_replica=2,
+                supports_multi_replica=True,
+                execution_mode="real",
+                task_count=10,
+            ),
+            1,
+        )
+
+    def test_gpu_assignment_and_task_sharding_are_deterministic(self) -> None:
+        self.assertEqual(
+            _assign_gpus_to_replicas(
+                available_gpus=[0, 1, 2, 3, 4, 5, 6, 7],
+                gpus_per_replica=2,
+                replica_count=4,
+            ),
+            [[0, 1], [2, 3], [4, 5], [6, 7]],
+        )
+
+        prepared = [f"task_{index}" for index in range(1, 7)]
+        shards = _shard_tasks_across_replicas(
+            prepared_tasks=prepared,  # type: ignore[arg-type]
+            replica_count=3,
+        )
+        self.assertEqual(shards, [["task_1", "task_4"], ["task_2", "task_5"], ["task_3", "task_6"]])
+
+    def test_selected_model_uses_persistent_worker_strategy_in_mock_mode(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "example.txt"
+        prompts_path.write_text(
+            "\n".join(
+                [
+                    "a futuristic city at night",
+                    "a cat sitting on a chair",
+                    "一只可爱的猫",
+                    "a watercolor mountain lake",
+                    "a robot reading a book",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        summary = run_single_model(
+            model_name="Z-Image",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "persistent_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "z-image"
+        task_files = sorted(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        self.assertEqual(len(task_files), 2)
+        payloads = [json.loads(path.read_text(encoding="utf-8")) for path in task_files]
+        self.assertTrue(all(payload["worker_strategy"] == "persistent_worker" for payload in payloads))
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["per_model_summary"]["Z-Image"]["worker_strategy"],
+            "persistent_worker",
+        )
+        running_log = Path(summary.output_dir) / "running.log"
+        self.assertTrue(running_log.exists())
+        running_log_text = running_log.read_text(encoding="utf-8")
+        self.assertRegex(running_log_text, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[run\] Starting run")
+        self.assertIn("[worker][Z-Image][replica=0] GPUs=[] starting persistent worker", running_log_text)
+
+    def test_selected_video_model_uses_persistent_worker_strategy_in_mock_mode(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "video.txt"
+        prompts_path.write_text("a camera glides through a neon tunnel\n", encoding="utf-8")
+
+        summary = run_single_model(
+            model_name="CogVideoX-5B",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "persistent_video_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "cogvideox-5b"
+        task_file = next(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        payload = json.loads(task_file.read_text(encoding="utf-8"))
+        self.assertEqual(payload["worker_strategy"], "persistent_worker")
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["per_model_summary"]["CogVideoX-5B"]["worker_strategy"],
+            "persistent_worker",
+        )
+
+    def test_multi_replica_mock_run_shards_image_tasks_and_exports_replica_metadata(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "replica_image.txt"
+        prompts_path.write_text(
+            "\n".join([f"image test prompt {index:03d}" for index in range(1, 10)]) + "\n",
+            encoding="utf-8",
+        )
+        progress_stream = StringIO()
+
+        with patch.dict(os.environ, {"AIGC_AVAILABLE_GPUS": "0,1"}, clear=False):
+            summary = run_single_model(
+                model_name="Z-Image",
+                prompt_file=prompts_path,
+                out_dir=tmpdir / "runs" / "replica_image",
+                execution_mode="mock",
+                env_manager=FakeEnvManager(),
+                batch_limit=1,
+                progress=TextRunProgress(stream=progress_stream),
+            )
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        per_model = manifest["per_model_summary"]["Z-Image"]
+        self.assertEqual(per_model["replica_count"], 2)
+        self.assertEqual(
+            [replica["gpu_assignment"] for replica in per_model["replicas"]],
+            [[0], [1]],
+        )
+        self.assertEqual(
+            [replica["task_count"] for replica in per_model["replicas"]],
+            [5, 4],
+        )
+
+        records = [
+            json.loads(line)
+            for line in Path(summary.export_path).read_text(encoding="utf-8").strip().splitlines()
+        ]
+        self.assertEqual({record["execution_metadata"]["replica_id"] for record in records}, {0, 1})
+        self.assertEqual(
+            {tuple(record["execution_metadata"]["gpu_assignment"]) for record in records},
+            {(0,), (1,)},
+        )
+
+        progress_text = progress_stream.getvalue()
+        self.assertIn("[run][Z-Image] available_gpus=[0, 1]", progress_text)
+        self.assertIn("[run][Z-Image] starting 2 replicas", progress_text)
+        self.assertIn("[run][Z-Image] replica=0 assigned 5 tasks GPUs=[0]", progress_text)
+        self.assertIn("[run][Z-Image] replica=1 assigned 4 tasks GPUs=[1]", progress_text)
+
+    def test_multi_replica_mock_run_shards_video_tasks_and_uses_gpu_groups(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "replica_video.txt"
+        prompts_path.write_text(
+            "\n".join([f"video test prompt {index:03d}" for index in range(1, 5)]) + "\n",
+            encoding="utf-8",
+        )
+        progress_stream = StringIO()
+
+        with patch.dict(os.environ, {"AIGC_AVAILABLE_GPUS": "0,1,2,3"}, clear=False):
+            summary = run_single_model(
+                model_name="CogVideoX-5B",
+                prompt_file=prompts_path,
+                out_dir=tmpdir / "runs" / "replica_video",
+                execution_mode="mock",
+                env_manager=FakeEnvManager(),
+                progress=TextRunProgress(stream=progress_stream),
+            )
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        per_model = manifest["per_model_summary"]["CogVideoX-5B"]
+        self.assertEqual(per_model["replica_count"], 2)
+        self.assertEqual(
+            [replica["gpu_assignment"] for replica in per_model["replicas"]],
+            [[0, 1], [2, 3]],
+        )
+        self.assertEqual(
+            [replica["task_count"] for replica in per_model["replicas"]],
+            [2, 2],
+        )
+
+        records = [
+            json.loads(line)
+            for line in Path(summary.export_path).read_text(encoding="utf-8").strip().splitlines()
+        ]
+        self.assertEqual({record["execution_metadata"]["replica_id"] for record in records}, {0, 1})
+        self.assertEqual(
+            {tuple(record["execution_metadata"]["gpu_assignment"]) for record in records},
+            {(0, 1), (2, 3)},
+        )
+
+        progress_text = progress_stream.getvalue()
+        self.assertIn("[run][CogVideoX-5B] available_gpus=[0, 1, 2, 3]", progress_text)
+        self.assertIn("[run][CogVideoX-5B] gpus_per_replica=2", progress_text)
+        self.assertIn("[run][CogVideoX-5B] starting 2 replicas", progress_text)
+
     def test_default_run_root_uses_runtime_settings(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "example.txt"
@@ -251,6 +463,12 @@ class RunFlowTests(unittest.TestCase):
         manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["execution_mode"], "real")
         self.assertEqual(manifest["status"], "completed")
+        running_log = Path(summary.output_dir) / "running.log"
+        self.assertTrue(running_log.exists())
+        running_log_text = running_log.read_text(encoding="utf-8")
+        self.assertRegex(running_log_text, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[1/9\] Loading prompts\.\.\.")
+        self.assertIn("Run complete", running_log_text)
+        self.assertIn("running_log:", running_log_text)
         export_path = Path(summary.export_path)
         self.assertTrue(export_path.exists())
         record = json.loads(export_path.read_text(encoding="utf-8").strip())

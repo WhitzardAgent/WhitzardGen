@@ -64,7 +64,17 @@ class EchoTestAdapter(BaseAdapter):
         max_batch_size=8,
         preferred_batch_size=4,
         output_types=["text"],
+        supports_persistent_worker=True,
+        preferred_worker_strategy="persistent_worker",
     )
+
+    def load_for_persistent_worker(self) -> None:
+        counter_file = self.model_config.weights.get("load_counter_file")
+        if not counter_file:
+            return
+        path = Path(str(counter_file))
+        current = int(path.read_text(encoding="utf-8")) if path.exists() else 0
+        path.write_text(str(current + 1), encoding="utf-8")
 
     def prepare(
         self,

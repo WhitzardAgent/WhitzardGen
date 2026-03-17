@@ -34,6 +34,7 @@ class ProgressTests(unittest.TestCase):
         )
 
         output = buffer.getvalue()
+        self.assertRegex(output, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[1/3\] Loading prompts\.\.\.")
         self.assertIn("[1/3] Loading prompts...", output)
         self.assertIn("[1/3] Loading prompts - done", output)
         self.assertIn("Running task 1/2 | model=Z-Image | prompts=4 | mode=mock", output)
@@ -46,6 +47,7 @@ class ProgressTests(unittest.TestCase):
         buffer = io.StringIO()
         progress = TextRunProgress(stream=buffer)
         summary = RunSummaryData(
+            status="completed",
             run_id="run_001",
             execution_mode="mock",
             model_names=["Z-Image", "FLUX.1-dev"],
@@ -61,7 +63,9 @@ class ProgressTests(unittest.TestCase):
         progress.print_summary(summary)
         output = buffer.getvalue()
 
+        self.assertRegex(output, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} Run complete")
         self.assertIn("Run complete", output)
+        self.assertIn("status: completed", output)
         self.assertIn("run_id: run_001", output)
         self.assertIn("mode: mock", output)
         self.assertIn("models: Z-Image, FLUX.1-dev", output)
@@ -86,4 +90,3 @@ class ProgressTests(unittest.TestCase):
         )
         self.assertEqual(success, 2)
         self.assertEqual(failed, 2)
-

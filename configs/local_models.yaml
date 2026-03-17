@@ -28,6 +28,7 @@
     "repo_path": "/inspire/qb-ilm/project/control-technology/25015/deps/Wan2.2",
     "weights_path": "/inspire/qb-ilm/project/control-technology/public/models/Wan2.2-T2V-A14B-Diffusers",
     "local_path": "/inspire/qb-ilm/project/control-technology/public/models/Wan2.2-T2V-A14B-Diffusers",
+    "max_gpus": null,
     "hf_cache_dir": null
   },
   "CogVideoX-5B": {

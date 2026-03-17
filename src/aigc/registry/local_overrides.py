@@ -17,6 +17,9 @@ LOCAL_OVERRIDE_FIELDS = (
     "script_root",
     "hf_cache_dir",
 )
+LOCAL_RUNTIME_OVERRIDE_FIELDS = (
+    "max_gpus",
+)
 
 
 def load_local_model_overrides(path: str | Path | None) -> tuple[Path | None, dict[str, dict[str, Any]]]:

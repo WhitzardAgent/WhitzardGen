@@ -92,6 +92,18 @@ class PromptLoaderTests(unittest.TestCase):
         self.assertEqual(video_csv[0].prompt_id, "canary_vid_en_001")
         self.assertEqual(image_jsonl[1].prompt_id, "canary_img_jsonl_zh_001")
 
+    def test_large_test_prompt_assets_load(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        image_txt = load_prompts(root / "prompts" / "test_image_100.txt")
+        video_txt = load_prompts(root / "prompts" / "test_video_100.txt")
+
+        self.assertEqual(len(image_txt), 100)
+        self.assertEqual(len(video_txt), 100)
+        self.assertEqual(image_txt[0].prompt_id, "prompt_000001")
+        self.assertEqual(image_txt[-1].prompt_id, "prompt_000100")
+        self.assertEqual(video_txt[0].language, "en")
+        self.assertEqual(video_txt[50].language, "zh")
+
     def _write_file(self, name: str, content: str) -> Path:
         tmpdir = Path(tempfile.mkdtemp())
         path = tmpdir / name

@@ -36,3 +36,22 @@ class ModelInfo:
     @property
     def has_local_overrides(self) -> bool:
         return bool(self.local_paths)
+
+    @property
+    def worker_strategy(self) -> str:
+        return str(self.runtime.get("worker_strategy", "per_task_worker"))
+
+    @property
+    def gpus_per_replica(self) -> int:
+        return max(int(self.runtime.get("gpus_per_replica", 1)), 1)
+
+    @property
+    def supports_multi_replica(self) -> bool:
+        return bool(self.runtime.get("supports_multi_replica", False))
+
+    @property
+    def max_gpus(self) -> int | None:
+        raw = self.runtime.get("max_gpus")
+        if raw in (None, ""):
+            return None
+        return max(int(raw), 1)

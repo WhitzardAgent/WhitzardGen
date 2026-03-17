@@ -117,6 +117,7 @@ class MockCapableVideoAdapter(BaseAdapter):
         workdir: str,
     ) -> ModelResult:
         batch_id = plan.inputs.get("batch_id")
+        runtime = dict(plan.inputs.get("runtime", {}))
         expected_outputs = dict(plan.inputs.get("expected_outputs", {}))
         items: list[BatchItemResult] = []
         success_count = 0
@@ -171,6 +172,8 @@ class MockCapableVideoAdapter(BaseAdapter):
                 "batch_id": output.get("batch_id", batch_id),
                 "batch_index": output.get("batch_index", fallback_index),
                 "mock": bool(output.get("mock", False)),
+                "replica_id": runtime.get("replica_id"),
+                "gpu_assignment": list(runtime.get("gpu_assignment", [])),
             }
             items.append(
                 BatchItemResult(
@@ -201,7 +204,9 @@ class MockCapableVideoAdapter(BaseAdapter):
             logs=exec_result.logs,
             metadata={
                 "batch_id": batch_id,
-                "execution_mode": str(plan.inputs.get("runtime", {}).get("execution_mode", "real")),
+                "execution_mode": str(runtime.get("execution_mode", "real")),
+                "replica_id": runtime.get("replica_id"),
+                "gpu_assignment": list(runtime.get("gpu_assignment", [])),
             },
         )
 
@@ -305,6 +310,20 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
     real_execution_mode = "in_process"
     pipeline_class_name = ""
 
+    def __init__(self, model_config: Any) -> None:
+        super().__init__(model_config)
+        self._loaded_pipeline: Any | None = None
+        self._loaded_torch: Any | None = None
+        self._loaded_device: str | None = None
+
+    def load_for_persistent_worker(self) -> None:
+        self._get_or_load_pipeline()
+
+    def unload_persistent_worker(self) -> None:
+        self._loaded_pipeline = None
+        self._loaded_torch = None
+        self._loaded_device = None
+
     def _execute_real(
         self,
         *,
@@ -312,8 +331,6 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
         prompts: list[str],
         workdir: str,
     ) -> dict[str, dict[str, Any]]:
-        import torch
-        import diffusers
         from diffusers.utils import export_to_video
 
         if len(prompts) != 1:
@@ -331,16 +348,7 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
         num_inference_steps = int(plan.inputs["num_inference_steps"])
         guidance_scale = float(plan.inputs["guidance_scale"])
         negative_prompt = str(plan.inputs.get("negative_prompts", [""])[0])
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = torch.bfloat16 if device == "cuda" else torch.float32
-        pipeline_class = getattr(diffusers, self.pipeline_class_name)
-        pipe = self.load_pipeline(
-            pipeline_class=pipeline_class,
-            torch=torch,
-            device=device,
-            dtype=dtype,
-        )
+        pipe, torch, device = self._get_or_load_pipeline()
         output_path = Path(workdir) / f"{prompt_id}.mp4"
         frames = self.generate_frames(
             pipe=pipe,
@@ -373,6 +381,27 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
                 "mock": False,
             }
         }
+
+    def _get_or_load_pipeline(self) -> tuple[Any, Any, str]:
+        if self._loaded_pipeline is not None and self._loaded_torch is not None and self._loaded_device:
+            return self._loaded_pipeline, self._loaded_torch, self._loaded_device
+
+        import torch
+        import diffusers
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.bfloat16 if device == "cuda" else torch.float32
+        pipeline_class = getattr(diffusers, self.pipeline_class_name)
+        pipe = self.load_pipeline(
+            pipeline_class=pipeline_class,
+            torch=torch,
+            device=device,
+            dtype=dtype,
+        )
+        self._loaded_pipeline = pipe
+        self._loaded_torch = torch
+        self._loaded_device = device
+        return pipe, torch, device
 
     def load_pipeline(
         self,
@@ -438,7 +467,7 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
         return list(frames[0])
 
 
-class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
+class WanT2VDiffusersAdapter(MockCapableVideoAdapter):
     capabilities = AdapterCapabilities(
         supports_batch_prompts=False,
         max_batch_size=1,
@@ -447,6 +476,7 @@ class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
         supports_seed=True,
         output_types=["video"],
     )
+    real_execution_mode = "external_process"
     pipeline_class_name = "WanPipeline"
     default_width = 1280
     default_height = 720
@@ -458,79 +488,119 @@ class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
     def extra_prepare_inputs(self, params: dict[str, Any]) -> dict[str, Any]:
         return {"guidance_scale_2": float(params.get("guidance_scale_2", 3.0))}
 
-    def load_pipeline(
+    def build_real_command(
         self,
         *,
-        pipeline_class: Any,
-        torch: Any,
-        device: str,
-        dtype: Any,
-    ) -> Any:
-        from diffusers import AutoencoderKLWan
-
-        model_ref = resolve_video_model_reference(self.model_config)
-        self.validate_model_reference(model_ref)
-        vae = AutoencoderKLWan.from_pretrained(
-            model_ref,
-            subfolder="vae",
-            torch_dtype=torch.float32,
+        prompts: list[str],
+        prompt_ids: list[str],
+        params: dict[str, Any],
+        workdir: str,
+        inputs: dict[str, Any],
+    ) -> list[str]:
+        prompt = prompts[0]
+        script_path, checkpoint_dir = self._resolve_wan_script_and_checkpoint(params=params)
+        size = f"{inputs['width']}*{inputs['height']}"
+        max_gpus = int(
+            params.get("max_gpus")
+            or self.model_config.runtime.get("max_gpus")
+            or 1
         )
-        load_kwargs: dict[str, Any] = {
-            "vae": vae,
-            "torch_dtype": dtype,
-        }
-        cache_dir = resolve_video_cache_dir(self.model_config)
-        if cache_dir:
-            load_kwargs["cache_dir"] = cache_dir
-        pipe = pipeline_class.from_pretrained(
-            model_ref,
-            **load_kwargs,
-        )
-        pipe.to(device)
-        return pipe
+        if max_gpus > 1:
+            return [
+                "torchrun",
+                f"--nproc_per_node={max_gpus}",
+                str(script_path),
+                "--task",
+                "t2v-A14B",
+                "--size",
+                size,
+                "--ckpt_dir",
+                checkpoint_dir,
+                "--dit_fsdp",
+                "--t5_fsdp",
+                "--ulysses_size",
+                str(max_gpus),
+                "--prompt",
+                prompt,
+            ]
+        return [
+            "python",
+            str(script_path),
+            "--task",
+            "t2v-A14B",
+            "--size",
+            size,
+            "--ckpt_dir",
+            checkpoint_dir,
+            "--offload_model",
+            "True",
+            "--convert_model_dtype",
+            "--prompt",
+            prompt,
+        ]
 
-    def validate_model_reference(self, model_ref: str) -> None:
-        validate_local_diffusers_reference(
-            model_config=self.model_config,
-            model_ref=model_ref,
-            required_files=("model_index.json", "vae/config.json"),
-            adapter_specific_hint=(
-                "For Wan2.2-T2V-A14B-Diffusers, repo_path should point to the Wan2.2 GitHub "
-                "checkout, while weights_path/local_path should point to the local Diffusers "
-                "weights directory for Wan-AI/Wan2.2-T2V-A14B-Diffusers."
-            ),
-        )
+    def real_command_cwd(self, *, params: dict[str, Any], workdir: str) -> str | None:
+        return workdir
 
-    def generate_frames(
+    def collect(
         self,
-        *,
-        pipe: Any,
         plan: ExecutionPlan,
-        prompt: str,
-        negative_prompt: str,
-        width: int,
-        height: int,
-        num_frames: int,
-        num_inference_steps: int,
-        guidance_scale: float,
-        seed: int,
-        torch: Any,
-        device: str,
-    ) -> list[Any]:
-        generator_device = "cuda" if device == "cuda" else "cpu"
-        generator = torch.Generator(generator_device).manual_seed(seed)
-        output = pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            width=width,
-            height=height,
-            num_frames=num_frames,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            guidance_scale_2=float(plan.inputs.get("guidance_scale_2", 3.0)),
-            generator=generator,
+        exec_result: ExecutionResult,
+        prompts: list[str],
+        prompt_ids: list[str],
+        workdir: str,
+    ) -> ModelResult:
+        expected_outputs = dict(plan.inputs.get("expected_outputs", {}))
+        if len(prompt_ids) == 1:
+            expected_path = Path(str(expected_outputs.get(prompt_ids[0], {}).get("path", "")))
+            if not expected_path.exists():
+                recovered = recover_single_video_output(workdir=workdir, exclude=expected_path)
+                if recovered is not None:
+                    expected_path.parent.mkdir(parents=True, exist_ok=True)
+                    recovered.replace(expected_path)
+        return super().collect(
+            plan=plan,
+            exec_result=exec_result,
+            prompts=prompts,
+            prompt_ids=prompt_ids,
+            workdir=workdir,
         )
-        return list(output.frames[0])
+
+    def _resolve_wan_script_and_checkpoint(self, *, params: dict[str, Any]) -> tuple[Path, str]:
+        repo_dir = Path(
+            str(
+                params.get("repo_dir")
+                or self.model_config.weights.get("repo_path")
+                or ""
+            )
+        )
+        if not repo_dir.exists():
+            raise RuntimeError(
+                f"{self.model_config.name} repo_path does not exist: {repo_dir}. "
+                "Set repo_path to the local Wan2.2 GitHub checkout."
+            )
+        script_path = repo_dir / "generate.py"
+        if not script_path.exists():
+            raise RuntimeError(
+                f"{self.model_config.name} repo_path does not contain generate.py: {repo_dir}. "
+                "Set repo_path to the local Wan2.2 GitHub checkout root."
+            )
+        checkpoint_dir = str(
+            params.get("checkpoint_dir")
+            or params.get("local_model_path")
+            or self.model_config.weights.get("weights_path")
+            or self.model_config.weights.get("local_path")
+            or ""
+        )
+        if not checkpoint_dir:
+            raise RuntimeError(
+                f"{self.model_config.name} is missing weights_path/local_path for the Wan2.2 checkpoint directory."
+            )
+        if not Path(checkpoint_dir).exists():
+            raise RuntimeError(
+                f"{self.model_config.name} checkpoint directory does not exist: {checkpoint_dir}"
+            )
+        return script_path, checkpoint_dir
 
 
 class HunyuanVideo15Adapter(DiffusersVideoAdapterBase):
@@ -584,6 +654,8 @@ class CogVideoX5BAdapter(DiffusersVideoAdapterBase):
         supports_negative_prompt=False,
         supports_seed=True,
         output_types=["video"],
+        supports_persistent_worker=True,
+        preferred_worker_strategy="persistent_worker",
     )
     pipeline_class_name = "CogVideoXPipeline"
     default_width = 720
@@ -929,6 +1001,22 @@ def extract_video_metadata(path: str | Path, fallback: dict[str, Any] | None = N
         metadata.update(json.loads(sidecar.read_text(encoding="utf-8")))
     metadata.setdefault("format", target.suffix.lstrip(".").lower() or "mp4")
     return metadata
+
+
+def recover_single_video_output(
+    *,
+    workdir: str | Path,
+    exclude: Path | None = None,
+) -> Path | None:
+    candidates = [
+        path
+        for path in Path(workdir).rglob("*.mp4")
+        if exclude is None or path != exclude
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return candidates[0]
 
 
 def mock_fingerprint(*parts: str) -> str:

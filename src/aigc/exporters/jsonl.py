@@ -49,6 +49,14 @@ def build_dataset_records(
                         "status": batch_item["status"],
                         "batch_id": batch_metadata.get("batch_id", task_payload.batch_id),
                         "batch_index": batch_metadata.get("batch_index"),
+                        "replica_id": batch_metadata.get(
+                            "replica_id",
+                            task_payload.runtime_config.get("replica_id"),
+                        ),
+                        "gpu_assignment": batch_metadata.get(
+                            "gpu_assignment",
+                            task_payload.runtime_config.get("gpu_assignment"),
+                        ),
                         "execution_mode": batch_metadata.get(
                             "execution_mode",
                             task_result.get("execution_mode", task_payload.execution_mode),

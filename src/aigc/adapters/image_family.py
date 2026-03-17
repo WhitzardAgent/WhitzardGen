@@ -86,6 +86,7 @@ class MockCapableImageAdapter(BaseAdapter):
         workdir: str,
     ) -> ModelResult:
         batch_id = plan.inputs.get("batch_id")
+        runtime = dict(plan.inputs.get("runtime", {}))
         items: list[BatchItemResult] = []
         success_count = 0
 
@@ -123,6 +124,8 @@ class MockCapableImageAdapter(BaseAdapter):
                 "batch_id": output.get("batch_id", batch_id),
                 "batch_index": output.get("batch_index", fallback_index),
                 "mock": bool(output.get("mock", False)),
+                "replica_id": runtime.get("replica_id"),
+                "gpu_assignment": list(runtime.get("gpu_assignment", [])),
             }
             items.append(
                 BatchItemResult(
@@ -153,7 +156,9 @@ class MockCapableImageAdapter(BaseAdapter):
             logs=exec_result.logs,
             metadata={
                 "batch_id": batch_id,
-                "execution_mode": str(plan.inputs.get("runtime", {}).get("execution_mode", "real")),
+                "execution_mode": str(runtime.get("execution_mode", "real")),
+                "replica_id": runtime.get("replica_id"),
+                "gpu_assignment": list(runtime.get("gpu_assignment", [])),
             },
         )
 
@@ -213,6 +218,20 @@ class DiffusersImageAdapterBase(MockCapableImageAdapter):
     low_cpu_mem_usage = True
     use_safetensors: bool | None = None
 
+    def __init__(self, model_config: Any) -> None:
+        super().__init__(model_config)
+        self._loaded_pipeline: Any | None = None
+        self._loaded_torch: Any | None = None
+        self._loaded_device: str | None = None
+
+    def load_for_persistent_worker(self) -> None:
+        self._get_or_load_pipeline()
+
+    def unload_persistent_worker(self) -> None:
+        self._loaded_pipeline = None
+        self._loaded_torch = None
+        self._loaded_device = None
+
     def _execute_real(
         self,
         *,
@@ -220,9 +239,6 @@ class DiffusersImageAdapterBase(MockCapableImageAdapter):
         prompts: list[str],
         workdir: str,
     ) -> dict[str, dict[str, Any]]:
-        import torch
-        import diffusers
-
         prompt_ids = list(plan.inputs["prompt_ids"])
         width = int(plan.inputs["width"])
         height = int(plan.inputs["height"])
@@ -231,13 +247,7 @@ class DiffusersImageAdapterBase(MockCapableImageAdapter):
         seed = int(plan.inputs["seed"])
         batch_id = plan.inputs.get("batch_id")
         negative_prompts = list(plan.inputs.get("negative_prompts", []))
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype = self.resolve_torch_dtype(torch=torch, device=device)
-
-        pipeline_class = getattr(diffusers, self.pipeline_class_name)
-        load_kwargs = self.build_pipeline_load_kwargs(device=device, torch_dtype=dtype)
-        pipe = pipeline_class.from_pretrained(resolve_model_reference(self.model_config), **load_kwargs)
-        pipe.to(device)
+        pipe, torch, device = self._get_or_load_pipeline()
 
         generator_device = "cuda" if device == "cuda" else "cpu"
         generators = [
@@ -278,6 +288,24 @@ class DiffusersImageAdapterBase(MockCapableImageAdapter):
                 "mock": False,
             }
         return outputs
+
+    def _get_or_load_pipeline(self) -> tuple[Any, Any, str]:
+        if self._loaded_pipeline is not None and self._loaded_torch is not None and self._loaded_device:
+            return self._loaded_pipeline, self._loaded_torch, self._loaded_device
+
+        import torch
+        import diffusers
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = self.resolve_torch_dtype(torch=torch, device=device)
+        pipeline_class = getattr(diffusers, self.pipeline_class_name)
+        load_kwargs = self.build_pipeline_load_kwargs(device=device, torch_dtype=dtype)
+        pipe = pipeline_class.from_pretrained(resolve_model_reference(self.model_config), **load_kwargs)
+        pipe.to(device)
+        self._loaded_pipeline = pipe
+        self._loaded_torch = torch
+        self._loaded_device = device
+        return pipe, torch, device
 
     def resolve_torch_dtype(self, *, torch: Any, device: str) -> Any:
         return torch.bfloat16 if device == "cuda" else torch.float32

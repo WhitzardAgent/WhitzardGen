@@ -277,14 +277,6 @@ def handle_run(args: argparse.Namespace) -> int:
         print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
         return 0
 
-    print(f"Run created: {summary.run_id}")
-    print(f"Prompt file: {summary.prompt_file}")
-    print(f"Models: {', '.join(summary.model_names)}")
-    print(f"Output dir: {summary.output_dir}")
-    print(f"Execution mode: {summary.execution_mode}")
-    print(f"Tasks scheduled: {summary.tasks_scheduled}")
-    print(f"Records exported: {summary.records_exported}")
-    print(f"Dataset export: {summary.export_path}")
     return 0
 
 

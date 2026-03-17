@@ -36,6 +36,7 @@ class TaskPayload:
     workdir: str
     batch_id: str | None = None
     runtime_config: dict[str, Any] = field(default_factory=dict)
+    worker_strategy: str = "per_task_worker"
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -48,6 +49,7 @@ class TaskPayload:
             task_id=str(payload["task_id"]),
             model_name=str(payload["model_name"]),
             execution_mode=str(payload.get("execution_mode", "real")),
+            worker_strategy=str(payload.get("worker_strategy", "per_task_worker")),
             prompts=[TaskPrompt.from_dict(item) for item in payload.get("prompts", [])],
             params=dict(payload.get("params", {})),
             workdir=str(payload["workdir"]),
