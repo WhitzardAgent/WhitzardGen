@@ -32,6 +32,8 @@ CONDA_CACHE_ROOT = RUNTIME_ROOT / "cache"
 EFFECTIVE_REQUIREMENTS_ROOT = RUNTIME_ROOT / "effective_requirements"
 DEFAULT_ENV_METADATA_PATH = RUNTIME_ROOT / "env_metadata.json"
 DEFAULT_LOCAL_ENVS_PATH = REPO_ROOT / "configs" / "local_envs.yaml"
+DEFAULT_ENV_VALIDATION_TTL_SEC = 6 * 60 * 60
+ENV_VALIDATION_TTL_ENV_VAR = "AIGC_ENV_VALIDATION_TTL_SEC"
 
 
 class EnvManagerError(RuntimeError):
@@ -81,6 +83,7 @@ class EnvManager:
         registry: ModelRegistry | None = None,
         metadata_path: Path = DEFAULT_ENV_METADATA_PATH,
         local_envs_path: str | Path | None = None,
+        validation_ttl_sec: int | None = None,
     ) -> None:
         self.registry = registry or load_registry()
         self.metadata_path = metadata_path
@@ -88,6 +91,7 @@ class EnvManager:
         self.local_envs_path, self.local_env_overrides = load_local_env_overrides(
             resolved_local_envs_path
         )
+        self.validation_ttl_sec = self._resolve_validation_ttl_sec(validation_ttl_sec)
         RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
         LOCKS_ROOT.mkdir(parents=True, exist_ok=True)
         CONDA_ENVS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -537,7 +541,7 @@ class EnvManager:
                     f"Failed to validate environment for {model_name}: {validation_error or 'validation failed'}",
                 )
 
-        return self.inspect_model_environment(model_name)
+        return self.inspect_model_environment(model_name, force_revalidate=True)
 
     def environment_prefix(
         self,
@@ -558,7 +562,12 @@ class EnvManager:
     def ensure_environment(self, model_name: str) -> EnvironmentRecord:
         return self.ensure_ready(model_name, foreground=False)
 
-    def inspect_model_environment(self, model_name: str) -> EnvironmentRecord:
+    def inspect_model_environment(
+        self,
+        model_name: str,
+        *,
+        force_revalidate: bool = False,
+    ) -> EnvironmentRecord:
         model = self.registry.get_model(model_name)
         spec = self.resolve_spec_for_model(model_name)
         env_id = self.compute_env_id(spec)
@@ -575,12 +584,28 @@ class EnvManager:
         if conda_available:
             exists, env_path = self.environment_exists(env_id, prefix_override=spec.reuse_prefix)
             if exists:
-                validation_passed, validation_error = self.validate_environment(env_id, spec)
-                last_validation = {
-                    "passed": validation_passed,
-                    "error": validation_error,
-                    "checked_at": datetime.now(UTC).isoformat(),
-                }
+                if self._can_reuse_cached_validation(
+                    metadata=metadata,
+                    force_revalidate=force_revalidate,
+                ):
+                    validation_passed = bool(last_validation.get("passed", False))
+                    validation_error = last_validation.get("error")
+                else:
+                    validation_passed, validation_error = self.validate_environment(env_id, spec)
+                    last_validation = {
+                        "passed": validation_passed,
+                        "error": validation_error,
+                        "checked_at": datetime.now(UTC).isoformat(),
+                    }
+                    self._update_metadata(
+                        env_id=env_id,
+                        env_spec=spec.spec_name,
+                        models=[model.name],
+                        state="ready" if validation_passed else "invalid",
+                        path=env_path,
+                        validation=last_validation,
+                        error=validation_error,
+                    )
                 if validation_error:
                     error = validation_error
 
@@ -615,7 +640,43 @@ class EnvManager:
 
     def doctor(self, model_name: str | None = None) -> list[EnvironmentRecord]:
         model_names = [model_name] if model_name else [model.name for model in self.registry.list_models()]
-        return [self.inspect_model_environment(name) for name in model_names]
+        return [self.inspect_model_environment(name, force_revalidate=True) for name in model_names]
+
+    def _resolve_validation_ttl_sec(self, configured: int | None) -> int:
+        if configured is not None:
+            return max(int(configured), 0)
+        raw = os.environ.get(ENV_VALIDATION_TTL_ENV_VAR)
+        if raw not in (None, ""):
+            try:
+                return max(int(raw), 0)
+            except ValueError:
+                pass
+        return DEFAULT_ENV_VALIDATION_TTL_SEC
+
+    def _can_reuse_cached_validation(
+        self,
+        *,
+        metadata: dict[str, Any],
+        force_revalidate: bool,
+    ) -> bool:
+        if force_revalidate:
+            return False
+        if str(metadata.get("state")) != "ready":
+            return False
+        last_validation = dict(metadata.get("last_validation", {}))
+        if not bool(last_validation.get("passed", False)):
+            return False
+        checked_at = last_validation.get("checked_at")
+        if not checked_at:
+            return False
+        if self.validation_ttl_sec <= 0:
+            return False
+        try:
+            checked_at_dt = datetime.fromisoformat(str(checked_at))
+        except ValueError:
+            return False
+        age_seconds = (datetime.now(UTC) - checked_at_dt).total_seconds()
+        return age_seconds <= self.validation_ttl_sec
 
     def _resolve_progress_callback(
         self,

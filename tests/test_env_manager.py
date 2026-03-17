@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -52,6 +53,13 @@ class EnvManagerTests(unittest.TestCase):
         requirements_text = spec.requirements_file.read_text(encoding="utf-8")
         self.assertIn("tiktoken", requirements_text)
         self.assertIn("sentencepiece", requirements_text)
+
+    def test_resolve_spec_for_wan_repo_runtime_includes_easydict(self) -> None:
+        spec = self.manager.resolve_spec_for_model("Wan2.2-T2V-A14B-Diffusers")
+        self.assertEqual(spec.spec_name, "wan_t2v_diffusers")
+        self.assertTrue(spec.requirements_file is not None and spec.requirements_file.exists())
+        requirements_text = spec.requirements_file.read_text(encoding="utf-8")
+        self.assertIn("easydict", requirements_text)
 
     def test_compute_env_id_is_stable(self) -> None:
         spec = self.manager.resolve_spec_for_model("Z-Image")
@@ -262,6 +270,115 @@ envs:
         self.assertEqual(record.state, "ready")
         self.assertIn("Recovering stale creating state", "\n".join(progress_messages))
 
+    def test_inspect_model_environment_reuses_recent_ready_validation(self) -> None:
+        manager = FakeForegroundEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_cached_ready.json",
+            validation_ttl_sec=3600,
+        )
+        spec = manager.resolve_spec_for_model("Z-Image")
+        env_id = manager.compute_env_id(spec)
+        env_prefix = manager.environment_prefix(env_id)
+        env_prefix.mkdir(parents=True, exist_ok=True)
+        manager.metadata_path.write_text(
+            json.dumps(
+                {
+                    env_id: {
+                        "env_id": env_id,
+                        "env_spec": spec.spec_name,
+                        "models": ["Z-Image"],
+                        "state": "ready",
+                        "path": str(env_prefix),
+                        "last_validation": {
+                            "passed": True,
+                            "error": None,
+                            "checked_at": datetime.now(UTC).isoformat(),
+                        },
+                        "error": None,
+                    }
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        record = manager.inspect_model_environment("Z-Image")
+
+        self.assertEqual(record.state, "ready")
+        self.assertEqual(manager.validate_calls, 0)
+
+    def test_doctor_forces_revalidation_even_when_ready_validation_is_cached(self) -> None:
+        manager = FakeForegroundEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_doctor_revalidate.json",
+            validation_ttl_sec=3600,
+        )
+        spec = manager.resolve_spec_for_model("Z-Image")
+        env_id = manager.compute_env_id(spec)
+        env_prefix = manager.environment_prefix(env_id)
+        env_prefix.mkdir(parents=True, exist_ok=True)
+        manager.metadata_path.write_text(
+            json.dumps(
+                {
+                    env_id: {
+                        "env_id": env_id,
+                        "env_spec": spec.spec_name,
+                        "models": ["Z-Image"],
+                        "state": "ready",
+                        "path": str(env_prefix),
+                        "last_validation": {
+                            "passed": True,
+                            "error": None,
+                            "checked_at": datetime.now(UTC).isoformat(),
+                        },
+                        "error": None,
+                    }
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        records = manager.doctor(model_name="Z-Image")
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].state, "ready")
+        self.assertEqual(manager.validate_calls, 1)
+
+    def test_inspect_model_environment_revalidates_stale_ready_validation(self) -> None:
+        manager = FakeForegroundEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_stale_ready.json",
+            validation_ttl_sec=60,
+        )
+        spec = manager.resolve_spec_for_model("Z-Image")
+        env_id = manager.compute_env_id(spec)
+        env_prefix = manager.environment_prefix(env_id)
+        env_prefix.mkdir(parents=True, exist_ok=True)
+        manager.metadata_path.write_text(
+            json.dumps(
+                {
+                    env_id: {
+                        "env_id": env_id,
+                        "env_spec": spec.spec_name,
+                        "models": ["Z-Image"],
+                        "state": "ready",
+                        "path": str(env_prefix),
+                        "last_validation": {
+                            "passed": True,
+                            "error": None,
+                            "checked_at": (datetime.now(UTC) - timedelta(hours=2)).isoformat(),
+                        },
+                        "error": None,
+                    }
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        record = manager.inspect_model_environment("Z-Image")
+
+        self.assertEqual(record.state, "ready")
+        self.assertEqual(manager.validate_calls, 1)
+
 
 class FakeForegroundEnvManager(EnvManager):
     def __init__(
@@ -269,15 +386,22 @@ class FakeForegroundEnvManager(EnvManager):
         metadata_path: Path,
         fail_stage: str | None = None,
         local_envs_path: Path | None = None,
+        validation_ttl_sec: int | None = None,
     ) -> None:
-        super().__init__(metadata_path=metadata_path, local_envs_path=local_envs_path)
+        super().__init__(
+            metadata_path=metadata_path,
+            local_envs_path=local_envs_path,
+            validation_ttl_sec=validation_ttl_sec,
+        )
         self.fail_stage = fail_stage
         self.create_calls = 0
+        self.validate_calls = 0
 
     def conda_available(self) -> bool:
         return True
 
     def validate_environment(self, env_id: str, spec) -> tuple[bool, str | None]:
+        self.validate_calls += 1
         if self.fail_stage == "validate":
             return False, "validation failed"
         exists, _env_path = self.environment_exists(env_id, prefix_override=spec.reuse_prefix)

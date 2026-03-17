@@ -71,6 +71,12 @@ Once an environment is created successfully, it should be reused for future runs
 
 The framework should not recreate environments unnecessarily.
 
+Readiness validation should also be cached pragmatically for normal run execution.
+
+- `aigc run` may trust a recent successful validation result for an existing `ready` environment
+- `aigc doctor` should force a fresh validation pass
+- the cache policy should remain simple and observable
+
 ---
 
 ## 2.5 Observable

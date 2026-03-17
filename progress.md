@@ -1,9 +1,32 @@
 # Progress
 
 ## Current Phase
-- Wan torchrun real-path hardening and per-model max GPU cap wiring
+- Wan repo-runtime dependency fix for `generate.py`
 
 ## Completed
+- 2026-03-17 19:17:20 CST
+- Fixed the next real `Wan2.2-T2V-A14B-Diffusers` repo-script dependency gap discovered during remote validation:
+  - added `easydict` to `envs/wan_t2v_diffusers/requirements.txt`
+  - this matches the actual `generate.py -> wan -> configs -> EasyDict` import chain used by the Wan2.2 repo path
+- Added lightweight env-manager coverage to ensure the resolved `wan_t2v_diffusers` env spec now includes `easydict`.
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager -v`
+  - result: 16 tests passed
+- 2026-03-17 19:15:29 CST
+- Optimized the environment readiness path so repeated real runs do not always pay the full validation startup cost:
+  - `inspect_model_environment(...)` now reuses a recent successful validation result for existing `ready` environments
+  - `aigc run` now benefits from the cached-ready fast path automatically through `ensure_ready(...)`
+  - `aigc doctor` now explicitly forces a fresh environment validation pass
+  - added configurable validation TTL support in `EnvManager`
+  - added env-var support for the TTL: `AIGC_ENV_VALIDATION_TTL_SEC`
+- Added lightweight regression coverage for:
+  - reusing recent cached-ready validation without re-running imports
+  - forcing revalidation in `doctor`
+  - revalidating stale cached-ready metadata
+- Updated the env-manager spec to document pragmatic cached validation behavior for normal runs versus strict validation for `doctor`.
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager tests.test_run_flow -v`
+  - result: 30 tests passed
 - 2026-03-17 10:25:33 CST
 - Switched `Wan2.2-T2V-A14B-Diffusers` real execution toward the reference repo script path instead of the in-process Diffusers loader:
   - keeps mock mode unchanged
@@ -503,6 +526,7 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/docs/env_manager_spec.md
 - /Users/morinop/coding/whitzardgen/src/aigc/utils/runtime_logging.py
 - /Users/morinop/coding/whitzardgen/src/aigc/utils/progress.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
@@ -665,7 +689,7 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 17:45:03 CST.
+- Updated at 2026-03-17 19:17:20 CST.
 - The runtime now has a real logging / terminal observability foundation:
   - every run writes `running.log`
   - major run/env/worker events are timestamped
@@ -674,6 +698,8 @@
 - Wan now supports the reference repo-script execution pattern with a configurable per-model GPU cap:
   - single-GPU fallback still exists
   - multi-GPU real execution can be steered by `max_gpus` in `configs/local_models.yaml`
+- Repeated real runs should now spend much less time in `Ensuring environments` when the environment is already `ready` and was validated recently.
+- Wan repo-script execution now includes the `easydict` runtime dependency required by `generate.py`.
 - This slice is now covered by lightweight regression and is ready for remote GPU-server validation.
 - Existing run behavior still works across:
   - mock mode
@@ -688,8 +714,4 @@
 - Real cluster validation is still needed to confirm log usefulness and worker visibility under long heavy runs.
 
 ## Next Task
-- Validate the new Wan runtime path on the remote GPU server:
-  - set `max_gpus` for `Wan2.2-T2V-A14B-Diffusers` in `configs/local_models.yaml`
-  - confirm `torchrun generate.py` is used when `max_gpus > 1`
-  - confirm generated `.mp4` artifacts are recovered into the framework-managed workdir
-  - continue real-run debugging from the remote results if needed
+- Rebuild or patch the existing remote `wan_t2v_diffusers` environment so the new `easydict` dependency is present, then continue Wan multi-GPU real validation on the GPU server.
