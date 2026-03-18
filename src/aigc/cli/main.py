@@ -8,7 +8,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from aigc import __version__
-from aigc.env import EnvManager, EnvManagerError, MissingEnvironmentError
+from aigc.env import EnvManager, EnvManagerError
 from aigc.registry import DEFAULT_LOCAL_MODELS_PATH, RegistryError, load_registry
 from aigc.registry.local_overrides import summarize_local_path_overrides
 from aigc.run_store import (
@@ -128,6 +128,7 @@ def handle_models_inspect(args: argparse.Namespace) -> int:
     if args.output == "json":
         payload = model.to_dict()
         payload["adapter_class"] = adapter_class.__name__
+        payload["conda_env_name"] = model.conda_env_name
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
 
@@ -143,6 +144,7 @@ def handle_models_inspect(args: argparse.Namespace) -> int:
     )
     print(f"Max Batch Size: {model.capabilities.get('max_batch_size', 1)}")
     print(f"Environment Spec: {model.env_spec}")
+    print(f"Conda Env: {model.conda_env_name}")
     hf_repo = model.weights.get("hf_repo", "-")
     print(f"HF Repo: {hf_repo}")
     print(f"Local Override File: {model.local_override_source or DEFAULT_LOCAL_MODELS_PATH}")
@@ -169,16 +171,27 @@ def handle_doctor(args: argparse.Namespace) -> int:
 
     print(f"Conda: {'OK' if manager.conda_available() else 'MISSING'}")
     for record in records:
-        status = record.state.upper()
-        suffix = f" ({record.error})" if record.error else ""
-        print(f"Model {record.model_name}: {status}{suffix}")
-        print(f"  conda_env_name: {record.conda_env_name}")
-        print(f"  env_exists: {record.exists}")
-        if record.local_paths:
+        print(f"Model: {record.model_name}")
+        print(f"  Status: {record.state.upper()}")
+        print(f"  Conda env: {record.conda_env_name}")
+        print(f"  Env exists: {'yes' if record.exists else 'no'}")
+        if record.path:
+            print(f"  Env path: {record.path}")
+        if record.last_validation:
+            checked_at = record.last_validation.get("checked_at", "-")
+            passed = bool(record.last_validation.get("passed"))
+            print(f"  Validation: {'passed' if passed else 'failed'}")
+            print(f"  Validation checked at: {checked_at}")
+        else:
+            print("  Validation: not run")
+        if record.error:
+            print(f"  Error: {record.error}")
+        if record.path_checks:
             for field, info in sorted(record.path_checks.items()):
-                print(
-                    f"  {field}: {info['value']} [{'OK' if info['exists'] else 'MISSING'}]"
-                )
+                print(f"  {field}: {info['value']}")
+                print(f"  {field}_exists: {'yes' if info['exists'] else 'no'}")
+        else:
+            print("  local_paths: none configured")
     return 0
 
 

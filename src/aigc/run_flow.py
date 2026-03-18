@@ -17,13 +17,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
 
-from aigc.env import EnvManager, EnvManagerError, EnvironmentRecord, MissingEnvironmentError
+from aigc.env import EnvManager, EnvManagerError, EnvironmentRecord
 from aigc.exporters import build_dataset_records, export_jsonl
 from aigc.prompts import PromptRecord, load_prompts
 from aigc.registry.models import ModelInfo
 from aigc.registry import load_registry
+from aigc.run_ledger import RunLedgerWriter, build_sample_ledger_records
 from aigc.run_store import write_failures_summary, write_run_manifest
-from aigc.run_ledger import RunLedgerWriter
 from aigc.runtime.persistent_ipc import (
     PersistentWorkerQueueManager,
     create_queue_method_names,
@@ -195,6 +195,8 @@ def run_models(
     manager = env_manager or EnvManager(registry=registry)
     progress.stage_end(stage_index, total_stages, "Resolving models")
     stage_index += 1
+    ledger_path = run_root / "samples.jsonl"
+    ledger_writer = RunLedgerWriter(ledger_path)
     created_at = datetime.now(UTC).isoformat()
     initial_manifest = {
         "run_id": run_id,
@@ -206,7 +208,8 @@ def run_models(
         "execution_mode": resolved_execution_mode,
         "task_count": 0,
         "output_dir": str(run_root),
-        "export_paths": {},
+        "export_paths": {"samples_jsonl": str(ledger_path)},
+        "samples_ledger_path": str(ledger_path),
         "running_log_path": str(run_logger.log_path),
         "registry_path": str(registry.registry_path),
         "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
@@ -217,8 +220,6 @@ def run_models(
     export_path: Path | None = None
     failures_path = run_root / "failures.json"
     manifest_path = run_root / "run_manifest.json"
-    ledger_writer = RunLedgerWriter(run_root, run_id)
-    ledger_writer.open()
     try:
         progress.stage_start(stage_index, total_stages, "Ensuring environments")
         env_records: dict[str, EnvironmentRecord] = {}
@@ -331,6 +332,7 @@ def run_models(
                             result_payload = _execute_prepared_task(
                                 prepared_task=prepared_task,
                                 runner=lambda task, session=session: session.run_task(task),
+                                run_id=run_id,
                                 run_root=run_root,
                                 failures=failures,
                                 progress=progress,
@@ -344,16 +346,17 @@ def run_models(
                             env_record=env_records[model.name],
                             replica_plans=replica_plans,
                             execution_mode=resolved_execution_mode,
+                            run_id=run_id,
                             run_root=run_root,
                             workers_root=workers_root,
                             failures=failures,
                             progress=progress,
+                            ledger_writer=ledger_writer,
                             log_callback=lambda line: run_logger.log(
                                 line,
                                 to_console=console_logging_enabled,
                                 already_timestamped=True,
                             ),
-                            ledger_writer=ledger_writer,
                         )
                     )
             else:
@@ -372,6 +375,7 @@ def run_models(
                                 already_timestamped=True,
                             ),
                         ),
+                        run_id=run_id,
                         run_root=run_root,
                         failures=failures,
                         progress=progress,
@@ -437,9 +441,14 @@ def run_models(
             "task_count": len(task_results),
             "records_exported": len(all_records),
             "output_dir": str(run_root),
-            "export_paths": {"dataset_jsonl": str(export_path), "running_log": str(run_logger.log_path)},
+            "export_paths": {
+                "dataset_jsonl": str(export_path),
+                "samples_jsonl": str(ledger_path),
+                "running_log": str(run_logger.log_path),
+            },
             "export_path": str(export_path),
             "running_log_path": str(run_logger.log_path),
+            "samples_ledger_path": str(ledger_path),
             "failures_path": str(failures_path),
             "per_model_summary": per_model_summary,
             "registry_path": str(registry.registry_path),
@@ -494,6 +503,7 @@ def run_models(
             ),
             "error": str(exc),
             "running_log_path": str(run_logger.log_path),
+            "samples_ledger_path": str(ledger_path),
             "failures_path": str(failures_path),
         }
         manifest_path = write_run_manifest(run_root, failure_manifest)
@@ -938,11 +948,12 @@ def _execute_prepared_task(
     *,
     prepared_task: PreparedTask,
     runner: Callable[[PreparedTask], tuple[int, str]],
+    run_id: str,
     run_root: Path,
     failures: list[dict[str, object]],
     progress: RunProgress,
+    ledger_writer: RunLedgerWriter,
     state_lock: threading.Lock | None = None,
-    ledger_writer: RunLedgerWriter | None = None,
 ) -> dict:
     progress.task_start(
         current=prepared_task.batch_number,
@@ -954,12 +965,22 @@ def _execute_prepared_task(
 
     returncode, logs = runner(prepared_task)
     if not prepared_task.result_file.exists():
+        error_message = "Worker did not produce a result file."
         failure_record = {
             "task_id": prepared_task.payload.task_id,
             "model_name": prepared_task.model.name,
             "status": "failed",
-            "error": "Worker did not produce a result file.",
+            "error": error_message,
         }
+        _append_ledger_records(
+            ledger_writer=ledger_writer,
+            run_id=run_id,
+            model=prepared_task.model,
+            task_payload=prepared_task.payload,
+            task_result=None,
+            error_message=error_message,
+            state_lock=state_lock,
+        )
         if state_lock is not None:
             with state_lock:
                 failures.append(failure_record)
@@ -967,21 +988,6 @@ def _execute_prepared_task(
         else:
             failures.append(failure_record)
             write_failures_summary(run_root, failures)
-        if ledger_writer is not None:
-            replica_id = prepared_task.payload.runtime_config.get("replica_id")
-            for prompt in prepared_task.payload.prompts:
-                ledger_writer.append_failure(
-                    task_id=prepared_task.payload.task_id,
-                    model_name=prepared_task.model.name,
-                    prompt_id=prompt.prompt_id,
-                    prompt=prompt.prompt,
-                    error_message="Worker did not produce a result file.",
-                    replica_id=replica_id,
-                    batch_id=prepared_task.payload.batch_id,
-                    execution_mode=prepared_task.payload.execution_mode,
-                    negative_prompt=prompt.negative_prompt,
-                    language=prompt.language,
-                )
         progress.task_end(
             current=prepared_task.batch_number,
             total=prepared_task.total_tasks_for_model,
@@ -999,6 +1005,15 @@ def _execute_prepared_task(
     )
     model_status = result_payload["model_result"]["status"]
     if returncode != 0 and model_status == "failed":
+        _append_ledger_records(
+            ledger_writer=ledger_writer,
+            run_id=run_id,
+            model=prepared_task.model,
+            task_payload=prepared_task.payload,
+            task_result=result_payload,
+            error_message=execution_logs,
+            state_lock=state_lock,
+        )
         failure_record = {
             "task_id": prepared_task.payload.task_id,
             "model_name": prepared_task.model.name,
@@ -1012,21 +1027,6 @@ def _execute_prepared_task(
         else:
             failures.append(failure_record)
             write_failures_summary(run_root, failures)
-        if ledger_writer is not None:
-            replica_id = prepared_task.payload.runtime_config.get("replica_id")
-            for prompt in prepared_task.payload.prompts:
-                ledger_writer.append_failure(
-                    task_id=prepared_task.payload.task_id,
-                    model_name=prepared_task.model.name,
-                    prompt_id=prompt.prompt_id,
-                    prompt=prompt.prompt,
-                    error_message=execution_logs,
-                    replica_id=replica_id,
-                    batch_id=prepared_task.payload.batch_id,
-                    execution_mode=prepared_task.payload.execution_mode,
-                    negative_prompt=prompt.negative_prompt,
-                    language=prompt.language,
-                )
         progress.task_end(
             current=prepared_task.batch_number,
             total=prepared_task.total_tasks_for_model,
@@ -1036,6 +1036,15 @@ def _execute_prepared_task(
         )
         raise RunFlowError(f"Worker failed for {prepared_task.payload.task_id}:\n{execution_logs}")
     if model_status == "failed":
+        _append_ledger_records(
+            ledger_writer=ledger_writer,
+            run_id=run_id,
+            model=prepared_task.model,
+            task_payload=prepared_task.payload,
+            task_result=result_payload,
+            error_message=execution_logs,
+            state_lock=state_lock,
+        )
         failure_record = {
             "task_id": prepared_task.payload.task_id,
             "model_name": prepared_task.model.name,
@@ -1049,21 +1058,6 @@ def _execute_prepared_task(
         else:
             failures.append(failure_record)
             write_failures_summary(run_root, failures)
-        if ledger_writer is not None:
-            replica_id = prepared_task.payload.runtime_config.get("replica_id")
-            for prompt in prepared_task.payload.prompts:
-                ledger_writer.append_failure(
-                    task_id=prepared_task.payload.task_id,
-                    model_name=prepared_task.model.name,
-                    prompt_id=prompt.prompt_id,
-                    prompt=prompt.prompt,
-                    error_message=execution_logs,
-                    replica_id=replica_id,
-                    batch_id=prepared_task.payload.batch_id,
-                    execution_mode=prepared_task.payload.execution_mode,
-                    negative_prompt=prompt.negative_prompt,
-                    language=prompt.language,
-                )
         progress.task_end(
             current=prepared_task.batch_number,
             total=prepared_task.total_tasks_for_model,
@@ -1079,24 +1073,20 @@ def _execute_prepared_task(
             continue
         successful_artifacts += len(batch_item.get("artifacts", []))
 
-    if ledger_writer is not None:
-        replica_id = prepared_task.payload.runtime_config.get("replica_id")
-        ledger_writer.append_from_task_result(
-            task_id=prepared_task.payload.task_id,
-            model_name=prepared_task.model.name,
-            prompts=[p.to_dict() for p in prepared_task.payload.prompts],
-            batch_items=result_payload.get("model_result", {}).get("batch_items", []),
-            execution_mode=prepared_task.payload.execution_mode,
-            replica_id=replica_id,
-            batch_id=prepared_task.payload.batch_id,
-        )
-
     progress.task_end(
         current=prepared_task.batch_number,
         total=prepared_task.total_tasks_for_model,
         model_name=prepared_task.model.name,
         status=model_status,
         artifacts=successful_artifacts or None,
+    )
+    _append_ledger_records(
+        ledger_writer=ledger_writer,
+        run_id=run_id,
+        model=prepared_task.model,
+        task_payload=prepared_task.payload,
+        task_result=result_payload,
+        state_lock=state_lock,
     )
     return result_payload
 
@@ -1199,7 +1189,7 @@ def _build_worker_command_and_env(
             )
         manager = EnvManager()
         command = manager.wrap_command(
-            env_record.conda_env_name,
+            env_record.env_id,
             ["python", "-m", module_name, *extra_args],
             foreground=False,
         )
@@ -1412,12 +1402,13 @@ def _run_persistent_worker_replicas(
     env_record: EnvironmentRecord,
     replica_plans: list[ReplicaPlan],
     execution_mode: str,
+    run_id: str,
     run_root: Path,
     workers_root: Path,
     failures: list[dict[str, object]],
     progress: RunProgress,
+    ledger_writer: RunLedgerWriter,
     log_callback: Callable[[str], None] | None = None,
-    ledger_writer: RunLedgerWriter | None = None,
 ) -> list[tuple[ModelInfo, TaskPayload, dict]]:
     lock = threading.Lock()
     task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
@@ -1442,11 +1433,12 @@ def _run_persistent_worker_replicas(
                     result_payload = _execute_prepared_task(
                         prepared_task=prepared_task,
                         runner=lambda task, session=session: session.run_task(task),
+                        run_id=run_id,
                         run_root=run_root,
                         failures=failures,
                         progress=progress,
-                        state_lock=lock,
                         ledger_writer=ledger_writer,
+                        state_lock=lock,
                     )
                     with lock:
                         task_results.append((model, prepared_task.payload, result_payload))
@@ -1470,6 +1462,30 @@ def _run_persistent_worker_replicas(
     if errors:
         raise errors[0]
     return task_results
+
+
+def _append_ledger_records(
+    *,
+    ledger_writer: RunLedgerWriter,
+    run_id: str,
+    model: ModelInfo,
+    task_payload: TaskPayload,
+    task_result: dict | None,
+    error_message: str | None = None,
+    state_lock: threading.Lock | None = None,
+) -> None:
+    records = build_sample_ledger_records(
+        run_id=run_id,
+        model=model,
+        task_payload=task_payload,
+        task_result=task_result,
+        error_message=error_message,
+    )
+    if state_lock is not None:
+        with state_lock:
+            ledger_writer.append_records(records)
+    else:
+        ledger_writer.append_records(records)
 
 
 def _merge_diagnostic_logs(*parts: str | None) -> str:

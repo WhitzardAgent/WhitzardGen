@@ -32,6 +32,7 @@ class RegistryTests(unittest.TestCase):
             json.dumps(
                 {
                     "Z-Image": {
+                        "conda_env_name": "zimage_cluster",
                         "local_path": "/models/Z-Image",
                         "hf_cache_dir": "/cache/hf",
                         "max_gpus": 2,
@@ -51,8 +52,11 @@ class RegistryTests(unittest.TestCase):
 
         self.assertEqual(zimage.weights["local_path"], "/models/Z-Image")
         self.assertEqual(zimage.weights["hf_cache_dir"], "/cache/hf")
+        self.assertEqual(zimage.runtime["conda_env_name"], "zimage_cluster")
+        self.assertEqual(zimage.conda_env_name, "zimage_cluster")
         self.assertEqual(zimage.runtime["max_gpus"], 2)
         self.assertEqual(zimage.max_gpus, 2)
+        self.assertEqual(zimage.local_paths["conda_env_name"], "zimage_cluster")
         self.assertEqual(zimage.local_paths["local_path"], "/models/Z-Image")
         self.assertEqual(zimage.local_paths["max_gpus"], 2)
         self.assertEqual(zimage.local_override_source, str(local_models_path))
@@ -84,3 +88,4 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("Model: Z-Image", result.stdout)
         self.assertIn("Adapter Class: ZImageAdapter", result.stdout)
+        self.assertIn("Conda Env: zimage", result.stdout)

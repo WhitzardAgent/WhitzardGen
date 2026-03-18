@@ -6,6 +6,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+from aigc.env.manager import EnvManagerError
 from aigc.run_flow import (
     RunFlowError,
     _default_generation_params,
@@ -25,8 +26,6 @@ from aigc.utils.progress import TextRunProgress
 class FakeEnvRecord:
     env_id = "env_test"
     state = "ready"
-    conda_env_name = "test_env"
-    exists = True
 
 
 class FakeEnvManager:
@@ -343,30 +342,30 @@ class RunFlowTests(unittest.TestCase):
 
         manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
         per_model = manifest["per_model_summary"]["CogVideoX-5B"]
-        self.assertEqual(per_model["replica_count"], 4)
+        self.assertEqual(per_model["replica_count"], 2)
         self.assertEqual(
             [replica["gpu_assignment"] for replica in per_model["replicas"]],
-            [[0], [1], [2], [3]],
+            [[0], [1]],
         )
         self.assertEqual(
             [replica["task_count"] for replica in per_model["replicas"]],
-            [1, 1, 1, 1],
+            [1, 1],
         )
 
         records = [
             json.loads(line)
             for line in Path(summary.export_path).read_text(encoding="utf-8").strip().splitlines()
         ]
-        self.assertEqual({record["execution_metadata"]["replica_id"] for record in records}, {0, 1, 2, 3})
+        self.assertEqual({record["execution_metadata"]["replica_id"] for record in records}, {0, 1})
         self.assertEqual(
             {tuple(record["execution_metadata"]["gpu_assignment"]) for record in records},
-            {(0,), (1,), (2,), (3,)},
+            {(0,), (1,)},
         )
 
         progress_text = progress_stream.getvalue()
         self.assertIn("[run][CogVideoX-5B] available_gpus=[0, 1, 2, 3]", progress_text)
         self.assertIn("[run][CogVideoX-5B] gpus_per_replica=1", progress_text)
-        self.assertIn("[run][CogVideoX-5B] starting 4 replicas", progress_text)
+        self.assertIn("[run][CogVideoX-5B] starting 2 replicas", progress_text)
 
     def test_default_run_root_uses_runtime_settings(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -471,6 +470,15 @@ class RunFlowTests(unittest.TestCase):
         message = str(context.exception)
         self.assertIn("real root cause", message)
         self.assertIn("generic wrapper failure", message)
+        ledger_path = tmpdir / "runs" / "worker_failure" / "samples.jsonl"
+        self.assertTrue(ledger_path.exists())
+        ledger_records = [
+            json.loads(line)
+            for line in ledger_path.read_text(encoding="utf-8").strip().splitlines()
+        ]
+        self.assertEqual(len(ledger_records), 1)
+        self.assertEqual(ledger_records[0]["status"], "failed")
+        self.assertIn("real root cause", ledger_records[0]["error_message"])
 
     def test_real_run_uses_foreground_ensure_ready_when_env_is_needed(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -538,6 +546,32 @@ class RunFlowTests(unittest.TestCase):
 
         self.assertEqual(manager.calls, [("Z-Image-Turbo", True)])
 
+    def test_real_run_fails_clearly_when_required_conda_env_is_missing(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "example.txt"
+        prompts_path.write_text("a futuristic city at night\n", encoding="utf-8")
+
+        class MissingEnvManager(FakeEnvManager):
+            def ensure_ready(self, model_name: str, foreground: bool = True, progress=None):
+                del foreground, progress
+                raise EnvManagerError(
+                    f"Environment for {model_name} is not available.\n"
+                    "Required conda env: zimage\n"
+                    "Please create this environment manually before running."
+                )
+
+        with self.assertRaises(EnvManagerError) as context:
+            run_single_model(
+                model_name="Z-Image-Turbo",
+                prompt_file=prompts_path,
+                out_dir=tmpdir / "runs" / "missing_env",
+                execution_mode="real",
+                env_manager=MissingEnvManager(),
+            )
+
+        self.assertIn("Required conda env: zimage", str(context.exception))
+        self.assertIn("Please create this environment manually before running.", str(context.exception))
+
     def test_minimal_run_wiring_creates_run_dir_and_export(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "example.txt"
@@ -603,7 +637,6 @@ class RunFlowTests(unittest.TestCase):
         record = json.loads(export_path.read_text(encoding="utf-8").strip())
         self.assertEqual(record["model_name"], "Z-Image")
         self.assertEqual(record["execution_metadata"]["status"], "success")
-
         ledger_path = Path(summary.output_dir) / "samples.jsonl"
         self.assertTrue(ledger_path.exists())
         ledger_records = [
@@ -611,9 +644,9 @@ class RunFlowTests(unittest.TestCase):
             for line in ledger_path.read_text(encoding="utf-8").strip().splitlines()
         ]
         self.assertEqual(len(ledger_records), 1)
-        self.assertEqual(ledger_records[0]["model_name"], "Z-Image")
-        self.assertEqual(ledger_records[0]["status"], "success")
         self.assertEqual(ledger_records[0]["prompt"], "a futuristic city at night")
+        self.assertEqual(ledger_records[0]["status"], "success")
+        self.assertEqual(ledger_records[0]["artifact_type"], "image")
 
     def test_multi_model_mock_run_batches_and_exports_records(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -756,8 +789,21 @@ class RunFlowTests(unittest.TestCase):
             worker_runner=inprocess_worker_runner,
         )
 
-        self.assertEqual(summary.tasks_scheduled, 4)
+        self.assertEqual(summary.tasks_scheduled, 3)
         self.assertEqual(summary.records_exported, 4)
+        ledger_records = [
+            json.loads(line)
+            for line in (Path(summary.output_dir) / "samples.jsonl")
+            .read_text(encoding="utf-8")
+            .strip()
+            .splitlines()
+        ]
+        self.assertEqual(len(ledger_records), 4)
+        self.assertEqual(
+            sorted(record["prompt_id"] for record in ledger_records),
+            ["prompt_000001", "prompt_000001", "prompt_000002", "prompt_000002"],
+        )
+        self.assertTrue(all(record["artifact_type"] == "video" for record in ledger_records))
         records = [
             json.loads(line)
             for line in Path(summary.export_path).read_text(encoding="utf-8").strip().splitlines()

@@ -30,6 +30,10 @@ class ModelInfo:
         return str(self.runtime.get("env_spec", ""))
 
     @property
+    def conda_env_name(self) -> str:
+        return str(self.runtime.get("conda_env_name") or self.env_spec)
+
+    @property
     def backend_execution_mode(self) -> str:
         return self.execution_mode
 
@@ -55,7 +59,3 @@ class ModelInfo:
         if raw in (None, ""):
             return None
         return max(int(raw), 1)
-
-    @property
-    def conda_env_name(self) -> str:
-        return str(self.runtime.get("conda_env_name", self.env_spec))

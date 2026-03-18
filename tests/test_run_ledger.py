@@ -1,239 +1,112 @@
 import json
 import tempfile
 import unittest
-from datetime import UTC, datetime
 from pathlib import Path
 
-from aigc.run_ledger import (
-    LEDGER_FILENAME,
-    RunLedgerWriter,
-    SampleLedgerRecord,
-    load_ledger_records,
-)
+from aigc.registry import load_registry
+from aigc.run_ledger import RunLedgerWriter, build_sample_ledger_records
+from aigc.runtime.payloads import TaskPayload, TaskPrompt
 
 
-class RunLedgerWriterTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmpdir = Path(tempfile.mkdtemp())
+class RunLedgerTests(unittest.TestCase):
+    def test_writer_creates_ledger_file_and_flushes_immediately(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        ledger_path = tmpdir / "samples.jsonl"
+        writer = RunLedgerWriter(ledger_path)
 
-    def tearDown(self) -> None:
-        import shutil
-        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        writer.append_records([{"run_id": "run_001", "prompt_id": "p001"}])
 
-    def test_ledger_file_is_created_on_open(self) -> None:
-        run_root = self.tmpdir / "run_001"
-        ledger_path = run_root / LEDGER_FILENAME
-
-        self.assertFalse(ledger_path.exists())
-
-        with RunLedgerWriter(run_root, "run_001"):
-            self.assertTrue(ledger_path.exists())
-
-    def test_append_success_writes_record(self) -> None:
-        run_root = self.tmpdir / "run_002"
-
-        with RunLedgerWriter(run_root, "run_002") as ledger:
-            ledger.append_success(
-                task_id="task_001",
-                model_name="Z-Image",
-                prompt_id="p001",
-                prompt="a futuristic city",
-                artifact_type="image",
-                artifact_path="runs/run_002/Z-Image/p001.png",
-                replica_id=0,
-                batch_id="batch_001",
-                batch_index=0,
-                execution_mode="mock",
-            )
-
-        records = load_ledger_records(run_root)
-        self.assertEqual(len(records), 1)
-        record = records[0]
-        self.assertEqual(record["run_id"], "run_002")
-        self.assertEqual(record["task_id"], "task_001")
-        self.assertEqual(record["model_name"], "Z-Image")
-        self.assertEqual(record["prompt_id"], "p001")
-        self.assertEqual(record["prompt"], "a futuristic city")
-        self.assertEqual(record["status"], "success")
-        self.assertEqual(record["artifact_type"], "image")
-        self.assertEqual(record["artifact_path"], "runs/run_002/Z-Image/p001.png")
-        self.assertEqual(record["replica_id"], 0)
-        self.assertEqual(record["batch_id"], "batch_001")
-        self.assertEqual(record["batch_index"], 0)
-        self.assertEqual(record["execution_mode"], "mock")
-        self.assertIsNone(record["error_message"])
-
-    def test_append_failure_writes_record(self) -> None:
-        run_root = self.tmpdir / "run_003"
-
-        with RunLedgerWriter(run_root, "run_003") as ledger:
-            ledger.append_failure(
-                task_id="task_002",
-                model_name="Z-Image",
-                prompt_id="p002",
-                prompt="a cat on a chair",
-                error_message="CUDA out of memory",
-                replica_id=1,
-                batch_id="batch_002",
-                execution_mode="real",
-            )
-
-        records = load_ledger_records(run_root)
-        self.assertEqual(len(records), 1)
-        record = records[0]
-        self.assertEqual(record["status"], "failed")
-        self.assertEqual(record["error_message"], "CUDA out of memory")
-        self.assertIsNone(record["artifact_type"])
-        self.assertIsNone(record["artifact_path"])
-
-    def test_append_from_task_result_flattens_batch_items(self) -> None:
-        run_root = self.tmpdir / "run_004"
-
-        prompts = [
-            {"prompt_id": "p001", "prompt": "prompt one", "language": "en"},
-            {"prompt_id": "p002", "prompt": "prompt two", "language": "en"},
-        ]
-        batch_items = [
-            {
-                "prompt_id": "p001",
-                "status": "success",
-                "artifacts": [
-                    {"type": "image", "path": "runs/run_004/Z-Image/p001.png"}
-                ],
-                "metadata": {"batch_index": 0},
-            },
-            {
-                "prompt_id": "p002",
-                "status": "success",
-                "artifacts": [
-                    {"type": "image", "path": "runs/run_004/Z-Image/p002.png"}
-                ],
-                "metadata": {"batch_index": 1},
-            },
-        ]
-
-        with RunLedgerWriter(run_root, "run_004") as ledger:
-            ledger.append_from_task_result(
-                task_id="task_001",
-                model_name="Z-Image",
-                prompts=prompts,
-                batch_items=batch_items,
-                execution_mode="mock",
-                replica_id=0,
-                batch_id="batch_001",
-            )
-
-        records = load_ledger_records(run_root)
-        self.assertEqual(len(records), 2)
-        self.assertEqual(records[0]["prompt_id"], "p001")
-        self.assertEqual(records[0]["batch_index"], 0)
-        self.assertEqual(records[1]["prompt_id"], "p002")
-        self.assertEqual(records[1]["batch_index"], 1)
-
-    def test_append_from_task_result_handles_failures(self) -> None:
-        run_root = self.tmpdir / "run_005"
-
-        prompts = [
-            {"prompt_id": "p001", "prompt": "prompt one", "language": "en"},
-            {"prompt_id": "p002", "prompt": "prompt two", "language": "en"},
-        ]
-        batch_items = [
-            {
-                "prompt_id": "p001",
-                "status": "success",
-                "artifacts": [
-                    {"type": "image", "path": "runs/run_005/Z-Image/p001.png"}
-                ],
-            },
-            {
-                "prompt_id": "p002",
-                "status": "failed",
-                "error": "Generation failed",
-            },
-        ]
-
-        with RunLedgerWriter(run_root, "run_005") as ledger:
-            ledger.append_from_task_result(
-                task_id="task_001",
-                model_name="Z-Image",
-                prompts=prompts,
-                batch_items=batch_items,
-                execution_mode="real",
-            )
-
-        records = load_ledger_records(run_root)
-        self.assertEqual(len(records), 2)
-        self.assertEqual(records[0]["status"], "success")
-        self.assertEqual(records[1]["status"], "failed")
-        self.assertEqual(records[1]["error_message"], "Generation failed")
-
-    def test_append_is_flushed_immediately(self) -> None:
-        run_root = self.tmpdir / "run_006"
-        ledger_path = run_root / LEDGER_FILENAME
-
-        ledger = RunLedgerWriter(run_root, "run_006")
-        ledger.open()
-
-        ledger.append_success(
-            task_id="task_001",
-            model_name="Z-Image",
-            prompt_id="p001",
-            prompt="test prompt",
-            artifact_type="image",
-            artifact_path="test.png",
+        self.assertTrue(ledger_path.exists())
+        self.assertEqual(
+            [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()],
+            [{"run_id": "run_001", "prompt_id": "p001"}],
         )
+        writer.close()
 
-        records = load_ledger_records(run_root)
-        self.assertEqual(len(records), 1)
-
-        ledger.close()
-
-    def test_multiple_appends_in_sequence(self) -> None:
-        run_root = self.tmpdir / "run_007"
-
-        with RunLedgerWriter(run_root, "run_007") as ledger:
-            for i in range(5):
-                ledger.append_success(
-                    task_id=f"task_{i:03d}",
-                    model_name="Z-Image",
-                    prompt_id=f"p{i:03d}",
-                    prompt=f"prompt {i}",
-                    artifact_type="image",
-                    artifact_path=f"image_{i}.png",
-                )
-
-        records = load_ledger_records(run_root)
-        self.assertEqual(len(records), 5)
-        for i, record in enumerate(records):
-            self.assertEqual(record["prompt_id"], f"p{i:03d}")
-
-    def test_sample_ledger_record_to_dict(self) -> None:
-        record = SampleLedgerRecord(
-            timestamp="2026-03-18T10:00:00Z",
-            run_id="run_001",
-            task_id="task_001",
+    def test_build_sample_ledger_records_flattens_success_batch_items(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("Z-Image")
+        payload = TaskPayload(
+            task_id="task_000001",
             model_name="Z-Image",
-            prompt_id="p001",
-            prompt="test prompt",
-            status="success",
-            artifact_type="image",
-            artifact_path="test.png",
-            error_message=None,
-            replica_id=0,
-            batch_id="batch_001",
-            batch_index=0,
             execution_mode="mock",
+            prompts=[
+                TaskPrompt(prompt_id="p001", prompt="a cat", language="en"),
+                TaskPrompt(prompt_id="p002", prompt="a dog", language="en"),
+            ],
+            params={},
+            workdir="/tmp/demo",
+            batch_id="z-image_batch_000001",
+            runtime_config={"replica_id": 0, "gpu_assignment": [0]},
+        )
+        task_result = {
+            "execution_mode": "mock",
+            "model_result": {
+                "status": "success",
+                "batch_items": [
+                    {
+                        "prompt_id": "p001",
+                        "status": "success",
+                        "metadata": {"batch_index": 0},
+                        "artifacts": [{"type": "image", "path": "/tmp/p001.png", "metadata": {}}],
+                    },
+                    {
+                        "prompt_id": "p002",
+                        "status": "success",
+                        "metadata": {"batch_index": 1},
+                        "artifacts": [{"type": "image", "path": "/tmp/p002.png", "metadata": {}}],
+                    },
+                ],
+            },
+        }
+
+        records = build_sample_ledger_records(
+            run_id="run_001",
+            model=model,
+            task_payload=payload,
+            task_result=task_result,
+            timestamp="2026-03-18T10:00:00+00:00",
         )
 
-        d = record.to_dict()
-        self.assertEqual(d["run_id"], "run_001")
-        self.assertEqual(d["status"], "success")
-        self.assertIsNone(d["error_message"])
+        self.assertEqual(len(records), 2)
+        self.assertEqual([record["prompt_id"] for record in records], ["p001", "p002"])
+        self.assertEqual([record["artifact_path"] for record in records], ["/tmp/p001.png", "/tmp/p002.png"])
+        self.assertTrue(all(record["status"] == "success" for record in records))
 
-    def test_load_ledger_records_returns_empty_list_for_missing_file(self) -> None:
-        run_root = self.tmpdir / "nonexistent"
-        records = load_ledger_records(run_root)
-        self.assertEqual(records, [])
+    def test_build_sample_ledger_records_emits_failure_per_prompt_when_batch_items_missing(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("Wan2.2-T2V-A14B-Diffusers")
+        payload = TaskPayload(
+            task_id="task_000002",
+            model_name=model.name,
+            execution_mode="real",
+            prompts=[
+                TaskPrompt(prompt_id="p101", prompt="storm over the sea", language="en"),
+                TaskPrompt(prompt_id="p102", prompt="山谷中的云海", language="zh"),
+            ],
+            params={},
+            workdir="/tmp/video",
+            batch_id="wan_batch_000001",
+        )
+        task_result = {
+            "execution_mode": "real",
+            "execution_result": {"logs": "Traceback: boom"},
+            "model_result": {"status": "failed", "batch_items": [], "logs": "Traceback: boom"},
+        }
+
+        records = build_sample_ledger_records(
+            run_id="run_002",
+            model=model,
+            task_payload=payload,
+            task_result=task_result,
+            timestamp="2026-03-18T10:00:00+00:00",
+        )
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual([record["prompt_id"] for record in records], ["p101", "p102"])
+        self.assertTrue(all(record["status"] == "failed" for record in records))
+        self.assertTrue(all(record["artifact_path"] is None for record in records))
+        self.assertTrue(all("boom" in (record["error_message"] or "") for record in records))
 
 
 if __name__ == "__main__":

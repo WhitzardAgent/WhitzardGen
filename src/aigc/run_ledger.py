@@ -2,242 +2,173 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, BinaryIO, TextIO
+from typing import Any
 
-
-LEDGER_FILENAME = "samples.jsonl"
-
-
-@dataclass(slots=True)
-class SampleLedgerRecord:
-    timestamp: str
-    run_id: str
-    task_id: str
-    model_name: str
-    prompt_id: str
-    prompt: str
-    status: str
-    artifact_type: str | None
-    artifact_path: str | None
-    error_message: str | None
-    replica_id: int | None = None
-    batch_id: str | None = None
-    batch_index: int | None = None
-    execution_mode: str | None = None
-    negative_prompt: str | None = None
-    language: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+from aigc.registry.models import ModelInfo
+from aigc.runtime.payloads import TaskPayload
 
 
 class RunLedgerWriter:
-    def __init__(self, run_root: Path, run_id: str) -> None:
-        self.run_root = Path(run_root)
-        self.run_id = run_id
-        self.ledger_path = self.run_root / LEDGER_FILENAME
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self.path.open("a", encoding="utf-8")
         self._lock = threading.Lock()
-        self._file: TextIO | None = None
-        self._byte_file: BinaryIO | None = None
 
-    def open(self) -> "RunLedgerWriter":
-        self.run_root.mkdir(parents=True, exist_ok=True)
-        self._byte_file = self.ledger_path.open("ab")
-        self._file = open(self._byte_file.fileno(), mode="a", encoding="utf-8", closefd=False)
-        return self
+    def append_records(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        with self._lock:
+            for record in records:
+                self._handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._handle.flush()
 
     def close(self) -> None:
         with self._lock:
-            if self._file is not None:
-                try:
-                    self._file.flush()
-                finally:
-                    self._file = None
-            if self._byte_file is not None:
-                try:
-                    self._byte_file.close()
-                finally:
-                    self._byte_file = None
-
-    def __enter__(self) -> "RunLedgerWriter":
-        return self.open()
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
-
-    def append_success(
-        self,
-        *,
-        task_id: str,
-        model_name: str,
-        prompt_id: str,
-        prompt: str,
-        artifact_type: str,
-        artifact_path: str,
-        replica_id: int | None = None,
-        batch_id: str | None = None,
-        batch_index: int | None = None,
-        execution_mode: str | None = None,
-        negative_prompt: str | None = None,
-        language: str | None = None,
-    ) -> None:
-        record = SampleLedgerRecord(
-            timestamp=datetime.now(UTC).isoformat(),
-            run_id=self.run_id,
-            task_id=task_id,
-            model_name=model_name,
-            prompt_id=prompt_id,
-            prompt=prompt,
-            status="success",
-            artifact_type=artifact_type,
-            artifact_path=artifact_path,
-            error_message=None,
-            replica_id=replica_id,
-            batch_id=batch_id,
-            batch_index=batch_index,
-            execution_mode=execution_mode,
-            negative_prompt=negative_prompt,
-            language=language,
-        )
-        self._write_record(record)
-
-    def append_failure(
-        self,
-        *,
-        task_id: str,
-        model_name: str,
-        prompt_id: str,
-        prompt: str,
-        error_message: str,
-        artifact_type: str | None = None,
-        artifact_path: str | None = None,
-        replica_id: int | None = None,
-        batch_id: str | None = None,
-        batch_index: int | None = None,
-        execution_mode: str | None = None,
-        negative_prompt: str | None = None,
-        language: str | None = None,
-    ) -> None:
-        record = SampleLedgerRecord(
-            timestamp=datetime.now(UTC).isoformat(),
-            run_id=self.run_id,
-            task_id=task_id,
-            model_name=model_name,
-            prompt_id=prompt_id,
-            prompt=prompt,
-            status="failed",
-            artifact_type=artifact_type,
-            artifact_path=artifact_path,
-            error_message=error_message,
-            replica_id=replica_id,
-            batch_id=batch_id,
-            batch_index=batch_index,
-            execution_mode=execution_mode,
-            negative_prompt=negative_prompt,
-            language=language,
-        )
-        self._write_record(record)
-
-    def append_from_task_result(
-        self,
-        *,
-        task_id: str,
-        model_name: str,
-        prompts: list[dict[str, Any]],
-        batch_items: list[dict[str, Any]],
-        execution_mode: str | None = None,
-        replica_id: int | None = None,
-        batch_id: str | None = None,
-    ) -> None:
-        prompt_lookup = {prompt["prompt_id"]: prompt for prompt in prompts}
-        for batch_item in batch_items:
-            prompt_id = batch_item.get("prompt_id")
-            if not prompt_id:
-                continue
-            prompt_data = prompt_lookup.get(prompt_id, {})
-            prompt_text = prompt_data.get("prompt", "")
-            negative_prompt = prompt_data.get("negative_prompt")
-            language = prompt_data.get("language")
-            status = batch_item.get("status", "unknown")
-            batch_metadata = dict(batch_item.get("metadata", {}))
-            item_batch_id = batch_metadata.get("batch_id", batch_id)
-            item_batch_index = batch_metadata.get("batch_index")
-            item_replica_id = batch_metadata.get("replica_id", replica_id)
-
-            if status == "success":
-                artifacts = batch_item.get("artifacts", [])
-                if artifacts:
-                    for artifact in artifacts:
-                        self.append_success(
-                            task_id=task_id,
-                            model_name=model_name,
-                            prompt_id=prompt_id,
-                            prompt=prompt_text,
-                            artifact_type=artifact.get("type"),
-                            artifact_path=artifact.get("path"),
-                            replica_id=item_replica_id,
-                            batch_id=item_batch_id,
-                            batch_index=item_batch_index,
-                            execution_mode=execution_mode,
-                            negative_prompt=negative_prompt,
-                            language=language,
-                        )
-                else:
-                    self.append_success(
-                        task_id=task_id,
-                        model_name=model_name,
-                        prompt_id=prompt_id,
-                        prompt=prompt_text,
-                        artifact_type=None,
-                        artifact_path=None,
-                        replica_id=item_replica_id,
-                        batch_id=item_batch_id,
-                        batch_index=item_batch_index,
-                        execution_mode=execution_mode,
-                        negative_prompt=negative_prompt,
-                        language=language,
-                    )
-            else:
-                error_message = batch_item.get("error") or batch_item.get("error_message") or "Unknown error"
-                self.append_failure(
-                    task_id=task_id,
-                    model_name=model_name,
-                    prompt_id=prompt_id,
-                    prompt=prompt_text,
-                    error_message=error_message,
-                    artifact_type=None,
-                    artifact_path=None,
-                    replica_id=item_replica_id,
-                    batch_id=item_batch_id,
-                    batch_index=item_batch_index,
-                    execution_mode=execution_mode,
-                    negative_prompt=negative_prompt,
-                    language=language,
-                )
-
-    def _write_record(self, record: SampleLedgerRecord) -> None:
-        line = json.dumps(record.to_dict(), ensure_ascii=False) + "\n"
-        with self._lock:
-            if self._file is None:
-                raise RuntimeError("Ledger writer is not open")
-            self._file.write(line)
-            self._file.flush()
-            if self._byte_file is not None:
-                self._byte_file.flush()
+            if not self._handle.closed:
+                self._handle.flush()
+                self._handle.close()
 
 
-def load_ledger_records(run_root: Path) -> list[dict[str, Any]]:
-    ledger_path = Path(run_root) / LEDGER_FILENAME
-    if not ledger_path.exists():
-        return []
+def build_sample_ledger_records(
+    *,
+    run_id: str,
+    model: ModelInfo,
+    task_payload: TaskPayload,
+    task_result: dict[str, Any] | None,
+    error_message: str | None = None,
+    timestamp: str | None = None,
+) -> list[dict[str, Any]]:
+    prompt_lookup = {prompt.prompt_id: prompt for prompt in task_payload.prompts}
+    resolved_timestamp = timestamp or datetime.now(UTC).isoformat()
+    batch_items = list((task_result or {}).get("model_result", {}).get("batch_items", []))
+    if not batch_items:
+        return [
+            _failure_record(
+                timestamp=resolved_timestamp,
+                run_id=run_id,
+                model=model,
+                task_payload=task_payload,
+                prompt_id=prompt.prompt_id,
+                prompt=prompt.prompt,
+                negative_prompt=prompt.negative_prompt,
+                language=prompt.language,
+                batch_index=index,
+                error_message=error_message
+                or _extract_error_message(task_result)
+                or "Task failed before prompt-level outputs were available.",
+            )
+            for index, prompt in enumerate(task_payload.prompts)
+        ]
+
     records: list[dict[str, Any]] = []
-    with ledger_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            records.append(json.loads(line))
-    return records
+    for batch_index, batch_item in enumerate(batch_items):
+        prompt_id = str(batch_item.get("prompt_id", ""))
+        prompt = prompt_lookup.get(prompt_id)
+        if prompt is None:
+            continue
+        batch_metadata = dict(batch_item.get("metadata", {}))
+        artifacts = list(batch_item.get("artifacts", []))
+        first_artifact = artifacts[0] if artifacts else {}
+        status = str(batch_item.get("status", "failed"))
+        records.append(
+            {
+                "timestamp": resolved_timestamp,
+                "run_id": run_id,
+                "task_id": task_payload.task_id,
+                "replica_id": batch_metadata.get(
+                    "replica_id",
+                    task_payload.runtime_config.get("replica_id"),
+                ),
+                "model_name": model.name,
+                "prompt_id": prompt.prompt_id,
+                "prompt": prompt.prompt,
+                "negative_prompt": prompt.negative_prompt,
+                "language": prompt.language,
+                "status": status,
+                "artifact_type": first_artifact.get("type"),
+                "artifact_path": first_artifact.get("path"),
+                "artifact_count": len(artifacts),
+                "error_message": (
+                    None
+                    if status == "success"
+                    else error_message
+                    or str(batch_item.get("logs") or batch_item.get("error") or "").strip()
+                    or _extract_error_message(task_result)
+                ),
+                "batch_id": batch_metadata.get("batch_id", task_payload.batch_id),
+                "batch_index": batch_metadata.get("batch_index", batch_index),
+                "execution_mode": batch_metadata.get(
+                    "execution_mode",
+                    (task_result or {}).get("execution_mode", task_payload.execution_mode),
+                ),
+                "gpu_assignment": batch_metadata.get(
+                    "gpu_assignment",
+                    task_payload.runtime_config.get("gpu_assignment"),
+                ),
+            }
+        )
+    if records:
+        return records
+    return [
+        _failure_record(
+            timestamp=resolved_timestamp,
+            run_id=run_id,
+            model=model,
+            task_payload=task_payload,
+            prompt_id=prompt.prompt_id,
+            prompt=prompt.prompt,
+            negative_prompt=prompt.negative_prompt,
+            language=prompt.language,
+            batch_index=index,
+            error_message=error_message
+            or _extract_error_message(task_result)
+            or "Task failed before prompt-level outputs were available.",
+        )
+        for index, prompt in enumerate(task_payload.prompts)
+    ]
+
+
+def _failure_record(
+    *,
+    timestamp: str,
+    run_id: str,
+    model: ModelInfo,
+    task_payload: TaskPayload,
+    prompt_id: str,
+    prompt: str,
+    negative_prompt: str | None,
+    language: str,
+    batch_index: int,
+    error_message: str,
+) -> dict[str, Any]:
+    return {
+        "timestamp": timestamp,
+        "run_id": run_id,
+        "task_id": task_payload.task_id,
+        "replica_id": task_payload.runtime_config.get("replica_id"),
+        "model_name": model.name,
+        "prompt_id": prompt_id,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "language": language,
+        "status": "failed",
+        "artifact_type": None,
+        "artifact_path": None,
+        "artifact_count": 0,
+        "error_message": error_message,
+        "batch_id": task_payload.batch_id,
+        "batch_index": batch_index,
+        "execution_mode": task_payload.execution_mode,
+        "gpu_assignment": task_payload.runtime_config.get("gpu_assignment"),
+    }
+
+
+def _extract_error_message(task_result: dict[str, Any] | None) -> str | None:
+    if not task_result:
+        return None
+    model_logs = str(task_result.get("model_result", {}).get("logs") or "").strip()
+    exec_logs = str(task_result.get("execution_result", {}).get("logs") or "").strip()
+    return model_logs or exec_logs or None

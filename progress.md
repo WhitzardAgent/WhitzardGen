@@ -1,67 +1,72 @@
 # Progress
 
 ## Current Phase
-- Diffusers batch inference and random-seed semantics hardening
+- Per-run append-only sample ledger integration
 
 ## Completed
-- 2026-03-18 11:25:00 CST
-- Added per-run append-only sample ledger for real-time run visibility:
-  - created `RunLedgerWriter` component in `src/aigc/run_ledger.py`
-  - ledger file `samples.jsonl` created automatically under each run directory
-  - one record per prompt result (batch tasks are flattened)
-  - records written for both success and failure cases
-  - each record flushed immediately after writing
-  - usable even if run is interrupted
-- Integrated ledger writing into run flow:
-  - `run_models` opens ledger writer at run start
-  - `_execute_prepared_task` writes records after each task completes
-  - ledger writer passed through persistent worker replica execution
-  - failure cases also write records before raising exceptions
-- Ledger record fields:
-  - `timestamp`, `run_id`, `task_id`, `model_name`, `prompt_id`, `prompt`
-  - `status`, `artifact_type`, `artifact_path`, `error_message`
-  - `replica_id`, `batch_id`, `batch_index`, `execution_mode`
-  - `negative_prompt`, `language`
-- Added focused test coverage:
-  - ledger file creation on open
-  - append behavior for success and failure
-  - batch flattening into per-prompt records
-  - immediate flush after each write
-  - integration with run flow
+- 2026-03-18 18:30:00 CST
+- Added a per-run append-only sample ledger for continuous prompt-level visibility during execution:
+  - every run now creates `samples.jsonl` under the run directory automatically
+  - ledger records are written continuously as tasks finish or fail
+  - writes are append-only and flushed immediately after each append
+  - the ledger remains usable even if the run is interrupted after partial progress
+- Introduced a dedicated supervisor-side ledger component:
+  - added `RunLedgerWriter` in `src/aigc/run_ledger.py`
+  - added prompt-level ledger record flattening from task payloads and task results
+  - success and failure records now both flow through the same centralized supervisor-side path
+  - batch tasks are flattened into one ledger line per prompt result
+- Integrated the ledger into run flow without changing final dataset export semantics:
+  - `run_models` now opens the ledger at run start
+  - `_execute_prepared_task(...)` appends success records before returning
+  - failure paths append prompt-level failure records before raising
+  - persistent-worker multi-replica execution also routes through the same ledger writer
+  - `run_manifest.json` now records the `samples_ledger_path`
+- Ledger records now capture useful prompt-level runtime state including:
+  - `timestamp`, `run_id`, `task_id`, `replica_id`, `model_name`
+  - `prompt_id`, `prompt`, `negative_prompt`, `language`
+  - `status`, `artifact_type`, `artifact_path`, `artifact_count`
+  - `error_message`, `batch_id`, `batch_index`, `execution_mode`, `gpu_assignment`
+- Added focused regression coverage for:
+  - ledger file creation and immediate flush behavior
+  - success batch flattening into prompt-level records
+  - failure record generation when prompt-level batch items are unavailable
+  - run-flow integration for success, failure, and batched video runs
 - Ran targeted lightweight regression:
   - `PYTHONPATH=src python3 -m unittest tests.test_run_ledger -v`
-  - result: 9 tests passed
-  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_minimal_run_wiring_creates_run_dir_and_export -v`
-  - result: 1 test passed
-- 2026-03-17 22:15:00 CST
-- Stopped automatic Conda environment creation; environments are now manually managed:
-  - removed all auto-creation, rebuild, and package installation logic from `EnvManager`
-  - `EnvManager` now only resolves env names, checks existence, validates lightly, and wraps commands
-  - added `conda_env_name` property to `ModelInfo` (defaults to `env_spec` for backward compatibility)
-  - added `conda_env_name` as a runtime override field in `local_models.yaml`
-  - each model in `configs/models.yaml` now declares an explicit `conda_env_name`
-- Updated `aigc run` to fail clearly when required environment is missing:
-  - added `MissingEnvironmentError` exception with actionable message
-  - `ensure_ready` raises `MissingEnvironmentError` instead of attempting auto-creation
-  - error message shows model name, required conda env, and manual creation instructions
-- Updated `aigc doctor` to show environment status:
-  - displays effective `conda_env_name` for each model
-  - shows whether the conda env exists
-  - shows local path / repo path / weights path existence checks
-- Updated command wrapping to use `conda run -n <env_name>`:
-  - `wrap_command` now takes `conda_env_name` instead of `env_id`
-  - worker and subprocess execution use `conda run -n <env_name> ...`
-- Added focused regression coverage:
-  - env name resolution from model config
-  - local override merge for conda_env_name
-  - missing-env failure in run flow
-  - doctor output includes conda_env_name and exists fields
-  - command wrapping uses `conda run -n`
+  - result: 3 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 3 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow -v`
+  - result: 21 tests passed
+- 2026-03-18 18:20:00 CST
+- Simplified environment handling so the framework no longer auto-provisions Conda envs:
+  - `EnvManager` now only resolves env names, checks existence, validates lightly, and wraps commands with `conda run -n <env_name>`
+  - automatic `conda create` / pip provisioning paths were removed from the active runtime path
+  - missing envs now fail early with an explicit manual-setup message instead of attempting creation
+- Standardized `conda_env_name` as a first-class runtime field:
+  - `ModelInfo.conda_env_name` now exposes the effective env name
+  - `configs/models.yaml` now declares `runtime.conda_env_name` defaults for all models
+  - `configs/local_models.yaml` is now the main YAML entry point for cluster-local `conda_env_name` and path overrides
+  - local model overrides can now replace `conda_env_name` cleanly through the registry merge path
+- Hardened CLI preflight output for the new manual-env workflow:
+  - `aigc models inspect <model>` now shows the effective `Conda Env`
+  - `aigc doctor` now shows env name, existence, validation status, env path, and path-override existence checks
+- Added focused regression coverage for:
+  - `conda_env_name` resolution from registry defaults and local overrides
+  - `conda run -n` command wrapping
+  - missing-env and invalid-env failure behavior in `ensure_ready(...)`
+  - cached validation reuse vs forced `doctor` revalidation
+  - CLI doctor output including env and path existence details
+  - real run flow failing clearly when a required env is missing
 - Ran targeted lightweight regression:
   - `PYTHONPATH=src python3 -m unittest tests.test_env_manager -v`
-  - result: 14 tests passed
+  - result: 11 tests passed
   - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
   - result: 5 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 3 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow -v`
+  - result: 21 tests passed
 - 2026-03-17 21:09:18 CST
 - Extended diffusers-based generation to support real prompt batching consistently across the framework:
   - confirmed image diffusers models were already using true batched inference by passing prompt lists to the pipeline in one call
@@ -699,6 +704,7 @@
 - /Users/morinop/coding/whitzardgen/docs/env_manager_spec.md
 - /Users/morinop/coding/whitzardgen/src/aigc/utils/runtime_logging.py
 - /Users/morinop/coding/whitzardgen/src/aigc/utils/progress.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_ledger.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
 - /Users/morinop/coding/whitzardgen/src/aigc/env/manager.py
 - /Users/morinop/coding/whitzardgen/src/aigc/runtime/worker.py
@@ -706,6 +712,7 @@
 - /Users/morinop/coding/whitzardgen/src/aigc/runtime/persistent_ipc.py
 - /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
 - /Users/morinop/coding/whitzardgen/tests/test_progress.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_ledger.py
 - /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
 - /Users/morinop/coding/whitzardgen/tests/test_persistent_worker.py
 - /Users/morinop/coding/whitzardgen/configs/models.yaml
@@ -713,6 +720,7 @@
 - /Users/morinop/coding/whitzardgen/prompts/test_video_100.txt
 - /Users/morinop/coding/whitzardgen/src/aigc/exporters/jsonl.py
 - /Users/morinop/coding/whitzardgen/src/aigc/registry/models.py
+- /Users/morinop/coding/whitzardgen/src/aigc/registry/local_overrides.py
 - /Users/morinop/coding/whitzardgen/src/aigc/runtime/persistent_worker.py
 - /Users/morinop/coding/whitzardgen/tests/test_persistent_worker.py
 - /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
@@ -740,6 +748,7 @@
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/__init__.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
 - /Users/morinop/coding/whitzardgen/configs/models.yaml
+- /Users/morinop/coding/whitzardgen/configs/local_models.yaml
 - /Users/morinop/coding/whitzardgen/configs/local_models.yaml
 - /Users/morinop/coding/whitzardgen/configs/local_envs.yaml
 - /Users/morinop/coding/whitzardgen/envs/cogvideox_5b/python_version.txt
@@ -860,7 +869,21 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-17 21:09:18 CST.
+- Updated at 2026-03-18 18:30:00 CST.
+- Every run now produces two complementary record streams:
+  - `samples.jsonl` for append-only prompt-level running visibility
+  - `exports/dataset.jsonl` for final artifact-level export
+- The run supervisor now continuously records prompt outcomes during execution for:
+  - success
+  - failure
+  - single-prompt tasks
+  - batched tasks
+  - image and video runs
+- Conda env handling is now simplified for cluster usage:
+  - users prepare envs manually
+  - the framework only resolves, checks, validates lightly, and launches them
+  - missing envs fail early with clear manual-setup guidance
+- `conda_env_name` is now a first-class effective config value across registry defaults, local overrides, CLI inspection, doctor, and subprocess wrapping.
 - Diffusers-based image batching remains correctly implemented:
   - image adapters pass prompt lists in one pipeline call
   - when seeded, they build one `torch.Generator` per sample
@@ -889,6 +912,9 @@
   - major run/env/worker events are timestamped
   - worker and persistent-worker lifecycle logs flow back into the run log
   - terminal progress remains readable while the file log stays more complete
+- The runtime also now has a per-run sample ledger foundation for future retry/resume and dataset organization work:
+  - prompt-level records are flushed incrementally
+  - interrupted runs should still leave behind a usable partial ledger
 - Repeated real runs should now spend much less time in `Ensuring environments` when the environment is already `ready` and was validated recently.
 - Persistent real workers are now more robust against third-party model-loading output that writes stray text or blank lines to stdout during startup.
 - `CogVideoX-5B` is now explicitly configured as one GPU per replica, matching the user's confirmed intended runtime behavior.
@@ -904,6 +930,8 @@
 ## Blockers
 - No code blockers in the local framework path.
 - Per user instruction, do not continue local heavy real-run validation on this machine.
+- Real remote validation is still needed to confirm `samples.jsonl` behaves as expected during long-running cluster jobs and interrupted runs.
+- Real remote validation is still needed to confirm the manually prepared env names on the cluster match the configured `conda_env_name` values and pass lightweight import validation.
 - Real remote validation is still needed to confirm the new diffusers video batch path behaves correctly under actual GPU memory pressure and pipeline output shape for:
   - `Wan2.2-T2V-A14B-Diffusers`
   - `CogVideoX-5B`
@@ -914,4 +942,4 @@
 - The queue-supervisor path still needs real remote validation to confirm the old persistent-worker `Broken pipe` failure mode is gone under cluster execution.
 
 ## Next Task
-- Sync the diffusers batch-inference and random-seed changes to the remote GPU server, then re-run real Wan/Cog/Hunyuan workloads and continue from the next true model/runtime or memory issue if one appears.
+- Validate the new `samples.jsonl` ledger on remote canary runs together with `aigc doctor --model <model>`, then continue from the next real cluster/runtime issue that appears.

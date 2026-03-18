@@ -1,60 +1,82 @@
-{
-  "Z-Image": {
-    "local_path": "/inspire/qb-ilm/project/control-technology/public/models/Z-Image",
-    "hf_cache_dir": null
-  },
-  "Z-Image-Turbo": {
-    "local_path": "/inspire/qb-ilm/project/control-technology/public/models/Z-Image-Turbo",
-    "hf_cache_dir": null
-  },
-  "stable-diffusion-xl-base-1.0": {
-    "local_path": null,
-    "hf_cache_dir": null
-  },
-  "FLUX.1-dev": {
-    "local_path": null,
-    "hf_cache_dir": null
-  },
-  "HunyuanImage-3.0": {
-    "local_path": null,
-    "repo_path": null,
-    "hf_cache_dir": null
-  },
-  "Qwen-Image-2512": {
-    "local_path": null,
-    "hf_cache_dir": null
-  },
-  "Wan2.2-T2V-A14B-Diffusers": {
-    "repo_path": "/inspire/qb-ilm/project/control-technology/25015/deps/Wan2.2",
-    "weights_path": "/inspire/qb-ilm/project/control-technology/public/models/Wan2.2-T2V-A14B-Diffusers",
-    "local_path": "/inspire/qb-ilm/project/control-technology/public/models/Wan2.2-T2V-A14B-Diffusers",
-    "max_gpus": null,
-    "hf_cache_dir": null
-  },
-  "CogVideoX-5B": {
-    "weights_path": "/inspire/qb-ilm/project/control-technology/public/models/CogVideoX-5B",
-    "local_path": "/inspire/qb-ilm/project/control-technology/public/models/CogVideoX-5B",
-    "hf_cache_dir": null
-  },
-  "Wan2.2-TI2V-5B": {
-    "repo_path": null,
-    "weights_path": null,
-    "script_root": null
-  },
-  "LongCat-Video": {
-    "repo_path": null,
-    "weights_path": null,
-    "script_root": null
-  },
-  "HunyuanVideo-1.5": {
-    "local_path": null,
-    "repo_path": null,
-    "weights_path": null,
-    "hf_cache_dir": null
-  },
-  "MOVA-720p": {
-    "repo_path": null,
-    "weights_path": null,
-    "script_root": null
-  }
-}
+# Optional local model overrides for cluster usage.
+#
+# This is the main user-facing setup file for model-local paths and manually
+# prepared Conda environments.
+#
+# Common fields:
+#   conda_env_name: pre-created Conda environment name
+#   local_path: local model snapshot / diffusers directory
+#   repo_path: local repository checkout
+#   weights_path: local weights directory
+#   script_root: local script entry root for external-process models
+#   hf_cache_dir: optional Hugging Face cache directory
+
+Z-Image:
+  conda_env_name: zimage
+  local_path: /inspire/qb-ilm/project/control-technology/public/models/Z-Image
+  hf_cache_dir:
+
+Z-Image-Turbo:
+  conda_env_name: zimage
+  local_path: /inspire/qb-ilm/project/control-technology/public/models/Z-Image-Turbo
+  hf_cache_dir:
+
+stable-diffusion-xl-base-1.0:
+  conda_env_name: sdxl_image
+  local_path:
+  hf_cache_dir:
+
+FLUX.1-dev:
+  conda_env_name: flux_image
+  local_path:
+  hf_cache_dir:
+
+HunyuanImage-3.0:
+  conda_env_name: hunyuan_image
+  local_path:
+  repo_path:
+  hf_cache_dir:
+
+Qwen-Image-2512:
+  conda_env_name: qwen_image
+  local_path:
+  hf_cache_dir:
+
+Wan2.2-T2V-A14B-Diffusers:
+  conda_env_name: wan_t2v_diffusers
+  repo_path: /inspire/qb-ilm/project/control-technology/25015/deps/Wan2.2
+  weights_path: /inspire/qb-ilm/project/control-technology/public/models/Wan2.2-T2V-A14B-Diffusers
+  local_path: /inspire/qb-ilm/project/control-technology/public/models/Wan2.2-T2V-A14B-Diffusers
+  max_gpus:
+  hf_cache_dir:
+
+CogVideoX-5B:
+  conda_env_name: cogvideox_5b
+  weights_path: /inspire/qb-ilm/project/control-technology/public/models/CogVideoX-5B
+  local_path: /inspire/qb-ilm/project/control-technology/public/models/CogVideoX-5B
+  hf_cache_dir:
+
+Wan2.2-TI2V-5B:
+  conda_env_name: wan_ti2v
+  repo_path:
+  weights_path:
+  script_root:
+
+LongCat-Video:
+  conda_env_name: longcat_video
+  repo_path:
+  weights_path:
+  script_root:
+
+HunyuanVideo-1.5:
+  conda_env_name: hunyuan_video_15
+  local_path:
+  repo_path:
+  weights_path:
+  hf_cache_dir:
+
+MOVA-720p:
+  conda_env_name: mova_720p
+  repo_path:
+  weights_path:
+  script_root:
