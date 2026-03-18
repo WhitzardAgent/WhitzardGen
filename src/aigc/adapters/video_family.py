@@ -524,7 +524,9 @@ class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
     ) -> Any:
         from diffusers import AutoencoderKLWan
 
-        load_kwargs: dict[str, Any] = {"torch_dtype": dtype}
+        # Current Wan diffusers loading keeps selected modules in fp32, which
+        # requires low_cpu_mem_usage to stay enabled on newer diffusers builds.
+        load_kwargs: dict[str, Any] = {"torch_dtype": dtype, "low_cpu_mem_usage": True}
         cache_dir = resolve_video_cache_dir(self.model_config)
         if cache_dir:
             load_kwargs["cache_dir"] = cache_dir

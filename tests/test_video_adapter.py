@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from aigc.adapters.video_family import (
     CogVideoX5BAdapter,
@@ -196,6 +197,72 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertEqual(pipe.calls[0]["num_frames"], 81)
         self.assertEqual(pipe.calls[0]["prompt"], ["a cinematic duel in heavy rain", "a city made of glass"])
         self.assertEqual(len(pipe.calls[0]["generator"]), 2)
+
+    def test_wan_load_pipeline_enables_low_cpu_mem_usage(self) -> None:
+        registry = load_registry()
+        tmpdir = Path(tempfile.mkdtemp())
+        weights_dir = tmpdir / "Wan2.2-T2V-A14B-Diffusers"
+        (weights_dir / "vae").mkdir(parents=True)
+        (weights_dir / "model_index.json").write_text("{}", encoding="utf-8")
+        (weights_dir / "vae" / "config.json").write_text("{}", encoding="utf-8")
+        model = replace(
+            registry.get_model("Wan2.2-T2V-A14B-Diffusers"),
+            weights={
+                **registry.get_model("Wan2.2-T2V-A14B-Diffusers").weights,
+                "weights_path": str(weights_dir),
+            },
+        )
+        adapter = WanT2VDiffusersAdapter(model_config=model)
+        captured: dict[str, object] = {}
+
+        class _FakeAutoencoderKLWan:
+            @classmethod
+            def from_pretrained(cls, model_ref: str, **kwargs):
+                captured["vae_model_ref"] = model_ref
+                captured["vae_kwargs"] = kwargs
+                return object()
+
+        class _FakePipe:
+            def __init__(self) -> None:
+                self.vae = None
+                self.device = None
+
+            def to(self, device: str):
+                self.device = device
+                return self
+
+        class _FakePipelineClass:
+            @classmethod
+            def from_pretrained(cls, model_ref: str, **kwargs):
+                captured["pipe_model_ref"] = model_ref
+                captured["pipe_kwargs"] = kwargs
+                return _FakePipe()
+
+        class _FakeTorch:
+            float32 = "float32"
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "diffusers": type(
+                    "_FakeDiffusersModule",
+                    (),
+                    {"AutoencoderKLWan": _FakeAutoencoderKLWan},
+                )(),
+            },
+        ):
+            pipe = adapter.load_pipeline(
+                pipeline_class=_FakePipelineClass,
+                torch=_FakeTorch(),
+                device="cuda",
+                dtype="bfloat16",
+            )
+
+        self.assertIsInstance(pipe, _FakePipe)
+        self.assertEqual(captured["pipe_model_ref"], str(weights_dir))
+        self.assertEqual(captured["vae_model_ref"], str(weights_dir))
+        self.assertEqual(captured["pipe_kwargs"]["low_cpu_mem_usage"], True)
+        self.assertEqual(captured["pipe_kwargs"]["torch_dtype"], "bfloat16")
 
     def test_cogvideox_batch_generation_uses_prompt_list_and_generators(self) -> None:
         registry = load_registry()

@@ -4,6 +4,18 @@
 - Per-run append-only sample ledger integration
 
 ## Completed
+- 2026-03-18 18:55:00 CST
+- Fixed `Wan2.2-T2V-A14B-Diffusers` startup compatibility with the current diffusers loader path:
+  - `WanT2VDiffusersAdapter.load_pipeline(...)` now explicitly enables `low_cpu_mem_usage=True`
+  - this aligns the adapter with newer diffusers builds where Wan loading keeps selected modules in fp32
+  - prevents persistent-worker startup failure with:
+    - `` `low_cpu_mem_usage` cannot be False when `keep_in_fp32_modules` is True. ``
+- Added focused Wan regression coverage:
+  - `tests.test_video_adapter.VideoAdapterTests.test_wan_load_pipeline_enables_low_cpu_mem_usage`
+  - verifies the Wan diffusers loader forwards `low_cpu_mem_usage=True` into `from_pretrained(...)`
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter -v`
+  - result: 10 tests passed
 - 2026-03-18 18:30:00 CST
 - Added a per-run append-only sample ledger for continuous prompt-level visibility during execution:
   - every run now creates `samples.jsonl` under the run directory automatically
@@ -757,6 +769,7 @@
 - /Users/morinop/coding/whitzardgen/tests/test_registry.py
 - /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
+- /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
 - /Users/morinop/coding/whitzardgen/configs/local_models.yaml
 - /Users/morinop/coding/whitzardgen/README.md
@@ -869,7 +882,7 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-18 18:30:00 CST.
+- Updated at 2026-03-18 18:55:00 CST.
 - Every run now produces two complementary record streams:
   - `samples.jsonl` for append-only prompt-level running visibility
   - `exports/dataset.jsonl` for final artifact-level export
@@ -899,6 +912,9 @@
   - `AutoencoderKLWan.from_pretrained(..., subfolder="vae", torch_dtype=torch.float32)`
   - `WanPipeline.from_pretrained(..., vae=vae, torch_dtype=torch.bfloat16/float32)`
   - persistent in-process generation with `guidance_scale_2`
+- The Wan diffusers loader is now hardened for newer diffusers versions:
+  - `low_cpu_mem_usage=True` is passed explicitly during pipeline construction
+  - this avoids the `keep_in_fp32_modules` startup incompatibility seen on the remote cluster
 - The persistent-worker control plane no longer depends on stdout protocol correctness:
   - parent/worker coordination now happens through a queue-supervised IPC path
   - worker logs are separated from control messages and mirrored into the run log plus per-replica logs
@@ -940,6 +956,7 @@
   - local `weights_path` points to a complete `Wan2.2-T2V-A14B-Diffusers` directory
   - persistent-worker reuse behaves correctly under real GPU inference
 - The queue-supervisor path still needs real remote validation to confirm the old persistent-worker `Broken pipe` failure mode is gone under cluster execution.
+- The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
-- Validate the new `samples.jsonl` ledger on remote canary runs together with `aigc doctor --model <model>`, then continue from the next real cluster/runtime issue that appears.
+- Re-run `Wan2.2-T2V-A14B-Diffusers` on the remote cluster to confirm the explicit `low_cpu_mem_usage=True` fix clears startup and exposes the next real inference/runtime issue, if any.
