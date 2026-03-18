@@ -1,0 +1,11 @@
+name: video_real
+
+models:
+  - CogVideoX-5B
+  - Wan2.2-T2V-A14B-Diffusers
+
+prompts: prompts/test_video_100.txt
+execution_mode: real
+
+runtime:
+  available_gpus: [0, 1, 2, 3]

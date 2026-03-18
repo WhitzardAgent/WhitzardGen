@@ -476,9 +476,7 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
         kwargs.update(self.build_pipeline_call_kwargs(plan))
         output = pipe(**kwargs)
         frames = getattr(output, "frames", None)
-        if not frames:
-            raise RuntimeError(f"{self.model_config.name} did not return video frames.")
-        return [list(video_frames) for video_frames in frames]
+        return _normalize_frame_batches(self.model_config.name, frames)
 
 
 class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
@@ -588,9 +586,7 @@ class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
             **({"generator": generator} if generator is not None else {}),
         )
         frames = getattr(output, "frames", None)
-        if not frames:
-            raise RuntimeError(f"{self.model_config.name} did not return video frames.")
-        return [list(video_frames) for video_frames in frames]
+        return _normalize_frame_batches(self.model_config.name, frames)
 
 
 class HunyuanVideo15Adapter(DiffusersVideoAdapterBase):
@@ -713,9 +709,7 @@ class CogVideoX5BAdapter(DiffusersVideoAdapterBase):
             **({"generator": generator} if generator is not None else {}),
         )
         frames = getattr(output, "frames", None)
-        if not frames:
-            raise RuntimeError(f"{self.model_config.name} did not return video frames.")
-        return [list(video_frames) for video_frames in frames]
+        return _normalize_frame_batches(self.model_config.name, frames)
 
 
 class ExternalProcessVideoAdapterBase(MockCapableVideoAdapter):
@@ -989,6 +983,18 @@ def resolve_video_cache_dir(model_config: Any) -> str | None:
 def metadata_sidecar_path(path: str | Path) -> Path:
     target = Path(path)
     return target.with_name(f"{target.stem}.metadata.json")
+
+
+def _normalize_frame_batches(model_name: str, frames: Any) -> list[list[Any]]:
+    if frames is None:
+        raise RuntimeError(f"{model_name} did not return video frames.")
+    try:
+        frame_batch_count = len(frames)
+    except TypeError as exc:
+        raise RuntimeError(f"{model_name} returned invalid video frames payload.") from exc
+    if frame_batch_count == 0:
+        raise RuntimeError(f"{model_name} did not return video frames.")
+    return [list(video_frames) for video_frames in frames]
 
 
 def extract_video_metadata(path: str | Path, fallback: dict[str, Any] | None = None) -> dict[str, Any]:

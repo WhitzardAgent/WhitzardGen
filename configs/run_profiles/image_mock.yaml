@@ -1,0 +1,9 @@
+name: image_mock
+
+models:
+  - Z-Image
+  - FLUX.1-dev
+  - HunyuanImage-3.0
+
+prompts: prompts/test_image_100.txt
+execution_mode: mock

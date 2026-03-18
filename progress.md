@@ -1,9 +1,137 @@
 # Progress
 
 ## Current Phase
-- Per-run append-only sample ledger integration
+- Simple multi-model collection UX
 
 ## Completed
+- 2026-03-18 22:40:00 CST
+- Fixed a real remote batch-inference bug in the diffusers video path:
+  - `Wan2.2-T2V-A14B-Diffusers` could fail in real batch execution when the pipeline returned a numpy-like frame container
+  - the previous implementation used `if not frames`, which is invalid for numpy arrays and other containers with ambiguous truthiness
+  - introduced a shared `_normalize_frame_batches(...)` helper in `src/aigc/adapters/video_family.py`
+  - diffusers video adapters now validate frame payloads using `len(...)` instead of truthiness checks
+  - applied this fix to the shared diffusers video base plus the Wan and CogVideoX batch paths to avoid the same class of failure across models
+- Added focused regression coverage for:
+  - Wan batch frame normalization when `output.frames` is iterable but raises on boolean evaluation
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter -v`
+  - result: 11 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_selected_wan_video_model_uses_persistent_worker_strategy_in_mock_mode tests.test_run_flow.RunFlowTests.test_video_multi_model_mock_run_exports_video_records -v`
+  - result: 1 test passed, 1 sandbox-related local multiprocessing socket-bind error unrelated to the adapter fix
+- 2026-03-18 22:15:00 CST
+- Started Phase 13 to make multi-model collection easier to configure and reproduce:
+  - added a lightweight run-profile loader in `src/aigc/run_profiles.py`
+  - run profiles now support:
+    - `name`
+    - `models`
+    - `prompts`
+    - `execution_mode`
+    - `out` / `output_dir` / `output_root`
+    - `runtime.available_gpus`
+  - profile prompt/output paths now resolve from either the profile directory or the repo root
+- Wired `aigc run --profile ...` into the CLI:
+  - profile values now flow into the existing `run_models(...)` path instead of creating a separate execution path
+  - explicit CLI flags override profile values
+  - mixed-modality model sets are rejected before execution starts
+  - profile-provided `runtime.available_gpus` now feeds the existing runtime through `AIGC_AVAILABLE_GPUS` when no explicit environment override is already set
+- Improved multi-model manifest clarity:
+  - run manifests now record active profile context when present
+  - `per_model_summary` now includes clearer effective config data such as:
+    - `conda_env_name`
+    - execution/backend mode
+    - batch support
+    - replica/runtime settings
+    - local path overrides
+- Added example run profiles under `configs/run_profiles/`:
+  - `image_mock.yaml`
+  - `image_real.yaml`
+  - `video_mock.yaml`
+  - `video_real.yaml`
+- Added focused regression coverage for:
+  - run-profile loading and validation
+  - CLI profile usage and explicit-flag precedence
+  - early mixed-modality rejection for profile-based runs
+  - multi-model manifest profile/effective-config fields
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_profiles -v`
+  - result: 3 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 7 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow -v`
+  - result: 23 tests passed
+- 2026-03-18 21:30:00 CST
+- Implemented the first practical recovery layer for long-running runs:
+  - added recovery-state inspection based on persisted run artifacts
+  - recovery now reconstructs prompt/model output state from:
+    - `run_manifest.json`
+    - `samples.jsonl`
+    - `failures.json`
+    - persisted task payloads under `runs/<run_id>/tasks/`
+- Added prompt-level retry and resume planning:
+  - `retry` now selects only failed prompt/model outputs
+  - `resume` now selects only missing prompt/model outputs
+  - already successful prompt/model outputs are treated as complete and are not rerun
+  - partial batch success is handled at prompt granularity rather than blindly rerunning whole original tasks
+- Added recovery execution support on top of the existing runtime:
+  - recovery creates a new run instead of mutating the old run in place
+  - recovery re-materializes prompt-level work back into runnable tasks
+  - current batching, persistent workers, and multi-replica planning are reused on the new run
+  - new recovery manifests now record lineage fields:
+    - `parent_run_id`
+    - `source_run_id`
+    - `recovery_mode`
+    - `recovered_item_count`
+- Added CLI entry points:
+  - `aigc runs retry <run_id>`
+  - `aigc runs resume <run_id>`
+  - both commands now inspect old run metadata, build a recovery plan, and launch a new recovery run
+- Added focused regression coverage for:
+  - failed-only retry selection
+  - missing-only resume selection
+  - recovery-run lineage manifest fields
+  - no duplicate rerun of already successful outputs
+  - CLI retry/resume handler behavior
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_recovery -v`
+  - result: 3 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 5 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow -v`
+  - result: 22 tests passed
+- 2026-03-18 21:15:00 CST
+- Implemented sequential replica warmup for the multi-replica persistent-worker path:
+  - replicas are no longer started concurrently during the model-loading phase
+  - `run_flow` now starts replica sessions one by one and waits for each to become `ready`
+  - task dispatch begins only after all planned replicas are warmed and ready
+  - this preserves concurrent task execution while reducing weight-loading contention during startup
+- Added explicit multi-replica warmup logs:
+  - `[run][Model] warming replica X/Y ...`
+  - `[run][Model] replica=N ready (X/Y) ...`
+  - `[run][Model] all replicas ready, dispatching tasks`
+- Added focused regression coverage for:
+  - sequential warmup ordering before any task dispatch
+  - no regression of existing multi-replica image mock execution
+  - no regression of existing multi-replica video mock execution
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_multi_replica_warmup_is_sequential_before_task_dispatch -v`
+  - result: 1 test passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_multi_replica_mock_run_shards_image_tasks_and_exports_replica_metadata tests.test_run_flow.RunFlowTests.test_multi_replica_mock_run_shards_video_tasks_and_uses_gpu_groups -v`
+  - result: 2 tests passed
+- 2026-03-18 19:20:00 CST
+- Consolidated the next implementation priorities after confirming remote persistent-worker viability:
+  - added `next_todo.md` as the active short-horizon execution checklist
+  - recorded that persistent worker is now considered workable on the remote cluster
+  - elevated sequential replica warmup to the top runtime optimization priority
+  - clarified the next practical sequence:
+    - sequential replica startup
+    - real multi-replica validation
+    - persistent-worker hardening
+    - later scheduler / retry / resume work
+- 2026-03-18 19:05:00 CST
+- Hardened Wan environment preflight to catch the most likely root cause behind the remote `low_cpu_mem_usage` fallback:
+  - `envs/wan_t2v_diffusers/validation.json` now validates `accelerate` in addition to `torch`, `diffusers`, and `transformers`
+  - this makes `aigc doctor --model Wan2.2-T2V-A14B-Diffusers` and env readiness checks fail earlier when the manually prepared env is missing the package diffusers needs for low-memory loading
+  - this matches the observed remote symptom where `low_cpu_mem_usage=True` was passed from the adapter but the diffusers loader still behaved as if it had been downgraded to `False`
 - 2026-03-18 18:55:00 CST
 - Fixed `Wan2.2-T2V-A14B-Diffusers` startup compatibility with the current diffusers loader path:
   - `WanT2VDiffusersAdapter.load_pipeline(...)` now explicitly enables `low_cpu_mem_usage=True`
@@ -713,6 +841,19 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/run_profiles.py
+- /Users/morinop/coding/whitzardgen/configs/run_profiles/image_mock.yaml
+- /Users/morinop/coding/whitzardgen/configs/run_profiles/image_real.yaml
+- /Users/morinop/coding/whitzardgen/configs/run_profiles/video_mock.yaml
+- /Users/morinop/coding/whitzardgen/configs/run_profiles/video_real.yaml
+- /Users/morinop/coding/whitzardgen/tests/test_run_profiles.py
+- /Users/morinop/coding/whitzardgen/src/aigc/recovery.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_store.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
+- /Users/morinop/coding/whitzardgen/tests/test_recovery.py
+- /Users/morinop/coding/whitzardgen/tests/test_cli_runs.py
+- /Users/morinop/coding/whitzardgen/next_todo.md
 - /Users/morinop/coding/whitzardgen/docs/env_manager_spec.md
 - /Users/morinop/coding/whitzardgen/src/aigc/utils/runtime_logging.py
 - /Users/morinop/coding/whitzardgen/src/aigc/utils/progress.py
@@ -770,6 +911,7 @@
 - /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
 - /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
+- /Users/morinop/coding/whitzardgen/envs/wan_t2v_diffusers/validation.json
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
 - /Users/morinop/coding/whitzardgen/configs/local_models.yaml
 - /Users/morinop/coding/whitzardgen/README.md
@@ -882,7 +1024,15 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-18 18:55:00 CST.
+- Updated at 2026-03-18 22:25:00 CST.
+- Phase 13 is now in progress.
+- The new run-profile layer is implemented locally and wired into `aigc run`.
+- Phase 13 focused regression is now passing locally for:
+  - profile loading
+  - CLI override precedence
+  - profile-based early validation
+  - multi-model manifest/profile fields
+- Example multi-model run profiles now exist under `configs/run_profiles/`.
 - Every run now produces two complementary record streams:
   - `samples.jsonl` for append-only prompt-level running visibility
   - `exports/dataset.jsonl` for final artifact-level export
@@ -934,6 +1084,15 @@
 - Repeated real runs should now spend much less time in `Ensuring environments` when the environment is already `ready` and was validated recently.
 - Persistent real workers are now more robust against third-party model-loading output that writes stray text or blank lines to stdout during startup.
 - `CogVideoX-5B` is now explicitly configured as one GPU per replica, matching the user's confirmed intended runtime behavior.
+- Multi-replica persistent workers now use sequential warmup before dispatch:
+  - replicas load one by one
+  - all planned replicas must become ready before tasks are sent
+  - this should better exploit filesystem cache warming and reduce startup contention on the cluster
+- The runtime now has practical recovery behavior for long-running jobs:
+  - failed prompt outputs can be retried
+  - missing prompt outputs from interrupted runs can be resumed
+  - successful prompt outputs are preserved and not duplicated
+  - recovery creates a new lineage-tracked run rather than mutating the source run
 - This slice is now covered by focused lightweight regression and is ready for remote GPU-server validation.
 - Existing run behavior still works across:
   - mock mode
@@ -946,6 +1105,8 @@
 ## Blockers
 - No code blockers in the local framework path.
 - Per user instruction, do not continue local heavy real-run validation on this machine.
+- Real remote validation is still needed to confirm `aigc run --profile ...` behaves as expected on the target cluster with manually prepared envs and local model overrides.
+- Real remote validation is still needed to confirm the new frame-batch normalization fix fully resolves the Wan diffusers batch path under actual numpy-backed outputs on the cluster.
 - Real remote validation is still needed to confirm `samples.jsonl` behaves as expected during long-running cluster jobs and interrupted runs.
 - Real remote validation is still needed to confirm the manually prepared env names on the cluster match the configured `conda_env_name` values and pass lightweight import validation.
 - Real remote validation is still needed to confirm the new diffusers video batch path behaves correctly under actual GPU memory pressure and pipeline output shape for:
@@ -956,7 +1117,9 @@
   - local `weights_path` points to a complete `Wan2.2-T2V-A14B-Diffusers` directory
   - persistent-worker reuse behaves correctly under real GPU inference
 - The queue-supervisor path still needs real remote validation to confirm the old persistent-worker `Broken pipe` failure mode is gone under cluster execution.
+- Remote feedback now confirms the persistent-worker path is viable enough to move into the next optimization phase rather than basic bring-up.
+- Sequential replica warmup is now implemented locally, but still needs remote confirmation that it materially improves heavy-model startup on the cluster.
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
-- Re-run `Wan2.2-T2V-A14B-Diffusers` on the remote cluster to confirm the explicit `low_cpu_mem_usage=True` fix clears startup and exposes the next real inference/runtime issue, if any.
+- Validate `aigc run --profile ...` on the remote cluster for at least one image profile and one video profile, then continue tightening operator UX around multi-model collection summaries.

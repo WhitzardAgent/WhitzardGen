@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from aigc.settings import get_runs_root
+from aigc.runtime.payloads import TaskPayload
 
 RUNS_ROOT = get_runs_root()
 RUN_MANIFEST_NAME = "run_manifest.json"
 RUN_FAILURES_NAME = "failures.json"
+RUN_SAMPLES_NAME = "samples.jsonl"
 
 
 class RunStoreError(RuntimeError):
@@ -54,6 +56,38 @@ def load_failures_summary(run_id: str, runs_root: str | Path | None = None) -> l
     if not isinstance(payload, list):
         raise RunStoreError(f"Invalid failures summary for run_id={run_id}")
     return payload
+
+
+def load_samples_ledger(run_id: str, runs_root: str | Path | None = None) -> list[dict[str, Any]]:
+    root = Path(runs_root) if runs_root is not None else get_runs_root()
+    ledger_path = root / run_id / RUN_SAMPLES_NAME
+    if not ledger_path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if not isinstance(payload, dict):
+            raise RunStoreError(f"Invalid samples ledger record for run_id={run_id}")
+        records.append(payload)
+    return records
+
+
+def load_task_payloads(run_id: str, runs_root: str | Path | None = None) -> list[TaskPayload]:
+    root = Path(runs_root) if runs_root is not None else get_runs_root()
+    tasks_root = root / run_id / "tasks"
+    if not tasks_root.exists():
+        return []
+    payloads: list[TaskPayload] = []
+    for task_file in sorted(tasks_root.rglob("*.json")):
+        if ".result." in task_file.name:
+            continue
+        payload = json.loads(task_file.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise RunStoreError(f"Invalid task payload file for run_id={run_id}: {task_file}")
+        payloads.append(TaskPayload.from_dict(payload))
+    return payloads
 
 
 def list_runs(runs_root: str | Path | None = None) -> list[dict[str, Any]]:

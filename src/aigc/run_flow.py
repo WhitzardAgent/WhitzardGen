@@ -20,6 +20,7 @@ from typing import Callable
 from aigc.env import EnvManager, EnvManagerError, EnvironmentRecord
 from aigc.exporters import build_dataset_records, export_jsonl
 from aigc.prompts import PromptRecord, load_prompts
+from aigc.recovery import RecoveryItem, RecoveryPlan
 from aigc.registry.models import ModelInfo
 from aigc.registry import load_registry
 from aigc.run_ledger import RunLedgerWriter, build_sample_ledger_records
@@ -101,6 +102,64 @@ class _WorkerCrashContext:
     log_tail: list[str] = field(default_factory=list)
 
 
+def _build_profile_manifest(
+    *,
+    profile_name: str | None,
+    profile_path: str | None,
+    profile_runtime: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if not profile_name and not profile_path and not profile_runtime:
+        return None
+    payload: dict[str, object] = {}
+    if profile_name:
+        payload["name"] = profile_name
+    if profile_path:
+        payload["path"] = profile_path
+    if profile_runtime:
+        payload["runtime"] = dict(profile_runtime)
+    return payload
+
+
+def _build_per_model_summary(
+    *,
+    models: list[ModelInfo],
+    all_records: list[dict],
+    task_results: list[tuple[ModelInfo, TaskPayload, dict]],
+    worker_strategies: dict[str, str],
+    replica_plans_by_model: dict[str, list[ReplicaPlan]],
+) -> dict[str, dict[str, object]]:
+    per_model_summary: dict[str, dict[str, object]] = {}
+    for model in models:
+        model_records = [record for record in all_records if record["model_name"] == model.name]
+        replica_plans = replica_plans_by_model.get(model.name, [])
+        per_model_summary[model.name] = {
+            "record_count": len(model_records),
+            "task_count": len([result for result in task_results if result[0].name == model.name]),
+            "modality": model.modality,
+            "task_type": model.task_type,
+            "worker_strategy": worker_strategies.get(model.name, "per_task_worker"),
+            "replica_count": len(replica_plans) or 1,
+            "conda_env_name": model.conda_env_name,
+            "execution_mode": model.execution_mode,
+            "backend_execution_mode": model.backend_execution_mode,
+            "supports_batch_prompts": bool(model.capabilities.get("supports_batch_prompts")),
+            "max_batch_size": int(model.capabilities.get("max_batch_size", 1)),
+            "gpus_per_replica": model.gpus_per_replica,
+            "supports_multi_replica": model.supports_multi_replica,
+            "max_gpus": model.max_gpus,
+            "local_paths": dict(model.local_paths),
+            "replicas": [
+                {
+                    "replica_id": replica_plan.replica_id,
+                    "gpu_assignment": replica_plan.gpu_assignment,
+                    "task_count": len(replica_plan.tasks),
+                }
+                for replica_plan in replica_plans
+            ],
+        }
+    return per_model_summary
+
+
 def run_single_model(
     *,
     model_name: str,
@@ -128,6 +187,348 @@ def run_single_model(
     )
 
 
+def run_recovery_plan(
+    *,
+    recovery_plan: RecoveryPlan,
+    out_dir: str | Path | None = None,
+    run_name: str | None = None,
+    env_manager: EnvManager | None = None,
+    worker_runner: Callable[[EnvironmentRecord, Path, Path], tuple[int, str]] | None = None,
+    batch_limit: int | None = None,
+    progress: RunProgress | None = None,
+) -> RunSummary:
+    registry = load_registry()
+    if not recovery_plan.model_names:
+        raise RunFlowError(
+            f"No {recovery_plan.recovery_mode}able prompt outputs were found for run {recovery_plan.source_run_id}."
+        )
+
+    models = [registry.get_model(model_name) for model_name in recovery_plan.model_names]
+    modality = models[0].modality
+    invalid_models = [model.name for model in models if model.modality != modality]
+    if invalid_models:
+        raise RunFlowError(
+            "Recovery runs require all selected models to share one modality. "
+            f"Expected {modality}, got mismatched models: {', '.join(invalid_models)}."
+        )
+
+    resolved_execution_mode = recovery_plan.execution_mode
+    run_id = _generate_run_id(run_name or f"{recovery_plan.recovery_mode}-{recovery_plan.source_run_id}")
+    run_root = Path(out_dir) if out_dir else get_runs_root() / run_id
+    tasks_dir = run_root / "tasks"
+    workdir_root = run_root / "workdir"
+    exports_dir = run_root / "exports"
+    artifacts_root = run_root / "artifacts"
+    workers_root = run_root / "workers"
+    for directory in (run_root, tasks_dir, workdir_root, exports_dir, artifacts_root, workers_root):
+        directory.mkdir(parents=True, exist_ok=True)
+    base_progress = progress or NullRunProgress()
+    console_logging_enabled = not isinstance(base_progress, NullRunProgress)
+    run_logger = RunLogger(log_path=run_root / "running.log")
+    progress = LoggedRunProgress(base=base_progress, logger=run_logger)
+    ledger_writer = RunLedgerWriter(run_root / "samples.jsonl")
+
+    total_stages = 8
+    stage_index = 1
+    progress.env_message(
+        f"[run] Starting recovery run run_id={run_id} mode={resolved_execution_mode} "
+        f"recovery_mode={recovery_plan.recovery_mode} source_run_id={recovery_plan.source_run_id} "
+        f"models={','.join(model.name for model in models)}"
+    )
+    progress.env_message(f"[run] Output dir: {run_root}")
+    progress.env_message(f"[run] Running log: {run_root / 'running.log'}")
+
+    progress.stage_start(stage_index, total_stages, "Loading recovery plan")
+    manager = env_manager or EnvManager(registry=registry)
+    progress.stage_end(stage_index, total_stages, "Loading recovery plan")
+    stage_index += 1
+
+    created_at = datetime.now(UTC).isoformat()
+    prompt_source_label = f"{recovery_plan.recovery_mode}:{recovery_plan.source_run_id}:{recovery_plan.prompt_source}"
+    initial_manifest = {
+        "run_id": run_id,
+        "status": "running",
+        "created_at": created_at,
+        "models": [model.name for model in models],
+        "prompt_source": prompt_source_label,
+        "prompt_count": recovery_plan.selected_count,
+        "execution_mode": resolved_execution_mode,
+        "task_count": 0,
+        "output_dir": str(run_root),
+        "export_paths": {"samples_jsonl": str(run_root / "samples.jsonl")},
+        "samples_ledger_path": str(run_root / "samples.jsonl"),
+        "running_log_path": str(run_logger.log_path),
+        "registry_path": str(registry.registry_path),
+        "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
+        "parent_run_id": recovery_plan.source_run_id,
+        "source_run_id": recovery_plan.source_run_id,
+        "recovery_mode": recovery_plan.recovery_mode,
+        "recovered_item_count": recovery_plan.selected_count,
+    }
+    write_run_manifest(run_root, initial_manifest)
+    failures: list[dict[str, object]] = []
+    task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
+    export_path: Path | None = None
+    failures_path = run_root / "failures.json"
+    manifest_path = run_root / "run_manifest.json"
+    try:
+        progress.stage_start(stage_index, total_stages, "Ensuring environments")
+        env_records: dict[str, EnvironmentRecord] = {}
+        for model in models:
+            progress.env_message(f"Ensuring environment for model: {model.name}")
+            env_records[model.name] = _resolve_environment_record(
+                manager=manager,
+                model_name=model.name,
+                execution_mode=resolved_execution_mode,
+                progress=progress.env_message,
+            )
+        progress.stage_end(stage_index, total_stages, "Ensuring environments")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Preparing recovery tasks")
+        prepared_tasks_by_model, worker_strategies = _prepare_recovery_tasks(
+            models=models,
+            recovery_plan=recovery_plan,
+            tasks_dir=tasks_dir,
+            workdir_root=workdir_root,
+            artifacts_root=artifacts_root,
+            batch_limit=batch_limit,
+            worker_runner=worker_runner,
+            registry=registry,
+        )
+        progress.stage_end(stage_index, total_stages, "Preparing recovery tasks")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Running tasks")
+        replica_plans_by_model: dict[str, list[ReplicaPlan]] = {}
+        for model in models:
+            strategy = worker_strategies[model.name]
+            prepared_tasks = prepared_tasks_by_model.get(model.name, [])
+            if strategy == "persistent_worker" and prepared_tasks:
+                replica_plans = _plan_replicas_for_model(
+                    model=model,
+                    prepared_tasks=prepared_tasks,
+                    execution_mode=resolved_execution_mode,
+                )
+                replica_plans_by_model[model.name] = replica_plans
+                _log_replica_plan(progress=progress, model=model, replica_plans=replica_plans)
+                if len(replica_plans) == 1:
+                    replica_plan = replica_plans[0]
+                    with _PersistentWorkerSession(
+                        model=model,
+                        env_record=env_records[model.name],
+                        execution_mode=resolved_execution_mode,
+                        replica_id=replica_plan.replica_id,
+                        gpu_assignment=replica_plan.gpu_assignment,
+                        replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
+                        log_callback=lambda line: run_logger.log(
+                            line,
+                            to_console=console_logging_enabled,
+                            already_timestamped=True,
+                        ),
+                    ) as session:
+                        for prepared_task in replica_plan.tasks:
+                            result_payload = _execute_prepared_task(
+                                prepared_task=prepared_task,
+                                runner=lambda task, session=session: session.run_task(task),
+                                run_id=run_id,
+                                run_root=run_root,
+                                failures=failures,
+                                progress=progress,
+                                ledger_writer=ledger_writer,
+                            )
+                            task_results.append((model, prepared_task.payload, result_payload))
+                else:
+                    task_results.extend(
+                        _run_persistent_worker_replicas(
+                            model=model,
+                            env_record=env_records[model.name],
+                            replica_plans=replica_plans,
+                            execution_mode=resolved_execution_mode,
+                            run_id=run_id,
+                            run_root=run_root,
+                            workers_root=workers_root,
+                            failures=failures,
+                            progress=progress,
+                            ledger_writer=ledger_writer,
+                            log_callback=lambda line: run_logger.log(
+                                line,
+                                to_console=console_logging_enabled,
+                                already_timestamped=True,
+                            ),
+                        )
+                    )
+            else:
+                runner = worker_runner or _run_worker_task
+                for prepared_task in prepared_tasks:
+                    result_payload = _execute_prepared_task(
+                        prepared_task=prepared_task,
+                        runner=lambda task, env_record=env_records[model.name], runner=runner: _invoke_worker_runner(
+                            runner,
+                            env_record,
+                            task.task_file,
+                            task.result_file,
+                            log_callback=lambda line: run_logger.log(
+                                line,
+                                to_console=console_logging_enabled,
+                                already_timestamped=True,
+                            ),
+                        ),
+                        run_id=run_id,
+                        run_root=run_root,
+                        failures=failures,
+                        progress=progress,
+                        ledger_writer=ledger_writer,
+                    )
+                    task_results.append((model, prepared_task.payload, result_payload))
+                if prepared_tasks:
+                    replica_plans_by_model[model.name] = [
+                        ReplicaPlan(replica_id=0, gpu_assignment=[], tasks=list(prepared_tasks))
+                    ]
+        task_results.sort(key=lambda item: item[1].task_id)
+        progress.stage_end(stage_index, total_stages, "Running tasks")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Exporting dataset")
+        all_records = []
+        record_index = 1
+        for model, payload, result_payload in task_results:
+            task_records = build_dataset_records(
+                run_id=run_id,
+                model=model,
+                task_payload=payload,
+                task_result=result_payload,
+                record_start_index=record_index,
+            )
+            all_records.extend(task_records)
+            record_index += len(task_records)
+        export_path = export_jsonl(all_records, exports_dir / "dataset.jsonl")
+        progress.stage_end(stage_index, total_stages, "Exporting dataset")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Writing run manifest")
+        per_model_summary = _build_per_model_summary(
+            models=models,
+            all_records=all_records,
+            task_results=task_results,
+            worker_strategies=worker_strategies,
+            replica_plans_by_model=replica_plans_by_model,
+        )
+
+        run_manifest = {
+            "run_id": run_id,
+            "status": "completed",
+            "created_at": created_at,
+            "completed_at": datetime.now(UTC).isoformat(),
+            "models": [model.name for model in models],
+            "prompt_source": prompt_source_label,
+            "prompt_count": recovery_plan.selected_count,
+            "execution_mode": resolved_execution_mode,
+            "task_count": len(task_results),
+            "records_exported": len(all_records),
+            "output_dir": str(run_root),
+            "export_paths": {
+                "dataset_jsonl": str(export_path),
+                "samples_jsonl": str(run_root / "samples.jsonl"),
+                "running_log": str(run_logger.log_path),
+            },
+            "export_path": str(export_path),
+            "running_log_path": str(run_logger.log_path),
+            "samples_ledger_path": str(run_root / "samples.jsonl"),
+            "failures_path": str(failures_path),
+            "per_model_summary": per_model_summary,
+            "registry_path": str(registry.registry_path),
+            "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
+            "parent_run_id": recovery_plan.source_run_id,
+            "source_run_id": recovery_plan.source_run_id,
+            "recovery_mode": recovery_plan.recovery_mode,
+            "recovered_item_count": recovery_plan.selected_count,
+        }
+        manifest_path = write_run_manifest(run_root, run_manifest)
+        failures_path = write_failures_summary(run_root, failures)
+        progress.stage_end(stage_index, total_stages, "Writing run manifest")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Done")
+        task_statuses = [
+            result["model_result"]["status"]
+            for _model, _payload, result in task_results
+        ]
+        success_tasks, failed_tasks = summarize_task_statuses(task_statuses)
+        progress.print_summary(
+            RunSummaryData(
+                status="completed",
+                run_id=run_id,
+                execution_mode=resolved_execution_mode,
+                model_names=[model.name for model in models],
+                prompt_count=recovery_plan.selected_count,
+                task_count=len(task_results),
+                success_tasks=success_tasks,
+                failed_tasks=failed_tasks,
+                output_dir=str(run_root),
+                dataset_path=str(export_path),
+                manifest_path=str(manifest_path),
+                failures_path=str(failures_path),
+                running_log_path=str(run_logger.log_path),
+            )
+        )
+        progress.stage_end(stage_index, total_stages, "Done")
+    except Exception as exc:
+        progress.env_message(f"[run] ERROR: {exc}")
+        failure_manifest = {
+            **initial_manifest,
+            "status": "failed",
+            "completed_at": datetime.now(UTC).isoformat(),
+            "task_count": len(
+                [path for path in tasks_dir.rglob("*.json") if ".result." not in path.name]
+            ),
+            "error": str(exc),
+            "running_log_path": str(run_logger.log_path),
+            "samples_ledger_path": str(run_root / "samples.jsonl"),
+            "failures_path": str(failures_path),
+        }
+        manifest_path = write_run_manifest(run_root, failure_manifest)
+        failures_path = write_failures_summary(run_root, failures)
+        task_statuses = [
+            result["model_result"]["status"]
+            for _model, _payload, result in task_results
+        ]
+        success_tasks, failed_tasks = summarize_task_statuses(task_statuses)
+        progress.print_summary(
+            RunSummaryData(
+                status="failed",
+                run_id=run_id,
+                execution_mode=resolved_execution_mode,
+                model_names=[model.name for model in models],
+                prompt_count=recovery_plan.selected_count,
+                task_count=len(task_results),
+                success_tasks=success_tasks,
+                failed_tasks=max(failed_tasks, 1),
+                output_dir=str(run_root),
+                dataset_path=str(export_path) if export_path is not None else "-",
+                manifest_path=str(manifest_path),
+                failures_path=str(failures_path),
+                running_log_path=str(run_logger.log_path),
+            )
+        )
+        raise
+    finally:
+        ledger_writer.close()
+        run_logger.close()
+
+    return RunSummary(
+        run_id=run_id,
+        model_names=[model.name for model in models],
+        prompt_file=prompt_source_label,
+        output_dir=str(run_root),
+        tasks_scheduled=len(task_results),
+        records_exported=len(all_records),
+        export_path=str(export_path),
+        execution_mode=resolved_execution_mode,
+        running_log_path=str(run_logger.log_path),
+    )
+
+
 def run_models(
     *,
     model_names: list[str],
@@ -140,6 +541,9 @@ def run_models(
     worker_runner: Callable[[EnvironmentRecord, Path, Path], tuple[int, str]] | None = None,
     batch_limit: int | None = None,
     progress: RunProgress | None = None,
+    profile_name: str | None = None,
+    profile_path: str | None = None,
+    profile_runtime: dict[str, object] | None = None,
 ) -> RunSummary:
     resolved_execution_mode = _resolve_execution_mode(
         execution_mode=execution_mode,
@@ -178,6 +582,10 @@ def run_models(
     )
     progress.env_message(f"[run] Output dir: {run_root}")
     progress.env_message(f"[run] Running log: {run_root / 'running.log'}")
+    progress.env_message(f"[run] Prompt source: {prompt_file}")
+    if profile_path:
+        profile_label = profile_name or Path(profile_path).stem
+        progress.env_message(f"[run] Profile: {profile_label} ({profile_path})")
 
     progress.stage_start(stage_index, total_stages, "Loading prompts")
     prompts = load_prompts(prompt_file)
@@ -213,6 +621,7 @@ def run_models(
         "running_log_path": str(run_logger.log_path),
         "registry_path": str(registry.registry_path),
         "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
+        "profile": _build_profile_manifest(profile_name=profile_name, profile_path=profile_path, profile_runtime=profile_runtime),
     }
     write_run_manifest(run_root, initial_manifest)
     failures: list[dict[str, object]] = []
@@ -409,25 +818,13 @@ def run_models(
         stage_index += 1
 
         progress.stage_start(stage_index, total_stages, "Writing run manifest")
-        per_model_summary: dict[str, dict[str, object]] = {}
-        for model in models:
-            model_records = [record for record in all_records if record["model_name"] == model.name]
-            per_model_summary[model.name] = {
-                "record_count": len(model_records),
-                "task_count": len([result for result in task_results if result[0].name == model.name]),
-                "modality": model.modality,
-                "task_type": model.task_type,
-                "worker_strategy": worker_strategies.get(model.name, "per_task_worker"),
-                "replica_count": len(replica_plans_by_model.get(model.name, [])) or 1,
-                "replicas": [
-                    {
-                        "replica_id": replica_plan.replica_id,
-                        "gpu_assignment": replica_plan.gpu_assignment,
-                        "task_count": len(replica_plan.tasks),
-                    }
-                    for replica_plan in replica_plans_by_model.get(model.name, [])
-                ],
-            }
+        per_model_summary = _build_per_model_summary(
+            models=models,
+            all_records=all_records,
+            task_results=task_results,
+            worker_strategies=worker_strategies,
+            replica_plans_by_model=replica_plans_by_model,
+        )
 
         run_manifest = {
             "run_id": run_id,
@@ -453,6 +850,7 @@ def run_models(
             "per_model_summary": per_model_summary,
             "registry_path": str(registry.registry_path),
             "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
+            "profile": _build_profile_manifest(profile_name=profile_name, profile_path=profile_path, profile_runtime=profile_runtime),
         }
         (run_root / "run.json").write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
         manifest_path = write_run_manifest(run_root, run_manifest)
@@ -1415,53 +1813,78 @@ def _run_persistent_worker_replicas(
     errors: list[BaseException] = []
     threads: list[threading.Thread] = []
     stop_event = threading.Event()
+    session_bindings: list[tuple[ReplicaPlan, _PersistentWorkerSession]] = []
 
     def run_replica(replica_plan: ReplicaPlan) -> None:
         try:
-            with _PersistentWorkerSession(
-                model=model,
-                env_record=env_record,
-                execution_mode=execution_mode,
-                replica_id=replica_plan.replica_id,
-                gpu_assignment=replica_plan.gpu_assignment,
-                replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
-                log_callback=log_callback,
-            ) as session:
-                for prepared_task in replica_plan.tasks:
-                    if stop_event.is_set():
-                        break
-                    result_payload = _execute_prepared_task(
-                        prepared_task=prepared_task,
-                        runner=lambda task, session=session: session.run_task(task),
-                        run_id=run_id,
-                        run_root=run_root,
-                        failures=failures,
-                        progress=progress,
-                        ledger_writer=ledger_writer,
-                        state_lock=lock,
-                    )
-                    with lock:
-                        task_results.append((model, prepared_task.payload, result_payload))
+            session = next(
+                bound_session
+                for bound_plan, bound_session in session_bindings
+                if bound_plan.replica_id == replica_plan.replica_id
+            )
+            for prepared_task in replica_plan.tasks:
+                if stop_event.is_set():
+                    break
+                result_payload = _execute_prepared_task(
+                    prepared_task=prepared_task,
+                    runner=lambda task, session=session: session.run_task(task),
+                    run_id=run_id,
+                    run_root=run_root,
+                    failures=failures,
+                    progress=progress,
+                    ledger_writer=ledger_writer,
+                    state_lock=lock,
+                )
+                with lock:
+                    task_results.append((model, prepared_task.payload, result_payload))
         except BaseException as exc:  # pragma: no cover - exercised via thread/integration path
             with lock:
                 errors.append(exc)
                 stop_event.set()
 
-    for replica_plan in replica_plans:
-        thread = threading.Thread(
-            target=run_replica,
-            args=(replica_plan,),
-            name=f"{_slugify(model.name)}-replica-{replica_plan.replica_id}",
+    with contextlib.ExitStack() as stack:
+        total_replicas = len(replica_plans)
+        for warmup_index, replica_plan in enumerate(replica_plans, start=1):
+            progress.env_message(
+                f"[run][{model.name}] warming replica {warmup_index}/{total_replicas} "
+                f"replica={replica_plan.replica_id} GPUs={replica_plan.gpu_assignment}"
+            )
+            session = stack.enter_context(
+                _PersistentWorkerSession(
+                    model=model,
+                    env_record=env_record,
+                    execution_mode=execution_mode,
+                    replica_id=replica_plan.replica_id,
+                    gpu_assignment=replica_plan.gpu_assignment,
+                    replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
+                    log_callback=log_callback,
+                )
+            )
+            session_bindings.append((replica_plan, session))
+            progress.env_message(
+                f"[run][{model.name}] replica={replica_plan.replica_id} ready "
+                f"({warmup_index}/{total_replicas}) GPUs={replica_plan.gpu_assignment}"
+            )
+
+        progress.env_message(
+            f"[run][{model.name}] all replicas ready, dispatching tasks"
         )
-        thread.start()
-        threads.append(thread)
 
-    for thread in threads:
-        thread.join()
+        for replica_plan, _session in session_bindings:
+            thread = threading.Thread(
+                target=run_replica,
+                args=(replica_plan,),
+                name=f"{_slugify(model.name)}-replica-{replica_plan.replica_id}",
+            )
+            thread.start()
+            threads.append(thread)
 
-    if errors:
-        raise errors[0]
-    return task_results
+        for thread in threads:
+            thread.join()
+
+        if errors:
+            raise errors[0]
+        return task_results
 
 
 def _append_ledger_records(
@@ -1708,6 +2131,103 @@ def _default_generation_params(model: ModelInfo, prompts: list[PromptRecord]) ->
     if "timeout_sec" in prompt.parameters:
         params["timeout_sec"] = int(prompt.parameters["timeout_sec"])
     return params
+
+
+def _prepare_recovery_tasks(
+    *,
+    models: list[ModelInfo],
+    recovery_plan: RecoveryPlan,
+    tasks_dir: Path,
+    workdir_root: Path,
+    artifacts_root: Path,
+    batch_limit: int | None,
+    worker_runner: Callable[[EnvironmentRecord, Path, Path], tuple[int, str]] | None,
+    registry,
+) -> tuple[dict[str, list[PreparedTask]], dict[str, str]]:
+    prepared_tasks_by_model: dict[str, list[PreparedTask]] = {}
+    worker_strategies: dict[str, str] = {}
+    task_counter = 1
+
+    for model in models:
+        strategy = _resolve_worker_strategy(
+            registry=registry,
+            model=model,
+            worker_runner=worker_runner,
+        )
+        worker_strategies[model.name] = strategy
+        model_slug = _slugify(model.name)
+        model_tasks_dir = tasks_dir / model_slug
+        model_workdir_root = workdir_root / model_slug
+        model_artifacts_root = artifacts_root / model_slug
+        for directory in (model_tasks_dir, model_workdir_root, model_artifacts_root):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        recovery_items = recovery_plan.items_by_model.get(model.name, [])
+        grouped_items = _group_recovery_items_by_params(recovery_items)
+        grouped_batches: list[tuple[dict[str, object], list[PromptRecord]]] = []
+        for params_signature, items in grouped_items:
+            del params_signature
+            prompts = [item.prompt for item in items]
+            for prompt_batch in _batch_prompts_for_model(
+                model=model,
+                prompts=prompts,
+                batch_limit=batch_limit,
+            ):
+                batch_params = dict(items[0].params)
+                if model.capabilities.get("supports_negative_prompt"):
+                    batch_params["negative_prompts"] = [
+                        batch_prompt.negative_prompt or "" for batch_prompt in prompt_batch
+                    ]
+                grouped_batches.append((batch_params, prompt_batch))
+
+        total_tasks_for_model = len(grouped_batches)
+        model_prepared_tasks: list[PreparedTask] = []
+        for batch_number, (batch_params, prompt_batch) in enumerate(grouped_batches, start=1):
+            task_id = f"task_{task_counter:06d}"
+            batch_id = f"{model_slug}_batch_{batch_number:06d}"
+            task_workdir = model_workdir_root / task_id
+            payload = TaskPayload(
+                task_id=task_id,
+                model_name=model.name,
+                execution_mode=recovery_plan.execution_mode,
+                prompts=[_prompt_to_task_prompt(prompt) for prompt in prompt_batch],
+                params=dict(batch_params),
+                workdir=str(task_workdir),
+                batch_id=batch_id,
+                runtime_config={"worker_strategy": strategy},
+                worker_strategy=strategy,
+            )
+            task_file = model_tasks_dir / f"{task_id}.json"
+            result_file = model_tasks_dir / f"{task_id}.result.json"
+            task_file.write_text(
+                json.dumps(payload.to_dict(), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            model_prepared_tasks.append(
+                PreparedTask(
+                    model=model,
+                    payload=payload,
+                    task_file=task_file,
+                    result_file=result_file,
+                    batch_number=batch_number,
+                    total_tasks_for_model=total_tasks_for_model,
+                )
+            )
+            task_counter += 1
+
+        prepared_tasks_by_model[model.name] = model_prepared_tasks
+
+    return prepared_tasks_by_model, worker_strategies
+
+
+def _group_recovery_items_by_params(
+    recovery_items: list[RecoveryItem],
+) -> list[tuple[str, list[RecoveryItem]]]:
+    grouped: dict[str, list[RecoveryItem]] = {}
+    for item in recovery_items:
+        signature = json.dumps(item.params, sort_keys=True, ensure_ascii=False)
+        grouped.setdefault(signature, []).append(item)
+    return list(grouped.items())
 
 
 def _generate_run_id(run_name: str | None) -> str:

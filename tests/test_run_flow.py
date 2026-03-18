@@ -7,8 +7,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aigc.env.manager import EnvManagerError
+from aigc.run_ledger import RunLedgerWriter
 from aigc.run_flow import (
+    PreparedTask,
+    ReplicaPlan,
     RunFlowError,
+    _run_persistent_worker_replicas,
     _default_generation_params,
     _assign_gpus_to_replicas,
     _calculate_replica_count,
@@ -18,7 +22,7 @@ from aigc.run_flow import (
     run_single_model,
 )
 from aigc.registry import load_registry
-from aigc.runtime.payloads import TaskPayload
+from aigc.runtime.payloads import TaskPayload, TaskPrompt
 from aigc.runtime.worker import execute_task_payload
 from aigc.utils.progress import TextRunProgress
 
@@ -141,6 +145,39 @@ class RunFlowTests(unittest.TestCase):
         running_log_text = running_log.read_text(encoding="utf-8")
         self.assertRegex(running_log_text, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[run\] Starting run")
         self.assertIn("[worker][Z-Image][replica=0] GPUs=[] starting persistent worker", running_log_text)
+
+    def test_multi_model_manifest_includes_profile_and_effective_model_summary(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "image_multi.txt"
+        prompts_path.write_text("a futuristic city at night\na cat sitting on a chair\n", encoding="utf-8")
+
+        summary = run_models(
+            model_names=["Z-Image", "FLUX.1-dev"],
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "multi_model_manifest",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            profile_name="image_mock",
+            profile_path="configs/run_profiles/image_mock.yaml",
+            profile_runtime={"available_gpus": [0, 1]},
+        )
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["profile"],
+            {
+                "name": "image_mock",
+                "path": "configs/run_profiles/image_mock.yaml",
+                "runtime": {"available_gpus": [0, 1]},
+            },
+        )
+        self.assertEqual(manifest["models"], ["Z-Image", "FLUX.1-dev"])
+        self.assertEqual(manifest["per_model_summary"]["Z-Image"]["conda_env_name"], "zimage")
+        self.assertIn(
+            "supports_batch_prompts",
+            manifest["per_model_summary"]["FLUX.1-dev"],
+        )
+        self.assertIn("local_paths", manifest["per_model_summary"]["FLUX.1-dev"])
 
     def test_selected_video_model_uses_persistent_worker_strategy_in_mock_mode(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -366,6 +403,124 @@ class RunFlowTests(unittest.TestCase):
         self.assertIn("[run][CogVideoX-5B] available_gpus=[0, 1, 2, 3]", progress_text)
         self.assertIn("[run][CogVideoX-5B] gpus_per_replica=1", progress_text)
         self.assertIn("[run][CogVideoX-5B] starting 2 replicas", progress_text)
+
+    def test_multi_replica_warmup_is_sequential_before_task_dispatch(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        progress_stream = StringIO()
+        progress = TextRunProgress(stream=progress_stream)
+        registry = load_registry()
+        model = registry.get_model("CogVideoX-5B")
+        events: list[str] = []
+
+        class FakeSession:
+            def __init__(
+                self,
+                *,
+                model,
+                env_record,
+                execution_mode,
+                replica_id=0,
+                gpu_assignment=None,
+                replica_log_path=None,
+                log_callback=None,
+            ) -> None:
+                self.replica_id = replica_id
+
+            def __enter__(self):
+                events.append(f"enter:{self.replica_id}")
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                events.append(f"exit:{self.replica_id}")
+
+            def run_task(self, prepared_task):
+                events.append(f"run:{self.replica_id}:{prepared_task.payload.task_id}")
+                return 0, ""
+
+        class InlineThread:
+            def __init__(self, *, target, args=(), name=None) -> None:
+                self._target = target
+                self._args = args
+                self.name = name
+
+            def start(self) -> None:
+                self._target(*self._args)
+
+            def join(self) -> None:
+                return None
+
+        def fake_execute_prepared_task(
+            *,
+            prepared_task,
+            runner,
+            run_id,
+            run_root,
+            failures,
+            progress,
+            ledger_writer,
+            state_lock=None,
+        ):
+            events.append(f"dispatch:{prepared_task.payload.task_id}")
+            runner(prepared_task)
+            return {
+                "task_id": prepared_task.payload.task_id,
+                "model_result": {"status": "success", "batch_items": []},
+                "execution_result": {"exit_code": 0, "logs": "", "outputs": {}},
+            }
+
+        def make_prepared(task_id: str, prompt_id: str) -> PreparedTask:
+            payload = TaskPayload(
+                task_id=task_id,
+                model_name=model.name,
+                execution_mode="mock",
+                prompts=[TaskPrompt(prompt_id=prompt_id, prompt=f"prompt {prompt_id}", language="en")],
+                params={},
+                workdir=str(tmpdir / task_id),
+                worker_strategy="persistent_worker",
+            )
+            return PreparedTask(
+                model=model,
+                payload=payload,
+                task_file=tmpdir / f"{task_id}.json",
+                result_file=tmpdir / f"{task_id}.result.json",
+                batch_number=1,
+                total_tasks_for_model=2,
+            )
+
+        replica_plans = [
+            ReplicaPlan(replica_id=0, gpu_assignment=[0], tasks=[make_prepared("task_001", "p001")]),
+            ReplicaPlan(replica_id=1, gpu_assignment=[1], tasks=[make_prepared("task_002", "p002")]),
+        ]
+        ledger_writer = RunLedgerWriter(tmpdir / "samples.jsonl")
+        try:
+            with patch("aigc.run_flow._PersistentWorkerSession", FakeSession), patch(
+                "aigc.run_flow._execute_prepared_task",
+                fake_execute_prepared_task,
+            ), patch("aigc.run_flow.threading.Thread", InlineThread):
+                _run_persistent_worker_replicas(
+                    model=model,
+                    env_record=FakeEnvRecord(),
+                    replica_plans=replica_plans,
+                    execution_mode="mock",
+                    run_id="run_test",
+                    run_root=tmpdir,
+                    workers_root=tmpdir / "workers",
+                    failures=[],
+                    progress=progress,
+                    ledger_writer=ledger_writer,
+                )
+        finally:
+            ledger_writer.close()
+
+        self.assertLess(events.index("enter:0"), events.index("enter:1"))
+        self.assertLess(events.index("enter:1"), events.index("dispatch:task_001"))
+        self.assertLess(events.index("enter:1"), events.index("dispatch:task_002"))
+        progress_text = progress_stream.getvalue()
+        self.assertIn("[run][CogVideoX-5B] warming replica 1/2 replica=0 GPUs=[0]", progress_text)
+        self.assertIn("[run][CogVideoX-5B] replica=0 ready (1/2) GPUs=[0]", progress_text)
+        self.assertIn("[run][CogVideoX-5B] warming replica 2/2 replica=1 GPUs=[1]", progress_text)
+        self.assertIn("[run][CogVideoX-5B] replica=1 ready (2/2) GPUs=[1]", progress_text)
+        self.assertIn("[run][CogVideoX-5B] all replicas ready, dispatching tasks", progress_text)
 
     def test_default_run_root_uses_runtime_settings(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())

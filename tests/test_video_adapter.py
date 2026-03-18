@@ -198,6 +198,60 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertEqual(pipe.calls[0]["prompt"], ["a cinematic duel in heavy rain", "a city made of glass"])
         self.assertEqual(len(pipe.calls[0]["generator"]), 2)
 
+    def test_wan_generate_frames_handles_numpy_like_frames_without_truthiness_check(self) -> None:
+        registry = load_registry()
+        adapter = WanT2VDiffusersAdapter(
+            model_config=registry.get_model("Wan2.2-T2V-A14B-Diffusers")
+        )
+        plan = adapter.prepare(
+            prompts=["prompt one"],
+            prompt_ids=["p001"],
+            params={"_runtime_config": {"execution_mode": "real"}},
+            workdir=tempfile.mkdtemp(),
+        )
+
+        class _AmbiguousFrames:
+            def __init__(self) -> None:
+                self._batches = [[b"frame-1"], [b"frame-2"]]
+
+            def __len__(self) -> int:
+                return len(self._batches)
+
+            def __iter__(self):
+                return iter(self._batches)
+
+            def __bool__(self):
+                raise ValueError("ambiguous truth value")
+
+        class _FakePipe:
+            def __call__(self, **kwargs):
+                return type("Output", (), {"frames": _AmbiguousFrames()})()
+
+        class _FakeTorch:
+            class Generator:
+                def __init__(self, device: str) -> None:
+                    self.device = device
+
+                def manual_seed(self, seed: int):
+                    return self
+
+        frames = adapter.generate_frames_batch(
+            pipe=_FakePipe(),
+            plan=plan,
+            prompts=["prompt one", "prompt two"],
+            negative_prompts=["", ""],
+            width=1280,
+            height=720,
+            num_frames=81,
+            num_inference_steps=40,
+            guidance_scale=4.0,
+            seed=None,
+            torch=_FakeTorch,
+            device="cuda",
+        )
+
+        self.assertEqual(frames, [[b"frame-1"], [b"frame-2"]])
+
     def test_wan_load_pipeline_enables_low_cpu_mem_usage(self) -> None:
         registry = load_registry()
         tmpdir = Path(tempfile.mkdtemp())

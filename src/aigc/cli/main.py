@@ -9,6 +9,18 @@ if str(SRC_ROOT) not in sys.path:
 
 from aigc import __version__
 from aigc.env import EnvManager, EnvManagerError
+from aigc.recovery import (
+    RecoveryError,
+    build_resume_plan,
+    build_retry_plan,
+    recovery_plan_to_dict,
+)
+from aigc.run_profiles import (
+    RunProfileError,
+    apply_profile_runtime_environment,
+    load_run_profile,
+    resolve_profile_run_request,
+)
 from aigc.registry import DEFAULT_LOCAL_MODELS_PATH, RegistryError, load_registry
 from aigc.registry.local_overrides import summarize_local_path_overrides
 from aigc.run_store import (
@@ -18,7 +30,7 @@ from aigc.run_store import (
     load_failures_summary,
     load_run_manifest,
 )
-from aigc.run_flow import RunFlowError, run_models
+from aigc.run_flow import RunFlowError, run_models, run_recovery_plan
 from aigc.settings import get_runs_root
 from aigc.utils.progress import build_run_progress
 
@@ -67,6 +79,18 @@ def build_parser() -> argparse.ArgumentParser:
     runs_failures_parser.add_argument("--output", choices=["text", "json"], default="text")
     runs_failures_parser.set_defaults(handler=handle_runs_failures)
 
+    runs_retry_parser = runs_subparsers.add_parser("retry", help="Retry failed work from an existing run.")
+    runs_retry_parser.add_argument("run_id")
+    runs_retry_parser.add_argument("--model")
+    runs_retry_parser.add_argument("--output", choices=["text", "json"], default="text")
+    runs_retry_parser.set_defaults(handler=handle_runs_retry)
+
+    runs_resume_parser = runs_subparsers.add_parser("resume", help="Resume missing work from an existing run.")
+    runs_resume_parser.add_argument("run_id")
+    runs_resume_parser.add_argument("--model")
+    runs_resume_parser.add_argument("--output", choices=["text", "json"], default="text")
+    runs_resume_parser.set_defaults(handler=handle_runs_resume)
+
     export_parser = subparsers.add_parser("export", help="Inspect exported dataset outputs.")
     export_subparsers = export_parser.add_subparsers(dest="export_command")
 
@@ -79,12 +103,13 @@ def build_parser() -> argparse.ArgumentParser:
     export_dataset_parser.set_defaults(handler=handle_export_dataset)
 
     run_parser = subparsers.add_parser("run", help="Run a minimal generation job.")
-    run_parser.add_argument("--models", required=True)
-    run_parser.add_argument("--prompts", required=True)
+    run_parser.add_argument("--profile")
+    run_parser.add_argument("--models")
+    run_parser.add_argument("--prompts")
     run_parser.add_argument("--run-name")
     run_parser.add_argument("--out")
     run_parser.add_argument("--mock", action="store_true")
-    run_parser.add_argument("--execution-mode", choices=["mock", "real"], default="real")
+    run_parser.add_argument("--execution-mode", choices=["mock", "real"])
     run_parser.add_argument("--output", choices=["text", "json"], default="text")
     run_parser.set_defaults(handler=handle_run)
 
@@ -258,6 +283,80 @@ def handle_runs_failures(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_runs_retry(args: argparse.Namespace) -> int:
+    plan = build_retry_plan(args.run_id, model_name=args.model)
+    if plan.selected_count == 0:
+        if args.output == "json":
+            print(json.dumps({"run_id": args.run_id, "recovery_mode": "retry", "selected_count": 0}, indent=2, ensure_ascii=False))
+        else:
+            print(f"Inspecting run {args.run_id}...")
+            print("Found 0 failed prompt outputs.")
+            print("Nothing to retry.")
+        return 0
+
+    if args.output != "json":
+        print(f"Inspecting run {args.run_id}...")
+        print(f"Found {plan.failed_count} failed prompt outputs.")
+        print(f"Retrying {plan.selected_count} prompt outputs in a new run...")
+    progress = build_run_progress(output_mode=args.output)
+    summary = run_recovery_plan(
+        recovery_plan=plan,
+        run_name=f"retry-{args.run_id}",
+        progress=progress,
+    )
+    if args.output == "json":
+        print(
+            json.dumps(
+                {
+                    "plan": recovery_plan_to_dict(plan),
+                    "summary": summary.to_dict(),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+    return 0
+
+
+def handle_runs_resume(args: argparse.Namespace) -> int:
+    plan = build_resume_plan(args.run_id, model_name=args.model)
+    if plan.selected_count == 0:
+        if args.output == "json":
+            print(json.dumps({"run_id": args.run_id, "recovery_mode": "resume", "selected_count": 0}, indent=2, ensure_ascii=False))
+        else:
+            print(f"Inspecting run {args.run_id}...")
+            print(
+                f"Found {plan.completed_count} completed outputs, {plan.missing_count} missing outputs."
+            )
+            print("Nothing to resume.")
+        return 0
+
+    if args.output != "json":
+        print(f"Inspecting run {args.run_id}...")
+        print(
+            f"Found {plan.completed_count} completed outputs, {plan.missing_count} missing outputs."
+        )
+        print(f"Resuming {plan.selected_count} prompt outputs in a new run...")
+    progress = build_run_progress(output_mode=args.output)
+    summary = run_recovery_plan(
+        recovery_plan=plan,
+        run_name=f"resume-{args.run_id}",
+        progress=progress,
+    )
+    if args.output == "json":
+        print(
+            json.dumps(
+                {
+                    "plan": recovery_plan_to_dict(plan),
+                    "summary": summary.to_dict(),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+    return 0
+
+
 def handle_export_dataset(args: argparse.Namespace) -> int:
     export_path = export_dataset_for_run(args.run_id, output_path=args.out)
     payload = {"run_id": args.run_id, "dataset_path": str(export_path)}
@@ -275,17 +374,42 @@ def handle_export_dataset(args: argparse.Namespace) -> int:
 
 
 def handle_run(args: argparse.Namespace) -> int:
-    model_names = [item.strip() for item in args.models.split(",") if item.strip()]
-    progress = build_run_progress(output_mode=args.output)
-    summary = run_models(
-        model_names=model_names,
-        prompt_file=args.prompts,
-        out_dir=args.out,
-        run_name=args.run_name,
-        execution_mode=args.execution_mode,
-        mock_mode=bool(args.mock),
-        progress=progress,
+    profile = load_run_profile(args.profile) if args.profile else None
+    request = resolve_profile_run_request(
+        profile=profile,
+        models_arg=args.models,
+        prompts_arg=args.prompts,
+        execution_mode_arg=args.execution_mode,
+        mock_flag=bool(args.mock),
+        out_arg=args.out,
+        run_name_arg=args.run_name,
     )
+    registry = load_registry()
+    if not request["model_names"]:
+        raise RunFlowError("aigc run requires at least one model.")
+    models = [registry.get_model(model_name) for model_name in request["model_names"]]
+    modality = models[0].modality
+    invalid_models = [model.name for model in models if model.modality != modality]
+    if invalid_models:
+        raise RunFlowError(
+            "aigc run requires all selected models to share one modality. "
+            f"Expected {modality}, got mismatched models: {', '.join(invalid_models)}."
+        )
+
+    progress = build_run_progress(output_mode=args.output)
+    with apply_profile_runtime_environment(profile):
+        summary = run_models(
+            model_names=request["model_names"],
+            prompt_file=request["prompt_file"],
+            out_dir=request["out_dir"],
+            run_name=request["run_name"],
+            execution_mode=request["execution_mode"],
+            mock_mode=bool(request["mock_mode"]),
+            progress=progress,
+            profile_name=request["profile_name"],
+            profile_path=request["profile_path"],
+            profile_runtime=request["runtime"],
+        )
     if args.output == "json":
         print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
         return 0
@@ -299,7 +423,14 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(args, "handler"):
         try:
             return args.handler(args)
-        except (EnvManagerError, RegistryError, RunFlowError, RunStoreError) as exc:
+        except (
+            EnvManagerError,
+            RegistryError,
+            RunFlowError,
+            RunStoreError,
+            RecoveryError,
+            RunProfileError,
+        ) as exc:
             parser.exit(status=1, message=f"{exc}\n")
     parser.print_help()
     return 0
