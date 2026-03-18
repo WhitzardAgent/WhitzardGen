@@ -8,7 +8,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from aigc import __version__
-from aigc.env import EnvManager, EnvManagerError
+from aigc.env import EnvManager, EnvManagerError, MissingEnvironmentError
 from aigc.registry import DEFAULT_LOCAL_MODELS_PATH, RegistryError, load_registry
 from aigc.registry.local_overrides import summarize_local_path_overrides
 from aigc.run_store import (
@@ -172,13 +172,13 @@ def handle_doctor(args: argparse.Namespace) -> int:
         status = record.state.upper()
         suffix = f" ({record.error})" if record.error else ""
         print(f"Model {record.model_name}: {status}{suffix}")
+        print(f"  conda_env_name: {record.conda_env_name}")
+        print(f"  env_exists: {record.exists}")
         if record.local_paths:
             for field, info in sorted(record.path_checks.items()):
                 print(
                     f"  {field}: {info['value']} [{'OK' if info['exists'] else 'MISSING'}]"
                 )
-        else:
-            print("  local_paths: none configured")
     return 0
 
 

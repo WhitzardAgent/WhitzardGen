@@ -19,6 +19,7 @@ LOCAL_OVERRIDE_FIELDS = (
 )
 LOCAL_RUNTIME_OVERRIDE_FIELDS = (
     "max_gpus",
+    "conda_env_name",
 )
 
 

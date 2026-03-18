@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from aigc.env import EnvManager
 from aigc.env import manager as env_manager_module
-from aigc.env.manager import EnvManagerError
+from aigc.env.manager import EnvManagerError, MissingEnvironmentError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,16 +19,8 @@ class EnvManagerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = Path(tempfile.mkdtemp())
         self.runtime_root = self.tmpdir / "runtime"
-        self.locks_root = self.runtime_root / "locks"
-        self.conda_envs_root = self.runtime_root / "conda_envs"
-        self.conda_pkgs_root = self.runtime_root / "conda_pkgs"
-        self.conda_cache_root = self.runtime_root / "cache"
         self.patchers = [
             patch.object(env_manager_module, "RUNTIME_ROOT", self.runtime_root),
-            patch.object(env_manager_module, "LOCKS_ROOT", self.locks_root),
-            patch.object(env_manager_module, "CONDA_ENVS_ROOT", self.conda_envs_root),
-            patch.object(env_manager_module, "CONDA_PKGS_ROOT", self.conda_pkgs_root),
-            patch.object(env_manager_module, "CONDA_CACHE_ROOT", self.conda_cache_root),
         ]
         for patcher in self.patchers:
             patcher.start()
@@ -37,6 +29,18 @@ class EnvManagerTests(unittest.TestCase):
     def tearDown(self) -> None:
         for patcher in reversed(self.patchers):
             patcher.stop()
+
+    def test_resolve_conda_env_name_from_model(self) -> None:
+        env_name = self.manager.resolve_conda_env_name("Z-Image")
+        self.assertEqual(env_name, "zimage")
+
+    def test_resolve_conda_env_name_for_cogvideox(self) -> None:
+        env_name = self.manager.resolve_conda_env_name("CogVideoX-5B")
+        self.assertEqual(env_name, "cogvideox")
+
+    def test_resolve_conda_env_name_for_hunyuan_video(self) -> None:
+        env_name = self.manager.resolve_conda_env_name("HunyuanVideo-1.5")
+        self.assertEqual(env_name, "hunyuan_video")
 
     def test_resolve_spec_for_model(self) -> None:
         spec = self.manager.resolve_spec_for_model("Z-Image")
@@ -61,28 +65,15 @@ class EnvManagerTests(unittest.TestCase):
         requirements_text = spec.requirements_file.read_text(encoding="utf-8")
         self.assertIn("easydict", requirements_text)
 
-    def test_compute_env_id_is_stable(self) -> None:
-        spec = self.manager.resolve_spec_for_model("Z-Image")
-        env_id_a = self.manager.compute_env_id(spec)
-        env_id_b = self.manager.compute_env_id(spec)
-        self.assertEqual(env_id_a, env_id_b)
-        self.assertTrue(env_id_a.startswith("env_zimage_"))
-
-    def test_wrap_command(self) -> None:
-        command = self.manager.wrap_command("env_demo", ["python", "-V"])
-        self.assertEqual(command[:3], ["conda", "run", "--prefix"])
+    def test_wrap_command_uses_conda_run_with_env_name(self) -> None:
+        command = self.manager.wrap_command("zimage", ["python", "-V"])
+        self.assertEqual(command[:4], ["conda", "run", "-n", "zimage"])
         self.assertEqual(command[-2:], ["python", "-V"])
 
-        foreground_command = self.manager.wrap_command(
-            "env_demo",
-            ["python", "-V"],
-            foreground=True,
-        )
-        self.assertEqual(
-            foreground_command[:4],
-            ["conda", "run", "--no-capture-output", "--prefix"],
-        )
-        self.assertEqual(foreground_command[-2:], ["python", "-V"])
+    def test_wrap_command_with_foreground(self) -> None:
+        command = self.manager.wrap_command("zimage", ["python", "-V"], foreground=True)
+        self.assertEqual(command[:5], ["conda", "run", "--no-capture-output", "-n", "zimage"])
+        self.assertEqual(command[-2:], ["python", "-V"])
 
     def test_local_env_override_rewrites_github_requirement(self) -> None:
         local_envs_path = self.tmpdir / "local_envs.yaml"
@@ -107,13 +98,9 @@ envs:
         )
 
         spec = manager.resolve_spec_for_model("Z-Image")
-        effective_file = manager._build_effective_requirements_file(env_id="env_demo", spec=spec)
-        content = effective_file.read_text(encoding="utf-8")
 
         self.assertEqual(spec.local_override_source, str(local_envs_path))
         self.assertEqual(spec.pip_install_args, ["--no-index", "--find-links", "/wheelhouse"])
-        self.assertIn("/wheelhouse/diffusers-0.35.0-py3-none-any.whl", content)
-        self.assertNotIn("git+https://github.com/huggingface/diffusers", content)
 
     def test_local_env_override_can_replace_requirements_file(self) -> None:
         alternate_requirements = self.tmpdir / "zimage_alt_requirements.txt"
@@ -137,53 +124,6 @@ envs:
 
         self.assertEqual(spec.requirements_file, alternate_requirements)
 
-    def test_reuse_prefix_skips_environment_creation(self) -> None:
-        reused_prefix = self.tmpdir / "prebuilt_env"
-        reused_prefix.mkdir(parents=True, exist_ok=True)
-        local_envs_path = self.tmpdir / "local_envs_reuse.yaml"
-        local_envs_path.write_text(
-            f"""
-envs:
-  zimage:
-    reuse_prefix: {reused_prefix}
-""".strip()
-            + "\n",
-            encoding="utf-8",
-        )
-        manager = FakeForegroundEnvManager(
-            metadata_path=self.tmpdir / "env_metadata_reuse.json",
-            local_envs_path=local_envs_path,
-        )
-
-        record = manager.ensure_ready("Z-Image", foreground=True)
-
-        self.assertEqual(record.state, "ready")
-        self.assertEqual(record.path, str(reused_prefix))
-        self.assertEqual(manager.create_calls, 0)
-
-    def test_reuse_prefix_missing_fails_clearly(self) -> None:
-        missing_prefix = self.tmpdir / "missing_prebuilt_env"
-        local_envs_path = self.tmpdir / "local_envs_missing_reuse.yaml"
-        local_envs_path.write_text(
-            f"""
-envs:
-  zimage:
-    reuse_prefix: {missing_prefix}
-""".strip()
-            + "\n",
-            encoding="utf-8",
-        )
-        manager = FakeForegroundEnvManager(
-            metadata_path=self.tmpdir / "env_metadata_missing_reuse.json",
-            local_envs_path=local_envs_path,
-        )
-
-        with self.assertRaises(EnvManagerError) as context:
-            manager.ensure_ready("Z-Image", foreground=True)
-
-        self.assertIn("Configured reuse_prefix", str(context.exception))
-        self.assertIn(str(missing_prefix), str(context.exception))
-
     def test_doctor_json_output(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "aigc", "doctor", "--model", "Z-Image", "--output", "json"],
@@ -197,97 +137,65 @@ envs:
         payload = json.loads(result.stdout)
         self.assertEqual(len(payload["records"]), 1)
         self.assertEqual(payload["records"][0]["model_name"], "Z-Image")
-        self.assertIn("path_checks", payload["records"][0])
+        self.assertIn("conda_env_name", payload["records"][0])
+        self.assertEqual(payload["records"][0]["conda_env_name"], "zimage")
+        self.assertIn("exists", payload["records"][0])
 
-    def test_ensure_ready_transitions_missing_to_ready(self) -> None:
-        manager = FakeForegroundEnvManager(metadata_path=self.tmpdir / "env_metadata_ready.json")
-        progress_messages: list[str] = []
-
-        record = manager.ensure_ready(
-            "Z-Image-Turbo",
-            foreground=True,
-            progress=progress_messages.append,
+    def test_ensure_ready_raises_missing_environment_error_when_env_missing(self) -> None:
+        manager = FakeEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_missing.json",
+            env_exists=False,
         )
 
-        metadata = json.loads(manager.metadata_path.read_text(encoding="utf-8"))
-        env_state = metadata[record.env_id]["state"]
-        self.assertEqual(record.state, "ready")
-        self.assertEqual(env_state, "ready")
-        self.assertIn("Creating Conda environment", "\n".join(progress_messages))
-        self.assertIn("Validating environment...", progress_messages)
-        self.assertIn(f"Environment ready: {record.env_id}", progress_messages)
+        with self.assertRaises(MissingEnvironmentError) as context:
+            manager.ensure_ready("Z-Image", foreground=True)
 
-    def test_ensure_ready_transitions_missing_to_failed_on_creation_error(self) -> None:
-        manager = FakeForegroundEnvManager(
-            metadata_path=self.tmpdir / "env_metadata_failed.json",
-            fail_stage="create",
+        self.assertIn("Z-Image", str(context.exception))
+        self.assertIn("zimage", str(context.exception))
+        self.assertIn("Please create this environment manually", str(context.exception))
+
+    def test_ensure_ready_returns_ready_when_env_exists(self) -> None:
+        manager = FakeEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_ready.json",
+            env_exists=True,
+            validation_passes=True,
         )
-        progress_messages: list[str] = []
 
-        with self.assertRaises(EnvManagerError):
-            manager.ensure_ready(
-                "Z-Image-Turbo",
-                foreground=True,
-                progress=progress_messages.append,
-            )
-
-        metadata = json.loads(manager.metadata_path.read_text(encoding="utf-8"))
-        env_id = next(iter(metadata))
-        self.assertEqual(metadata[env_id]["state"], "failed")
-        self.assertIn("Creating Conda environment", "\n".join(progress_messages))
-
-    def test_ensure_ready_recovers_stale_creating_state(self) -> None:
-        manager = FakeForegroundEnvManager(metadata_path=self.tmpdir / "env_metadata_stale.json")
-        spec = manager.resolve_spec_for_model("Z-Image-Turbo")
-        env_id = manager.compute_env_id(spec)
-        manager.metadata_path.write_text(
-            json.dumps(
-                {
-                    env_id: {
-                        "env_id": env_id,
-                        "env_spec": spec.spec_name,
-                        "models": ["Z-Image-Turbo"],
-                        "state": "creating",
-                        "path": None,
-                        "last_validation": {},
-                        "error": None,
-                    }
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        progress_messages: list[str] = []
-
-        record = manager.ensure_ready(
-            "Z-Image-Turbo",
-            foreground=True,
-            progress=progress_messages.append,
-            wait_timeout_sec=0.01,
-            poll_interval_sec=0.01,
-        )
+        record = manager.ensure_ready("Z-Image", foreground=True)
 
         self.assertEqual(record.state, "ready")
-        self.assertIn("Recovering stale creating state", "\n".join(progress_messages))
+        self.assertTrue(record.exists)
 
-    def test_inspect_model_environment_reuses_recent_ready_validation(self) -> None:
-        manager = FakeForegroundEnvManager(
-            metadata_path=self.tmpdir / "env_metadata_cached_ready.json",
+    def test_inspect_model_environment_shows_conda_env_name(self) -> None:
+        manager = FakeEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_inspect.json",
+            env_exists=True,
+            validation_passes=True,
+        )
+
+        record = manager.inspect_model_environment("Z-Image")
+
+        self.assertEqual(record.conda_env_name, "zimage")
+        self.assertEqual(record.state, "ready")
+        self.assertTrue(record.exists)
+
+    def test_inspect_model_environment_reuses_cached_validation(self) -> None:
+        manager = FakeEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_cached.json",
+            env_exists=True,
+            validation_passes=True,
             validation_ttl_sec=3600,
         )
-        spec = manager.resolve_spec_for_model("Z-Image")
-        env_id = manager.compute_env_id(spec)
-        env_prefix = manager.environment_prefix(env_id)
-        env_prefix.mkdir(parents=True, exist_ok=True)
+        metadata_key = "env_zimage"
         manager.metadata_path.write_text(
             json.dumps(
                 {
-                    env_id: {
-                        "env_id": env_id,
-                        "env_spec": spec.spec_name,
+                    metadata_key: {
+                        "conda_env_name": "zimage",
+                        "env_spec": "zimage",
                         "models": ["Z-Image"],
                         "state": "ready",
-                        "path": str(env_prefix),
+                        "path": "/path/to/zimage",
                         "last_validation": {
                             "passed": True,
                             "error": None,
@@ -306,24 +214,23 @@ envs:
         self.assertEqual(record.state, "ready")
         self.assertEqual(manager.validate_calls, 0)
 
-    def test_doctor_forces_revalidation_even_when_ready_validation_is_cached(self) -> None:
-        manager = FakeForegroundEnvManager(
-            metadata_path=self.tmpdir / "env_metadata_doctor_revalidate.json",
+    def test_doctor_forces_revalidation(self) -> None:
+        manager = FakeEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_doctor.json",
+            env_exists=True,
+            validation_passes=True,
             validation_ttl_sec=3600,
         )
-        spec = manager.resolve_spec_for_model("Z-Image")
-        env_id = manager.compute_env_id(spec)
-        env_prefix = manager.environment_prefix(env_id)
-        env_prefix.mkdir(parents=True, exist_ok=True)
+        metadata_key = "env_zimage"
         manager.metadata_path.write_text(
             json.dumps(
                 {
-                    env_id: {
-                        "env_id": env_id,
-                        "env_spec": spec.spec_name,
+                    metadata_key: {
+                        "conda_env_name": "zimage",
+                        "env_spec": "zimage",
                         "models": ["Z-Image"],
                         "state": "ready",
-                        "path": str(env_prefix),
+                        "path": "/path/to/zimage",
                         "last_validation": {
                             "passed": True,
                             "error": None,
@@ -343,24 +250,23 @@ envs:
         self.assertEqual(records[0].state, "ready")
         self.assertEqual(manager.validate_calls, 1)
 
-    def test_inspect_model_environment_revalidates_stale_ready_validation(self) -> None:
-        manager = FakeForegroundEnvManager(
-            metadata_path=self.tmpdir / "env_metadata_stale_ready.json",
+    def test_inspect_model_environment_revalidates_stale_validation(self) -> None:
+        manager = FakeEnvManager(
+            metadata_path=self.tmpdir / "env_metadata_stale.json",
+            env_exists=True,
+            validation_passes=True,
             validation_ttl_sec=60,
         )
-        spec = manager.resolve_spec_for_model("Z-Image")
-        env_id = manager.compute_env_id(spec)
-        env_prefix = manager.environment_prefix(env_id)
-        env_prefix.mkdir(parents=True, exist_ok=True)
+        metadata_key = "env_zimage"
         manager.metadata_path.write_text(
             json.dumps(
                 {
-                    env_id: {
-                        "env_id": env_id,
-                        "env_spec": spec.spec_name,
+                    metadata_key: {
+                        "conda_env_name": "zimage",
+                        "env_spec": "zimage",
                         "models": ["Z-Image"],
                         "state": "ready",
-                        "path": str(env_prefix),
+                        "path": "/path/to/zimage",
                         "last_validation": {
                             "passed": True,
                             "error": None,
@@ -380,45 +286,36 @@ envs:
         self.assertEqual(manager.validate_calls, 1)
 
 
-class FakeForegroundEnvManager(EnvManager):
+class FakeEnvManager(EnvManager):
     def __init__(
         self,
         metadata_path: Path,
-        fail_stage: str | None = None,
-        local_envs_path: Path | None = None,
+        env_exists: bool = True,
+        validation_passes: bool = True,
         validation_ttl_sec: int | None = None,
     ) -> None:
         super().__init__(
             metadata_path=metadata_path,
-            local_envs_path=local_envs_path,
             validation_ttl_sec=validation_ttl_sec,
         )
-        self.fail_stage = fail_stage
-        self.create_calls = 0
+        self._env_exists = env_exists
+        self._validation_passes = validation_passes
         self.validate_calls = 0
 
     def conda_available(self) -> bool:
         return True
 
-    def validate_environment(self, env_id: str, spec) -> tuple[bool, str | None]:
+    def conda_env_exists(self, env_name: str) -> tuple[bool, str | None]:
+        if self._env_exists:
+            return True, f"/path/to/{env_name}"
+        return False, None
+
+    def validate_environment(self, conda_env_name: str, spec) -> tuple[bool, str | None]:
         self.validate_calls += 1
-        if self.fail_stage == "validate":
-            return False, "validation failed"
-        exists, _env_path = self.environment_exists(env_id, prefix_override=spec.reuse_prefix)
-        return (exists, None) if exists else (False, "environment missing")
+        if self._validation_passes:
+            return True, None
+        return False, "validation failed"
 
-    def create_environment(self, model_name: str, *, foreground: bool = False, progress=None):
-        self.create_calls += 1
-        return super().create_environment(model_name, foreground=foreground, progress=progress)
 
-    def _run_command(self, command, *, env, foreground, cwd=None):
-        env_text = " ".join(str(item) for item in command)
-        if self.fail_stage == "create" and command[:2] == ["conda", "create"]:
-            return subprocess.CompletedProcess(args=command, returncode=1, stdout="conda create failed", stderr="")
-        if self.fail_stage == "pip" and "pip install" in env_text:
-            return subprocess.CompletedProcess(args=command, returncode=1, stdout="pip install failed", stderr="")
-
-        if command[:2] == ["conda", "create"]:
-            prefix = Path(command[command.index("--prefix") + 1])
-            prefix.mkdir(parents=True, exist_ok=True)
-        return subprocess.CompletedProcess(args=command, returncode=0, stdout="ok", stderr="")
+if __name__ == "__main__":
+    unittest.main()

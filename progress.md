@@ -4,6 +4,64 @@
 - Diffusers batch inference and random-seed semantics hardening
 
 ## Completed
+- 2026-03-18 11:25:00 CST
+- Added per-run append-only sample ledger for real-time run visibility:
+  - created `RunLedgerWriter` component in `src/aigc/run_ledger.py`
+  - ledger file `samples.jsonl` created automatically under each run directory
+  - one record per prompt result (batch tasks are flattened)
+  - records written for both success and failure cases
+  - each record flushed immediately after writing
+  - usable even if run is interrupted
+- Integrated ledger writing into run flow:
+  - `run_models` opens ledger writer at run start
+  - `_execute_prepared_task` writes records after each task completes
+  - ledger writer passed through persistent worker replica execution
+  - failure cases also write records before raising exceptions
+- Ledger record fields:
+  - `timestamp`, `run_id`, `task_id`, `model_name`, `prompt_id`, `prompt`
+  - `status`, `artifact_type`, `artifact_path`, `error_message`
+  - `replica_id`, `batch_id`, `batch_index`, `execution_mode`
+  - `negative_prompt`, `language`
+- Added focused test coverage:
+  - ledger file creation on open
+  - append behavior for success and failure
+  - batch flattening into per-prompt records
+  - immediate flush after each write
+  - integration with run flow
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_ledger -v`
+  - result: 9 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_minimal_run_wiring_creates_run_dir_and_export -v`
+  - result: 1 test passed
+- 2026-03-17 22:15:00 CST
+- Stopped automatic Conda environment creation; environments are now manually managed:
+  - removed all auto-creation, rebuild, and package installation logic from `EnvManager`
+  - `EnvManager` now only resolves env names, checks existence, validates lightly, and wraps commands
+  - added `conda_env_name` property to `ModelInfo` (defaults to `env_spec` for backward compatibility)
+  - added `conda_env_name` as a runtime override field in `local_models.yaml`
+  - each model in `configs/models.yaml` now declares an explicit `conda_env_name`
+- Updated `aigc run` to fail clearly when required environment is missing:
+  - added `MissingEnvironmentError` exception with actionable message
+  - `ensure_ready` raises `MissingEnvironmentError` instead of attempting auto-creation
+  - error message shows model name, required conda env, and manual creation instructions
+- Updated `aigc doctor` to show environment status:
+  - displays effective `conda_env_name` for each model
+  - shows whether the conda env exists
+  - shows local path / repo path / weights path existence checks
+- Updated command wrapping to use `conda run -n <env_name>`:
+  - `wrap_command` now takes `conda_env_name` instead of `env_id`
+  - worker and subprocess execution use `conda run -n <env_name> ...`
+- Added focused regression coverage:
+  - env name resolution from model config
+  - local override merge for conda_env_name
+  - missing-env failure in run flow
+  - doctor output includes conda_env_name and exists fields
+  - command wrapping uses `conda run -n`
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager -v`
+  - result: 14 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
+  - result: 5 tests passed
 - 2026-03-17 21:09:18 CST
 - Extended diffusers-based generation to support real prompt batching consistently across the framework:
   - confirmed image diffusers models were already using true batched inference by passing prompt lists to the pipeline in one call

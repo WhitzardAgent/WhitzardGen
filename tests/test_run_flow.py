@@ -25,6 +25,8 @@ from aigc.utils.progress import TextRunProgress
 class FakeEnvRecord:
     env_id = "env_test"
     state = "ready"
+    conda_env_name = "test_env"
+    exists = True
 
 
 class FakeEnvManager:
@@ -601,6 +603,17 @@ class RunFlowTests(unittest.TestCase):
         record = json.loads(export_path.read_text(encoding="utf-8").strip())
         self.assertEqual(record["model_name"], "Z-Image")
         self.assertEqual(record["execution_metadata"]["status"], "success")
+
+        ledger_path = Path(summary.output_dir) / "samples.jsonl"
+        self.assertTrue(ledger_path.exists())
+        ledger_records = [
+            json.loads(line)
+            for line in ledger_path.read_text(encoding="utf-8").strip().splitlines()
+        ]
+        self.assertEqual(len(ledger_records), 1)
+        self.assertEqual(ledger_records[0]["model_name"], "Z-Image")
+        self.assertEqual(ledger_records[0]["status"], "success")
+        self.assertEqual(ledger_records[0]["prompt"], "a futuristic city at night")
 
     def test_multi_model_mock_run_batches_and_exports_records(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
