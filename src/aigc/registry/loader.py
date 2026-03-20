@@ -86,7 +86,10 @@ def load_registry(
     for name, config in models_payload.items():
         if not isinstance(config, dict):
             raise RegistryError(f"Registry entry for {name} must be an object.")
-        local_paths = dict(local_overrides.get(name, {}))
+        local_paths = _prune_redundant_local_overrides(
+            config=config,
+            overrides=dict(local_overrides.get(name, {})),
+        )
         weights = dict(config.get("weights", {}))
         runtime = dict(config.get("runtime", {}))
         weights.update(
@@ -189,3 +192,27 @@ def _validate_model_info(model: ModelInfo) -> None:
         raise RegistryError(f"Model {model.name} is missing runtime.execution_mode")
     if "env_spec" not in model.runtime:
         raise RegistryError(f"Model {model.name} is missing runtime.env_spec")
+
+
+def _prune_redundant_local_overrides(
+    *,
+    config: dict[str, object],
+    overrides: dict[str, object],
+) -> dict[str, object]:
+    if not overrides:
+        return {}
+    runtime = dict(config.get("runtime", {})) if isinstance(config.get("runtime", {}), dict) else {}
+    weights = dict(config.get("weights", {})) if isinstance(config.get("weights", {}), dict) else {}
+    pruned: dict[str, object] = {}
+    for key, value in overrides.items():
+        if key in LOCAL_OVERRIDE_FIELDS:
+            if weights.get(key) == value:
+                continue
+        elif key in LOCAL_RUNTIME_OVERRIDE_FIELDS:
+            default_value = runtime.get(key)
+            if key == "conda_env_name" and default_value in (None, ""):
+                default_value = runtime.get("env_spec")
+            if default_value == value:
+                continue
+        pruned[str(key)] = value
+    return pruned

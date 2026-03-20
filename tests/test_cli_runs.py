@@ -304,13 +304,123 @@ class RunsCliTests(unittest.TestCase):
             list_args = type("Args", (), {"output": "json"})()
             inspect_args = type("Args", (), {"run_id": summary.run_id, "output": "json"})()
             failures_args = type("Args", (), {"run_id": summary.run_id, "output": "json"})()
-            export_args = type("Args", (), {"run_id": summary.run_id, "out": None, "output": "json"})()
+            export_args = type(
+                "Args",
+                (),
+                {
+                    "run_ids": [summary.run_id],
+                    "out": None,
+                    "mode": "link",
+                    "model": [],
+                    "output": "json",
+                },
+            )()
 
             with redirect_stdout(StringIO()):
                 self.assertEqual(handle_runs_list(list_args), 0)
                 self.assertEqual(handle_runs_inspect(inspect_args), 0)
                 self.assertEqual(handle_runs_failures(failures_args), 0)
+            with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_export_dataset(export_args), 0)
+            export_payload = json.loads(stream.getvalue())
+            self.assertEqual(export_payload["source_run_ids"], [summary.run_id])
+            self.assertEqual(export_payload["export_mode"], "link")
+            self.assertTrue(Path(export_payload["bundle_path"]).exists())
+            self.assertTrue(Path(export_payload["dataset_path"]).exists())
+            self.assertTrue(Path(export_payload["manifest_path"]).exists())
+            self.assertTrue(Path(export_payload["readme_path"]).exists())
+
+    def test_handle_export_dataset_supports_multiple_runs_and_model_filter(self) -> None:
+        from aigc.cli.main import handle_export_dataset
+
+        tmpdir = Path(tempfile.mkdtemp())
+        runtime_config = tmpdir / "local_runtime.yaml"
+        configured_root = tmpdir / "configured_runs"
+        runtime_config.write_text(
+            f"paths:\n  runs_root: {configured_root}\n",
+            encoding="utf-8",
+        )
+        run_ids = ["run_001", "run_002"]
+        model_map = {
+            "run_001": ("Z-Image", "image", ".png", b"\x89PNG\r\n\x1a\n", "train"),
+            "run_002": ("FLUX.1-dev", "image", ".png", b"\x89PNG\r\n\x1a\n", "val"),
+        }
+        for run_id in run_ids:
+            run_root = configured_root / run_id
+            export_root = run_root / "exports"
+            artifact_root = run_root / "artifacts"
+            export_root.mkdir(parents=True, exist_ok=True)
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            model_name, artifact_type, suffix, content, split = model_map[run_id]
+            artifact_path = artifact_root / f"{run_id}{suffix}"
+            artifact_path.write_bytes(content)
+            dataset_path = export_root / "dataset.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "record_id": "rec_00000001",
+                        "run_id": run_id,
+                        "task_id": f"task_{run_id}",
+                        "prompt_id": f"prompt_{run_id}",
+                        "prompt": "sample",
+                        "language": "en",
+                        "model_name": model_name,
+                        "model_version": "1.0",
+                        "adapter_name": "Adapter",
+                        "modality": "image",
+                        "task_type": "t2i",
+                        "artifact_type": artifact_type,
+                        "artifact_path": str(artifact_path),
+                        "artifact_metadata": {"format": "png"},
+                        "generation_params": {},
+                        "prompt_metadata": {"split": split},
+                        "execution_metadata": {"status": "success", "execution_mode": "mock"},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_root / "run_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "status": "completed",
+                        "execution_mode": "mock",
+                        "models": [model_name],
+                        "output_dir": str(run_root),
+                        "export_path": str(dataset_path),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        args = type(
+            "Args",
+            (),
+            {
+                "run_ids": run_ids,
+                "out": None,
+                "mode": "link",
+                "model": ["Z-Image"],
+                "output": "json",
+            },
+        )()
+
+        with patch.dict(os.environ, {"AIGC_LOCAL_RUNTIME_FILE": str(runtime_config)}, clear=False):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_export_dataset(args), 0)
+            payload = json.loads(stream.getvalue())
+
+        self.assertEqual(payload["source_run_ids"], run_ids)
+        self.assertEqual(payload["selected_models"], ["Z-Image"])
+        self.assertEqual(payload["record_count"], 1)
+        self.assertEqual(payload["filtered_out_count"], 1)
+        dataset_records = [
+            json.loads(line)
+            for line in Path(payload["dataset_path"]).read_text(encoding="utf-8").strip().splitlines()
+        ]
+        self.assertEqual([record["model_name"] for record in dataset_records], ["Z-Image"])
 
     def test_runs_retry_handler_executes_recovery_run(self) -> None:
         from aigc.cli.main import handle_runs_retry

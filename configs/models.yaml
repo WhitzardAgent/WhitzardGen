@@ -20,7 +20,6 @@ models:
       min_vram_gb: 24
       recommended_vram_gb: 32
       env_spec: flux_image
-      conda_env_name: flux_image
     weights:
       hf_repo: black-forest-labs/FLUX.1-dev
   stable-diffusion-xl-base-1.0:
@@ -44,7 +43,6 @@ models:
       min_vram_gb: 16
       recommended_vram_gb: 24
       env_spec: sdxl_image
-      conda_env_name: sdxl_image
     weights:
       hf_repo: stabilityai/stable-diffusion-xl-base-1.0
   Qwen-Image-2512:
@@ -69,7 +67,6 @@ models:
       min_vram_gb: 24
       recommended_vram_gb: 32
       env_spec: qwen_image
-      conda_env_name: qwen_image
     weights:
       hf_repo: Qwen/Qwen-Image-2512
   Z-Image-Turbo:
@@ -94,7 +91,6 @@ models:
       min_vram_gb: 16
       recommended_vram_gb: 24
       env_spec: zimage
-      conda_env_name: zimage
       worker_strategy: persistent_worker
       gpus_per_replica: 1
       supports_multi_replica: true
@@ -122,7 +118,6 @@ models:
       min_vram_gb: 16
       recommended_vram_gb: 24
       env_spec: zimage
-      conda_env_name: zimage
       worker_strategy: persistent_worker
       gpus_per_replica: 1
       supports_multi_replica: true
@@ -150,7 +145,6 @@ models:
       min_vram_gb: 48
       recommended_vram_gb: 80
       env_spec: hunyuan_image
-      conda_env_name: hunyuan_image
     weights:
       hf_repo: tencent/HunyuanImage-3.0
       local_dir_hint: Rename download directory to HunyuanImage-3 to avoid dots in
@@ -177,7 +171,6 @@ models:
       min_vram_gb: 24
       recommended_vram_gb: 48
       env_spec: longcat_video
-      conda_env_name: longcat_video
       worker_strategy: persistent_worker
       gpus_per_replica: 1
       supports_multi_replica: true
@@ -205,7 +198,6 @@ models:
       min_vram_gb: 24
       recommended_vram_gb: 48
       env_spec: wan_ti2v
-      conda_env_name: wan_ti2v
     weights:
       hf_repo: Wan-AI/Wan2.2-TI2V-5B
   Wan2.2-T2V-A14B-Diffusers:
@@ -230,7 +222,6 @@ models:
       min_vram_gb: 80
       recommended_vram_gb: 80
       env_spec: wan_t2v_diffusers
-      conda_env_name: wan_t2v_diffusers
       worker_strategy: persistent_worker
       gpus_per_replica: 1
       supports_multi_replica: false
@@ -257,7 +248,6 @@ models:
       min_vram_gb: 24
       recommended_vram_gb: 48
       env_spec: cogvideox_5b
-      conda_env_name: cogvideox_5b
       worker_strategy: persistent_worker
       gpus_per_replica: 1
       supports_multi_replica: true
@@ -286,7 +276,6 @@ models:
       min_vram_gb: 48
       recommended_vram_gb: 80
       env_spec: mova_720p
-      conda_env_name: mova_720p
     weights:
       hf_repo: OpenMOSS-Team/MOVA-720p
   HunyuanVideo-1.5:
@@ -311,7 +300,6 @@ models:
       min_vram_gb: 14
       recommended_vram_gb: 24
       env_spec: hunyuan_video_15
-      conda_env_name: hunyuan_video_15
       worker_strategy: persistent_worker
       gpus_per_replica: 1
       supports_multi_replica: false

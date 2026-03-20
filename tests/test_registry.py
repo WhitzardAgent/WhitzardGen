@@ -105,6 +105,26 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(longcat.weights["repo_path"], "/repos/LongCat-Video")
         self.assertEqual(longcat.weights["weights_path"], "/models/LongCat-Video")
 
+    def test_registry_ignores_redundant_local_override_values(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        local_models_path = tmpdir / "local_models.yaml"
+        local_models_path.write_text(
+            json.dumps(
+                {
+                    "Z-Image": {
+                        "conda_env_name": "zimage",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        registry = load_registry(local_models_path=local_models_path)
+        zimage = registry.get_model("Z-Image")
+
+        self.assertEqual(zimage.conda_env_name, "zimage")
+        self.assertNotIn("conda_env_name", zimage.local_paths)
+
     def test_models_list_json_output(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "aigc", "models", "list", "--output", "json"],

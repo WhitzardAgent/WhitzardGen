@@ -1,9 +1,164 @@
 # Progress
 
 ## Current Phase
-- Phase 20 — Live Throughput Monitoring During Execution
+- Phase 22 — Multi-Run Dataset Bundles + Split Organization + Model Filtering
 
 ## Completed
+- 2026-03-20 18:40:00 CST
+- Started Phase 22 to make dataset export useful for real multi-run collection assembly:
+  - extended the export bundle layer to support merging multiple source runs into one bundle
+  - kept the existing per-run `exports/dataset.jsonl` runtime output unchanged
+  - preserved the bundle exporter as an additive organization step on top of run artifacts
+- Added multi-run dataset bundle support in `src/aigc/exporters/bundle.py` and `src/aigc/run_store.py`:
+  - `aigc export dataset` can now accept multiple run IDs
+  - multiple source manifests / dataset JSONL files are merged into one organized bundle
+  - source-run lineage remains explicit in both records and export manifest metadata
+- Strengthened merged export record semantics:
+  - bundle export now rewrites `record_id` sequentially to keep merged exports globally unique
+  - original per-run dataset record IDs are preserved as `source_record_id`
+  - exported records now include an explicit `split` field
+  - `artifact_path` remains bundle-relative while `source_artifact_path` preserves the original run artifact path
+- Added split-aware media organization:
+  - bundle media layout now follows:
+    - `media/<split>/<model_name>/<artifact_type>/...`
+  - split is derived from prompt metadata first
+  - if no split is present, export now uses `unspecified`
+- Added model-filtered export support:
+  - CLI now accepts repeated `--model` filters for `aigc export dataset`
+  - filtering happens before artifact materialization
+  - filtered-out counts are recorded in the export result and manifest
+- Strengthened bundle summary artifacts:
+  - `export_manifest.json` now includes:
+    - source run list
+    - selected model filters
+    - exported models
+    - counts by model
+    - counts by split
+    - counts by artifact type
+    - counts by run id
+    - skipped / filtered counts
+  - every export bundle now also writes a concise human-readable `README.md`
+- Preserved successful-only export semantics:
+  - only successful records with a real artifact file are exported
+  - failed rows or rows with missing artifacts remain excluded from the main dataset bundle
+- Upgraded CLI export UX:
+  - `aigc export dataset run_001 run_002 ...` now works
+  - JSON output now includes:
+    - bundle path
+    - dataset path
+    - manifest path
+    - readme path
+    - source run ids
+    - selected models
+    - counts and export mode
+  - text output now also surfaces the new README path and filter counts
+- Added focused regression coverage for:
+  - multi-run merged export
+  - model-filtered export
+  - split-aware media layout
+  - export README generation
+  - merged-export lineage preservation
+  - no regression of the single-run bundle export path
+- Ran targeted lightweight regression:
+  - `python3 -m py_compile src/aigc/exporters/bundle.py src/aigc/exporters/__init__.py src/aigc/run_store.py src/aigc/cli/main.py tests/test_dataset_export.py tests/test_cli_runs.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_dataset_export -v`
+  - result: 6 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 8 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_minimal_run_wiring_creates_run_dir_and_export -v`
+  - result: 1 test passed
+- 2026-03-20 18:05:00 CST
+- Started Phase 21 to turn run-centric outputs into a clearer user-facing dataset export bundle:
+  - added `src/aigc/exporters/bundle.py` as a focused export-bundle layer on top of the existing per-run `exports/dataset.jsonl`
+  - kept the run-time export path intact while adding a new organization step for downstream dataset use
+- Implemented organized dataset bundle export with:
+  - `dataset.jsonl`
+  - `export_manifest.json`
+  - organized `media/` artifact materialization
+  - per-model / per-artifact directory layout under:
+    - `media/<model_name>/<artifact_type>/...`
+- Added explicit export materialization policy:
+  - `link`
+  - `copy`
+  - default CLI behavior now uses `link`
+- Strengthened exported record traceability:
+  - exported dataset rows now keep the original dataset schema fields
+  - `artifact_path` now points to the exported relative bundle path
+  - `source_artifact_path` preserves the original run artifact location
+  - `source_run_lineage` preserves recovery lineage fields such as:
+    - `parent_run_id`
+    - `source_run_id`
+    - `recovery_mode`
+  - `export_metadata` records the bundle name and materialization mode
+- Hardened export filtering semantics:
+  - export now includes only successful records with a real existing artifact file
+  - failed rows or rows with missing artifacts are skipped from the main exported dataset bundle
+  - `export_manifest.json` records both exported counts and skipped counts
+- Upgraded CLI export behavior in `aigc export dataset`:
+  - `--mode [link|copy]` is now supported
+  - `--out` is now treated as a bundle-root destination
+  - CLI text/json output now surfaces:
+    - bundle path
+    - dataset path
+    - manifest path
+    - export mode
+    - record count
+    - skipped count
+- Preserved compatibility with current run outputs:
+  - existing run-time `exports/dataset.jsonl` generation is unchanged
+  - bundle export is an additive organization step on top of the run outputs
+- Added focused regression coverage for:
+  - bundle creation in link mode
+  - bundle creation in copy mode
+  - successful-only export behavior
+  - export manifest contents
+  - CLI export integration
+  - no regression of the minimal run export path
+- Ran targeted lightweight regression:
+  - `python3 -m py_compile src/aigc/exporters/bundle.py src/aigc/exporters/__init__.py src/aigc/run_store.py src/aigc/cli/main.py tests/test_dataset_export.py tests/test_cli_runs.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_dataset_export -v`
+  - result: 5 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 7 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_minimal_run_wiring_creates_run_dir_and_export -v`
+  - result: 1 test passed
+- 2026-03-20 17:20:00 CST
+- Tightened the responsibility boundary between `configs/models.yaml` and `configs/local_models.yaml` so the two files stay separate without repeating the same deployment defaults:
+  - kept `configs/models.yaml` as the canonical model-definition registry
+  - kept `configs/local_models.yaml` as the operator-facing machine-local override file
+  - removed duplicated `runtime.conda_env_name` defaults from `configs/models.yaml`
+  - now rely on the existing `env_spec -> conda_env_name` fallback in `ModelInfo` for default environment naming
+- Simplified `configs/local_models.yaml` into a much smaller local-only template:
+  - removed repeated env-name values that were already implied by the registry
+  - removed repeated `local_path` values that merely mirrored `weights_path`
+  - added clearer guidance describing which fields belong in:
+    - `configs/models.yaml`
+    - `configs/local_models.yaml`
+  - kept only true machine-local overrides such as:
+    - `local_path`
+    - `weights_path`
+    - `repo_path`
+    - `hf_cache_dir`
+    - `max_gpus`
+    - optional machine-specific `conda_env_name`
+- Hardened local override merge behavior in `src/aigc/registry/loader.py`:
+  - added pruning for redundant local overrides before merge
+  - local overrides that exactly match registry defaults are no longer surfaced as effective overrides
+  - this keeps effective model config summaries cleaner and makes local override intent easier to read
+- Added focused regression coverage for:
+  - redundant local override pruning
+  - registry/env behavior after removing duplicated default env-name declarations
+- Ran targeted lightweight regression:
+  - `python3 -m py_compile src/aigc/registry/loader.py tests/test_registry.py src/aigc/env/manager.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
+  - result: 8 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_env_manager -v`
+  - result: 11 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs.RunsCliTests.test_doctor_text_output_shows_conda_env_and_path_existence tests.test_cli_runs.RunsCliTests.test_handle_run_uses_profile_and_cli_overrides -v`
+  - result: 2 tests passed
 - 2026-03-20 16:50:00 CST
 - Cleaned up the model registry configuration so `configs/models.yaml` is now a real YAML file instead of JSON text stored in a `.yaml` file:
   - rewrote `configs/models.yaml` into proper YAML mapping/list syntax
@@ -1427,6 +1582,19 @@
   - the framework only resolves, checks, validates lightly, and launches them
   - missing envs fail early with clear manual-setup guidance
 - `conda_env_name` is now a first-class effective config value across registry defaults, local overrides, CLI inspection, doctor, and subprocess wrapping.
+- Registry/local override responsibilities are now cleaner:
+  - `configs/models.yaml` defines the model
+  - `configs/local_models.yaml` carries only meaningful machine-local overrides
+  - redundant override values are pruned before effective-config merge
+- Phase 21 export/data organization is now implemented locally:
+  - bundle export creates organized media layout plus `export_manifest.json`
+  - exported dataset rows keep strong lineage metadata
+  - `aigc export dataset` now materializes a real dataset bundle instead of only locating a per-run JSONL file
+- Phase 22 multi-run export organization is now implemented locally:
+  - merged bundles can span multiple runs
+  - media layout is split-aware
+  - model filtering is supported at export time
+  - bundle README/stat summaries are now generated automatically
 - Diffusers-based image batching remains correctly implemented:
   - image adapters pass prompt lists in one pipeline call
   - when seeded, they build one `torch.Generator` per sample

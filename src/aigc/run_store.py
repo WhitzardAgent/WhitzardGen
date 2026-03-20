@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 
+from aigc.exporters import ExportBundleResult, ExportBundleSource, export_dataset_bundle, export_dataset_bundle_for_runs
 from aigc.settings import get_runs_root
 from aigc.runtime.payloads import TaskPayload
 
@@ -113,15 +113,74 @@ def export_dataset_for_run(
     *,
     runs_root: str | Path | None = None,
     output_path: str | Path | None = None,
-) -> Path:
-    manifest = load_run_manifest(run_id, runs_root=runs_root)
-    export_path = Path(manifest["export_path"])
-    if not export_path.exists():
-        raise RunStoreError(f"Dataset export missing for run_id={run_id}: {export_path}")
-    if output_path is None:
-        return export_path
+    mode: str = "link",
+    selected_models: list[str] | None = None,
+) -> ExportBundleResult:
+    return export_dataset_for_runs(
+        [run_id],
+        runs_root=runs_root,
+        output_path=output_path,
+        mode=mode,
+        selected_models=selected_models,
+    )
 
-    target = Path(output_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(export_path, target)
-    return target
+
+def export_dataset_for_runs(
+    run_ids: list[str],
+    *,
+    runs_root: str | Path | None = None,
+    output_path: str | Path | None = None,
+    mode: str = "link",
+    selected_models: list[str] | None = None,
+) -> ExportBundleResult:
+    if not run_ids:
+        raise RunStoreError("At least one run_id is required for dataset export.")
+
+    root = Path(runs_root) if runs_root is not None else get_runs_root()
+    sources: list[ExportBundleSource] = []
+    for run_id in run_ids:
+        manifest = load_run_manifest(run_id, runs_root=root)
+        export_path = Path(manifest["export_path"])
+        if not export_path.exists():
+            raise RunStoreError(f"Dataset export missing for run_id={run_id}: {export_path}")
+        manifest.setdefault("manifest_path", str(root / run_id / RUN_MANIFEST_NAME))
+        sources.append(
+            ExportBundleSource(
+                run_id=run_id,
+                source_manifest=manifest,
+                source_dataset_path=str(export_path),
+            )
+        )
+
+    bundle_root = (
+        Path(output_path)
+        if output_path is not None
+        else _default_bundle_root(root=root, run_ids=run_ids)
+    )
+    try:
+        if len(sources) == 1:
+            source = sources[0]
+            return export_dataset_bundle(
+                run_id=source.run_id,
+                source_manifest=source.source_manifest,
+                source_dataset_path=source.source_dataset_path,
+                bundle_root=bundle_root,
+                mode=mode,
+                selected_models=selected_models,
+            )
+        return export_dataset_bundle_for_runs(
+            sources=sources,
+            bundle_root=bundle_root,
+            mode=mode,
+            selected_models=selected_models,
+        )
+    except Exception as exc:  # pragma: no cover - normalized through tests at higher level
+        raise RunStoreError(str(exc)) from exc
+
+
+def _default_bundle_root(*, root: Path, run_ids: list[str]) -> Path:
+    if len(run_ids) == 1:
+        return root / run_ids[0] / "exports" / "dataset_bundle"
+    lead = run_ids[0]
+    suffix = f"{lead}__plus_{len(run_ids) - 1}"
+    return root / "exports" / suffix

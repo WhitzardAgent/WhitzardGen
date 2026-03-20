@@ -25,7 +25,7 @@ from aigc.registry import DEFAULT_LOCAL_MODELS_PATH, RegistryError, load_registr
 from aigc.registry.local_overrides import summarize_local_path_overrides
 from aigc.run_store import (
     RunStoreError,
-    export_dataset_for_run,
+    export_dataset_for_runs,
     list_runs,
     load_failures_summary,
     load_run_manifest,
@@ -95,10 +95,12 @@ def build_parser() -> argparse.ArgumentParser:
     export_subparsers = export_parser.add_subparsers(dest="export_command")
 
     export_dataset_parser = export_subparsers.add_parser(
-        "dataset", help="Locate or copy a run dataset export."
+        "dataset", help="Materialize an organized dataset export bundle for one or more runs."
     )
-    export_dataset_parser.add_argument("run_id")
+    export_dataset_parser.add_argument("run_ids", nargs="+")
     export_dataset_parser.add_argument("--out")
+    export_dataset_parser.add_argument("--mode", choices=["link", "copy"], default="link")
+    export_dataset_parser.add_argument("--model", action="append", default=[])
     export_dataset_parser.add_argument("--output", choices=["text", "json"], default="text")
     export_dataset_parser.set_defaults(handler=handle_export_dataset)
 
@@ -361,18 +363,29 @@ def handle_runs_resume(args: argparse.Namespace) -> int:
 
 
 def handle_export_dataset(args: argparse.Namespace) -> int:
-    export_path = export_dataset_for_run(args.run_id, output_path=args.out)
-    payload = {"run_id": args.run_id, "dataset_path": str(export_path)}
+    export_result = export_dataset_for_runs(
+        list(args.run_ids),
+        output_path=args.out,
+        mode=args.mode,
+        selected_models=list(args.model or []),
+    )
+    payload = export_result.to_dict()
     if args.output == "json":
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
 
-    print(f"Run: {args.run_id}")
-    print(f"Dataset: {export_path}")
-    if args.out:
-        print("Action: copied")
-    else:
-        print("Action: located")
+    print(f"Runs: {', '.join(export_result.source_run_ids)}")
+    print(f"Bundle: {export_result.bundle_path}")
+    print(f"Dataset: {export_result.dataset_path}")
+    print(f"Manifest: {export_result.manifest_path}")
+    print(f"README: {export_result.readme_path}")
+    print(f"Mode: {export_result.export_mode}")
+    print(f"Records: {export_result.record_count}")
+    print(f"Skipped: {export_result.skipped_count}")
+    if export_result.filtered_out_count:
+        print(f"Filtered Out: {export_result.filtered_out_count}")
+    if export_result.selected_models:
+        print(f"Selected Models: {', '.join(export_result.selected_models)}")
     return 0
 
 
