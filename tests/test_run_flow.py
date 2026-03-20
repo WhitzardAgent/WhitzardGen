@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import time
 import unittest
 from io import StringIO
 from pathlib import Path
@@ -15,6 +16,7 @@ from aigc.run_flow import (
     ReplicaPlan,
     RunFlowError,
     TaskExecutionOutcome,
+    _handle_runtime_event,
     _run_persistent_worker_replicas,
     _default_generation_params,
     _assign_gpus_to_replicas,
@@ -26,8 +28,10 @@ from aigc.run_flow import (
 )
 from aigc.registry import load_registry
 from aigc.runtime.payloads import TaskPayload, TaskPrompt
+from aigc.runtime_telemetry import RunTelemetry
 from aigc.runtime.worker import execute_task_payload
 from aigc.utils.progress import TextRunProgress
+from aigc.utils.runtime_logging import RunLogger
 
 
 class FakeEnvRecord:
@@ -445,16 +449,83 @@ class RunFlowTests(unittest.TestCase):
         )
         progress_stream = StringIO()
 
+        class FakeSession:
+            def __init__(
+                self,
+                *,
+                model,
+                env_record,
+                execution_mode,
+                replica_id=0,
+                gpu_assignment=None,
+                replica_log_path=None,
+                log_callback=None,
+            ) -> None:
+                self.replica_id = replica_id
+                self.gpu_assignment = list(gpu_assignment or [])
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def run_task(self, prepared_task):
+                workdir = Path(prepared_task.payload.workdir)
+                workdir.mkdir(parents=True, exist_ok=True)
+                prompt_id = prepared_task.payload.prompts[0].prompt_id
+                artifact_path = workdir / f"{prompt_id}.png"
+                artifact_path.write_bytes(
+                    b"\x89PNG\r\n\x1a\n"
+                    + b"\x00\x00\x00\rIHDR"
+                    + b"\x00\x00\x00\x01"
+                    + b"\x00\x00\x00\x01"
+                    + b"\x08\x02\x00\x00\x00"
+                )
+                prepared_task.result_file.write_text(
+                    json.dumps(
+                        {
+                            "task_id": prepared_task.payload.task_id,
+                            "model_name": prepared_task.payload.model_name,
+                            "execution_mode": prepared_task.payload.execution_mode,
+                            "plan": {"mode": "in_process"},
+                            "execution_result": {"exit_code": 0, "logs": "", "outputs": {}},
+                            "model_result": {
+                                "status": "success",
+                                "batch_items": [
+                                    {
+                                        "prompt_id": prompt_id,
+                                        "status": "success",
+                                        "metadata": {},
+                                        "artifacts": [
+                                            {
+                                                "type": "image",
+                                                "path": str(artifact_path),
+                                                "metadata": {"width": 1, "height": 1, "format": "png"},
+                                            }
+                                        ],
+                                    }
+                                ],
+                                "logs": "",
+                                "metadata": {},
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return 0, ""
+
         with patch.dict(os.environ, {"AIGC_AVAILABLE_GPUS": "0,1"}, clear=False):
-            summary = run_single_model(
-                model_name="Z-Image",
-                prompt_file=prompts_path,
-                out_dir=tmpdir / "runs" / "replica_image",
-                execution_mode="mock",
-                env_manager=FakeEnvManager(),
-                batch_limit=1,
-                progress=TextRunProgress(stream=progress_stream),
-            )
+            with patch("aigc.run_flow._PersistentWorkerSession", FakeSession):
+                summary = run_single_model(
+                    model_name="Z-Image",
+                    prompt_file=prompts_path,
+                    out_dir=tmpdir / "runs" / "replica_image",
+                    execution_mode="mock",
+                    env_manager=FakeEnvManager(),
+                    batch_limit=1,
+                    progress=TextRunProgress(stream=progress_stream),
+                )
 
         manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
         per_model = manifest["per_model_summary"]["Z-Image"]
@@ -463,10 +534,10 @@ class RunFlowTests(unittest.TestCase):
             [replica["gpu_assignment"] for replica in per_model["replicas"]],
             [[0], [1]],
         )
-        self.assertEqual(
-            [replica["task_count"] for replica in per_model["replicas"]],
-            [5, 4],
-        )
+        self.assertEqual(sum(replica["task_count"] for replica in per_model["replicas"]), 9)
+        self.assertEqual(per_model["replica_count_requested"], 2)
+        self.assertGreaterEqual(per_model["replica_count_started"], 1)
+        self.assertGreaterEqual(per_model["replica_count_active_final"], 1)
 
         records = [
             json.loads(line)
@@ -494,15 +565,76 @@ class RunFlowTests(unittest.TestCase):
         )
         progress_stream = StringIO()
 
+        class FakeSession:
+            def __init__(
+                self,
+                *,
+                model,
+                env_record,
+                execution_mode,
+                replica_id=0,
+                gpu_assignment=None,
+                replica_log_path=None,
+                log_callback=None,
+            ) -> None:
+                self.replica_id = replica_id
+                self.gpu_assignment = list(gpu_assignment or [])
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def run_task(self, prepared_task):
+                workdir = Path(prepared_task.payload.workdir)
+                workdir.mkdir(parents=True, exist_ok=True)
+                prompt_id = prepared_task.payload.prompts[0].prompt_id
+                artifact_path = workdir / f"{prompt_id}.mp4"
+                artifact_path.write_bytes(b"FAKE-MP4")
+                prepared_task.result_file.write_text(
+                    json.dumps(
+                        {
+                            "task_id": prepared_task.payload.task_id,
+                            "model_name": prepared_task.payload.model_name,
+                            "execution_mode": prepared_task.payload.execution_mode,
+                            "plan": {"mode": "in_process"},
+                            "execution_result": {"exit_code": 0, "logs": "", "outputs": {}},
+                            "model_result": {
+                                "status": "success",
+                                "batch_items": [
+                                    {
+                                        "prompt_id": prompt_id,
+                                        "status": "success",
+                                        "metadata": {},
+                                        "artifacts": [
+                                            {
+                                                "type": "video",
+                                                "path": str(artifact_path),
+                                                "metadata": {"fps": 16, "num_frames": 81, "format": "mp4"},
+                                            }
+                                        ],
+                                    }
+                                ],
+                                "logs": "",
+                                "metadata": {},
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return 0, ""
+
         with patch.dict(os.environ, {"AIGC_AVAILABLE_GPUS": "0,1,2,3"}, clear=False):
-            summary = run_single_model(
-                model_name="CogVideoX-5B",
-                prompt_file=prompts_path,
-                out_dir=tmpdir / "runs" / "replica_video",
-                execution_mode="mock",
-                env_manager=FakeEnvManager(),
-                progress=TextRunProgress(stream=progress_stream),
-            )
+            with patch("aigc.run_flow._PersistentWorkerSession", FakeSession):
+                summary = run_single_model(
+                    model_name="CogVideoX-5B",
+                    prompt_file=prompts_path,
+                    out_dir=tmpdir / "runs" / "replica_video",
+                    execution_mode="mock",
+                    env_manager=FakeEnvManager(),
+                    progress=TextRunProgress(stream=progress_stream),
+                )
 
         manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
         per_model = manifest["per_model_summary"]["CogVideoX-5B"]
@@ -511,10 +643,8 @@ class RunFlowTests(unittest.TestCase):
             [replica["gpu_assignment"] for replica in per_model["replicas"]],
             [[0], [1]],
         )
-        self.assertEqual(
-            [replica["task_count"] for replica in per_model["replicas"]],
-            [1, 1],
-        )
+        self.assertEqual(sum(replica["task_count"] for replica in per_model["replicas"]), 2)
+        self.assertEqual(per_model["replica_count_requested"], 2)
 
         records = [
             json.loads(line)
@@ -531,7 +661,7 @@ class RunFlowTests(unittest.TestCase):
         self.assertIn("[SCHED] model=CogVideoX-5B gpus_per_replica=1", progress_text)
         self.assertIn("[SCHED] model=CogVideoX-5B starting 2 replicas", progress_text)
 
-    def test_multi_replica_warmup_is_sequential_before_task_dispatch(self) -> None:
+    def test_primary_ready_starts_early_dispatch_before_secondary_ready(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         progress_stream = StringIO()
         progress = TextRunProgress(stream=progress_stream)
@@ -555,6 +685,10 @@ class RunFlowTests(unittest.TestCase):
 
             def __enter__(self):
                 events.append(f"enter:{self.replica_id}")
+                if self.replica_id == 1:
+                    events.append("loading:1")
+                    time.sleep(0.1)
+                    events.append("ready:1")
                 return self
 
             def __exit__(self, exc_type, exc, tb) -> None:
@@ -563,18 +697,6 @@ class RunFlowTests(unittest.TestCase):
             def run_task(self, prepared_task):
                 events.append(f"run:{self.replica_id}:{prepared_task.payload.task_id}")
                 return 0, ""
-
-        class InlineThread:
-            def __init__(self, *, target, args=(), name=None) -> None:
-                self._target = target
-                self._args = args
-                self.name = name
-
-            def start(self) -> None:
-                self._target(*self._args)
-
-            def join(self) -> None:
-                return None
 
         def fake_execute_prepared_task(
             *,
@@ -630,7 +752,7 @@ class RunFlowTests(unittest.TestCase):
             with patch("aigc.run_flow._PersistentWorkerSession", FakeSession), patch(
                 "aigc.run_flow._execute_prepared_task",
                 fake_execute_prepared_task,
-            ), patch("aigc.run_flow.threading.Thread", InlineThread):
+            ):
                 _run_persistent_worker_replicas(
                     model=model,
                     env_record=FakeEnvRecord(),
@@ -650,14 +772,157 @@ class RunFlowTests(unittest.TestCase):
             ledger_writer.close()
 
         self.assertLess(events.index("enter:0"), events.index("enter:1"))
-        self.assertLess(events.index("enter:1"), events.index("dispatch:task_001"))
-        self.assertLess(events.index("enter:1"), events.index("dispatch:task_002"))
+        self.assertLess(events.index("loading:1"), events.index("dispatch:task_001"))
+        self.assertLess(events.index("dispatch:task_001"), events.index("ready:1"))
         progress_text = progress_stream.getvalue()
-        self.assertIn("[SCHED] model=CogVideoX-5B warming replica 1/2 replica=0 GPUs=[0]", progress_text)
-        self.assertIn("[SCHED] model=CogVideoX-5B replica=0 ready (1/2) GPUs=[0]", progress_text)
-        self.assertIn("[SCHED] model=CogVideoX-5B warming replica 2/2 replica=1 GPUs=[1]", progress_text)
-        self.assertIn("[SCHED] model=CogVideoX-5B replica=1 ready (2/2) GPUs=[1]", progress_text)
-        self.assertIn("[SCHED] model=CogVideoX-5B all replicas ready, dispatching tasks", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B bootstrapping primary replica=0 GPUs=[0]", progress_text)
+        self.assertIn(
+            "[SCHED] model=CogVideoX-5B primary replica ready, starting early dispatch replica=0 GPUs=[0]",
+            progress_text,
+        )
+        self.assertIn("[SCHED] model=CogVideoX-5B warming secondary replicas count=1", progress_text)
+        self.assertIn(
+            "[SCHED] model=CogVideoX-5B secondary replica=1 ready, joined active pool GPUs=[1] replicas_active=1/2",
+            progress_text,
+        )
+
+    def test_secondary_startup_failure_retries_once_then_degrades(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        progress_stream = StringIO()
+        progress = TextRunProgress(stream=progress_stream)
+        registry = load_registry()
+        model = registry.get_model("CogVideoX-5B")
+        attempts: dict[int, int] = {}
+        failures: list[dict[str, object]] = []
+        telemetry_lines: list[str] = []
+        telemetry = RunTelemetry(
+            run_id="run_test",
+            execution_mode="mock",
+            emit_callback=telemetry_lines.append,
+            status_path=tmpdir / "runtime_status.json",
+            emit_prompt_interval=1,
+            emit_sec_interval=1.0,
+        )
+
+        class FakeSession:
+            def __init__(
+                self,
+                *,
+                model,
+                env_record,
+                execution_mode,
+                replica_id=0,
+                gpu_assignment=None,
+                replica_log_path=None,
+                log_callback=None,
+            ) -> None:
+                self.replica_id = replica_id
+
+            def __enter__(self):
+                attempts[self.replica_id] = attempts.get(self.replica_id, 0) + 1
+                if self.replica_id == 1:
+                    raise RunFlowError("simulated secondary startup failure")
+                telemetry.record_runtime_event(
+                    f"[worker][{model.name}][replica={self.replica_id}] GPUs=[{self.replica_id}] ready"
+                )
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def run_task(self, prepared_task):
+                return 0, ""
+
+        def fake_execute_prepared_task(
+            *,
+            prepared_task,
+            runner,
+            run_id,
+            run_root,
+            failures,
+            progress,
+            ledger_writer,
+            telemetry=None,
+            state_lock=None,
+        ):
+            runner(prepared_task)
+            return TaskExecutionOutcome(
+                result_payload={
+                    "task_id": prepared_task.payload.task_id,
+                    "model_result": {"status": "success", "batch_items": []},
+                    "execution_result": {"exit_code": 0, "logs": "", "outputs": {}},
+                },
+                task_failed=False,
+                failed_prompt_count=0,
+                successful_prompt_count=1,
+                duration_sec=0.5,
+            )
+
+        def make_prepared(task_id: str, prompt_id: str) -> PreparedTask:
+            payload = TaskPayload(
+                task_id=task_id,
+                model_name=model.name,
+                execution_mode="mock",
+                prompts=[TaskPrompt(prompt_id=prompt_id, prompt=f"prompt {prompt_id}", language="en")],
+                params={},
+                workdir=str(tmpdir / task_id),
+                worker_strategy="persistent_worker",
+            )
+            return PreparedTask(
+                model=model,
+                payload=payload,
+                task_file=tmpdir / f"{task_id}.json",
+                result_file=tmpdir / f"{task_id}.result.json",
+                batch_number=int(task_id.rsplit("_", 1)[1]),
+                total_tasks_for_model=3,
+            )
+
+        replica_plans = [
+            ReplicaPlan(replica_id=0, gpu_assignment=[0], tasks=[make_prepared("task_001", "p001"), make_prepared("task_002", "p002"), make_prepared("task_003", "p003")]),
+            ReplicaPlan(replica_id=1, gpu_assignment=[1], tasks=[]),
+        ]
+        ledger_writer = RunLedgerWriter(tmpdir / "samples.jsonl")
+        try:
+            telemetry.set_plan(prepared_tasks_by_model={model.name: replica_plans[0].tasks})
+            telemetry.register_replica_assignments(model_name=model.name, replica_plans=replica_plans)
+            with patch("aigc.run_flow._PersistentWorkerSession", FakeSession), patch(
+                "aigc.run_flow._execute_prepared_task",
+                fake_execute_prepared_task,
+            ):
+                results = _run_persistent_worker_replicas(
+                    model=model,
+                    env_record=FakeEnvRecord(),
+                    replica_plans=replica_plans,
+                    execution_mode="mock",
+                    run_id="run_test",
+                    run_root=tmpdir,
+                    workers_root=tmpdir / "workers",
+                    failures=failures,
+                    progress=progress,
+                    ledger_writer=ledger_writer,
+                    telemetry=telemetry,
+                    failure_policy=FailurePolicy(),
+                    failure_budget=FailureBudget(total_planned_outputs=3),
+                )
+        finally:
+            ledger_writer.close()
+
+        snapshot = telemetry.finalize(status="completed")
+        self.assertEqual(len(results), 3)
+        self.assertEqual(attempts.get(1), 2)
+        self.assertEqual(len(failures), 1)
+        self.assertTrue(failures[0]["non_fatal"])
+        self.assertTrue(failures[0]["unavailable"])
+        self.assertEqual(failures[0]["category"], "worker_startup_error")
+        self.assertEqual(snapshot["models"][model.name]["replica_startup_failures"], 2)
+        self.assertEqual(snapshot["models"][model.name]["active_replicas"], 1)
+        self.assertTrue(snapshot["replicas"][model.name]["r1"]["unavailable"])
+        progress_text = progress_stream.getvalue()
+        self.assertIn("[WARN] model=CogVideoX-5B secondary replica=1 startup failed, retrying GPUs=[1]", progress_text)
+        self.assertIn(
+            "[WARN] model=CogVideoX-5B secondary replica=1 unavailable after retry, continuing with 1/2 active replicas GPUs=[1]",
+            progress_text,
+        )
 
     def test_runtime_telemetry_is_logged_and_persisted_during_run(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -690,6 +955,38 @@ class RunFlowTests(unittest.TestCase):
         self.assertEqual(manifest["runtime_status_path"], str(run_root / "runtime_status.json"))
         self.assertEqual(manifest["runtime_metrics"]["processed_prompts"], 10)
         self.assertIn("runtime_status_json", manifest["export_paths"])
+
+    def test_progress_events_are_logged_and_persisted(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        progress_stream = StringIO()
+        logger = RunLogger(log_path=tmpdir / "running.log")
+        telemetry = RunTelemetry(
+            run_id="run_progress",
+            execution_mode="real",
+            emit_callback=lambda _line: None,
+            status_path=tmpdir / "runtime_status.json",
+            emit_prompt_interval=1,
+            emit_sec_interval=999.0,
+        )
+        prepared_task = type("Prepared", (), {"payload": type("Payload", (), {"prompts": [object()]})()})
+        telemetry.set_plan(prepared_tasks_by_model={"Z-Image": [prepared_task]})
+        try:
+            _handle_runtime_event(
+                logger=logger,
+                terminal_progress=TextRunProgress(stream=progress_stream),
+                telemetry=telemetry,
+                message="[progress] model=Z-Image replica=0 task=task_001 batch=1 phase=generating step=7/40 true_progress=yes",
+            )
+        finally:
+            logger.close()
+
+        running_log = (tmpdir / "running.log").read_text(encoding="utf-8")
+        self.assertIn("[progress] model=Z-Image replica=0 task=task_001 batch=1 phase=generating step=7/40 true_progress=yes", running_log)
+        runtime_status = json.loads((tmpdir / "runtime_status.json").read_text(encoding="utf-8"))
+        replica = runtime_status["replicas"]["Z-Image"]["r0"]
+        self.assertEqual(replica["current_task_id"], "task_001")
+        self.assertEqual(replica["current_step"], 7)
+        self.assertEqual(replica["total_steps"], 40)
 
     def test_default_run_root_uses_runtime_settings(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -1377,7 +1674,7 @@ class RunFlowTests(unittest.TestCase):
             worker_runner=inprocess_worker_runner,
         )
 
-        self.assertEqual(summary.tasks_scheduled, 3)
+        self.assertEqual(summary.tasks_scheduled, 2)
         self.assertEqual(summary.records_exported, 4)
         ledger_records = [
             json.loads(line)

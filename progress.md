@@ -1,9 +1,96 @@
 # Progress
 
 ## Current Phase
-- Phase 23 — Semantic Terminal Color System for Long-Running Runs
+- Phase 25 — Replica-Level Live Batch Progress Board for Long-Running CLI Runs
 
 ## Completed
+- 2026-03-20 21:05:00 CST
+- Started Phase 25 to add true replica-local in-batch progress visibility for long-running CLI runs:
+  - extended adapter execution signatures to accept an optional `progress_callback`
+  - added `src/aigc/runtime/progress.py` with `TaskProgressReporter`
+  - persistent workers now translate adapter-side progress callbacks into structured `task_progress` events
+  - persistent workers also mirror rate-limited `[progress] ...` lines into replica logs / run logs
+- Wired initial true-progress support for current diffusers-based adapters:
+  - image diffusers adapters now inject diffusers callback hooks when supported
+  - video diffusers adapters now inject diffusers callback hooks when supported
+  - unsupported pipelines continue safely without fake percentages
+- Strengthened supervisor-owned telemetry state:
+  - `RunTelemetry` now parses `[progress] ...` lines
+  - `runtime_status.json` now captures per-replica live task progress fields such as:
+    - `current_task_id`
+    - `current_phase`
+    - `current_step`
+    - `total_steps`
+    - `supports_true_progress`
+- Added the first live terminal board implementation:
+  - `TextRunProgress` now starts a `rich.live` dashboard in interactive TTY mode
+  - dashboard includes:
+    - run overview
+    - replica progress table
+    - recent event panel
+  - non-TTY/plain output still degrades to line-based text progress
+- 2026-03-20 18:18:00 CST
+- Implemented Phase 24 staged multi-replica warmup for persistent workers:
+  - replaced the old “all replicas warm up sequentially, then all dispatch” path
+  - primary replica now bootstraps first and blocks secondary startup until it reaches ready
+  - once the primary replica is ready, task dispatch starts immediately
+  - secondary replicas are then launched concurrently and join the active worker pool dynamically as they become ready
+- Switched multi-replica persistent-worker dispatch from static shard ownership to dynamic task queueing:
+  - `ReplicaPlan.tasks` remains as planning metadata
+  - actual task execution now annotates replica context at dispatch time
+  - active replicas pull from a shared pending-task queue instead of keeping fixed task ownership
+  - this allows late-joining replicas to contribute without invalidating prompt/result traceability
+- Added secondary replica startup retry/degrade behavior:
+  - secondary startup now retries once on failure
+  - if retry still fails, the replica is marked unavailable and the model continues with reduced parallelism
+  - startup degradation is recorded into:
+    - terminal/log stream
+    - `failures.json`
+    - `runtime_status.json`
+    - final per-model manifest summary
+- Strengthened telemetry / manifest / replica summary reporting:
+  - model throughput lines now include `replicas_active=<active>/<requested>`
+  - runtime telemetry now tracks:
+    - started replicas
+    - active replicas
+    - replica startup failure counts
+    - unavailable replicas
+  - per-model manifest summaries now include:
+    - `replica_count_requested`
+    - `replica_count_started`
+    - `replica_count_active_final`
+    - `replica_startup_failures`
+  - per-replica manifest entries now use actual executed task counts instead of only planned shard counts
+- Updated terminal event semantics for the new warmup model:
+  - `bootstrapping primary ...`
+  - `primary replica ready, starting early dispatch ...`
+  - `warming secondary replicas count=...`
+  - `secondary replica=... ready, joined active pool ...`
+  - `secondary replica=... startup failed, retrying ...`
+  - `secondary replica=... unavailable after retry, continuing ...`
+- Added focused regression coverage for:
+  - primary-first blocking before secondary startup
+  - early dispatch before secondary readiness
+  - secondary startup retry-then-degrade
+  - dynamic multi-replica mock execution without local queue-manager sandbox dependence
+- Cleaned up one stale run-flow expectation discovered during broader regression:
+  - updated `test_video_multi_model_mock_run_exports_video_records`
+  - current batched mock semantics now schedule 2 tasks instead of the older expected 3
+- Ran targeted and broader lightweight regression:
+  - `python3 -m py_compile src/aigc/run_flow.py src/aigc/runtime_telemetry.py src/aigc/ui/runtime_ui.py tests/test_run_flow.py tests/test_runtime_telemetry.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_runtime_telemetry -v`
+  - result: 3 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_primary_ready_starts_early_dispatch_before_secondary_ready tests.test_run_flow.RunFlowTests.test_secondary_startup_failure_retries_once_then_degrades tests.test_run_flow.RunFlowTests.test_multi_replica_mock_run_shards_image_tasks_and_exports_replica_metadata tests.test_run_flow.RunFlowTests.test_multi_replica_mock_run_shards_video_tasks_and_uses_gpu_groups -v`
+  - result: 4 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_progress -v`
+  - result: 10 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_persistent_worker -v`
+  - result: 4 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs.RunsCliTests.test_handle_run_uses_profile_and_cli_overrides -v`
+  - result: 1 test passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow -v`
+  - result: 33 tests passed
 - 2026-03-20 20:32:00 CST
 - Ran targeted Phase 23 regression after wiring the semantic color system:
   - `python3 -m py_compile src/aigc/ui/runtime_ui.py src/aigc/utils/progress.py tests/test_progress.py`
@@ -1423,6 +1510,12 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime_telemetry.py
+- /Users/morinop/coding/whitzardgen/src/aigc/ui/runtime_ui.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/tests/test_runtime_telemetry.py
+- /Users/morinop/coding/whitzardgen/progress.md
 - /Users/morinop/coding/whitzardgen/src/aigc/ui/runtime_ui.py
 - /Users/morinop/coding/whitzardgen/src/aigc/utils/progress.py
 - /Users/morinop/coding/whitzardgen/tests/test_progress.py
@@ -1650,12 +1743,38 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-20 20:32:00 CST.
-- Phase 23 semantic terminal color work is now implemented locally and covered by targeted regression:
-  - terminal rendering now has a centralized semantic style layer
-  - real TTY terminals can render colored semantic tags and emphasized key fields
-  - plain-text fallback remains intact for logs, tests, and redirected output
-- Next immediate step is real terminal validation on the remote cluster to tune how the new semantic colors feel during long multi-replica runs.
+- Updated at 2026-03-20 21:25:00 CST.
+- Phase 25 replica-level live batch progress is now implemented locally:
+  - persistent workers emit structured in-task progress events
+  - diffusers-based adapters surface true denoising-step progress when callback hooks are available
+  - interactive TTY runs now render a live replica dashboard with:
+    - run overview
+    - replica progress board
+    - recent event stream
+  - non-interactive/plain output still degrades safely to line-based logs
+- Supervisor-owned telemetry now tracks current replica task/phase/step state and persists it into `runtime_status.json`.
+- Local regression is clean for the current Phase 25 slice:
+  - `tests.test_progress`
+  - `tests.test_runtime_telemetry`
+  - `tests.test_persistent_worker`
+  - `tests.test_video_adapter`
+  - `tests.test_zimage_adapter`
+  - `tests.test_cli_runs`
+  - full `tests.test_run_flow`
+- Next immediate step is real remote validation on a slow multi-replica run to confirm:
+  - the live board remains readable over long sessions
+  - true-progress models update smoothly
+  - spinner fallback models remain useful without becoming noisy
+- Updated at 2026-03-20 18:18:00 CST.
+- Phase 24 staged replica warmup is now implemented locally:
+  - primary replica boots first
+  - task dispatch starts as soon as primary is ready
+  - secondary replicas warm concurrently in the background
+  - failed secondary startup now retries once and then degrades cleanly instead of aborting the whole model segment
+- Run-flow regression is clean locally for the current suite slice:
+  - full `tests.test_run_flow` now passes
+  - telemetry / progress / persistent-worker neighboring tests also pass
+- Next immediate step is remote validation on a real heavy multi-replica model to confirm the new warmup strategy improves cluster startup behavior and cache reuse in practice.
 - Updated at 2026-03-20 16:50:00 CST.
 - The default model registry is now stored as actual YAML instead of JSON-in-YAML disguise.
 - Registry parsing now follows file-type-aware semantics, while temporary `.json` test registries still work.
@@ -1774,11 +1893,13 @@
 - The multi-replica scheduling work from Phase 11 remains in place underneath this improved logging layer.
 
 ## Blockers
-- A broader local `tests.test_run_flow` sweep exposed one unrelated existing failure outside the Phase 23 rendering surface:
-  - `test_video_multi_model_mock_run_exports_video_records`
-  - expected `summary.tasks_scheduled == 3`
-  - actual `summary.tasks_scheduled == 2`
-- This does not appear to stem from the terminal color changes, but it should be investigated before claiming a completely clean full local run-flow sweep.
+- No local code blockers in the Phase 25 implementation path.
+- Real remote validation is still needed to confirm the new live replica dashboard behaves well on long real cluster jobs, especially:
+  - slow video diffusion tasks
+  - multi-replica persistent-worker runs
+  - mixed true-progress and spinner-fallback models
+- Real remote validation is still needed to confirm the rate-limited `[progress] ...` lines are useful in `running.log` without becoming too chatty under heavy real inference.
+- No local code blockers in the Phase 24 implementation path.
 - No code blockers in the local Phase 20 implementation path.
 - Real remote validation is still needed to confirm the LongCat in-process path and the now-cleaned YAML registry behave as expected in the cluster-synced checkout.
 - Real remote validation is still needed to confirm the new LongCat in-process path works cleanly against the actual cluster checkout / checkpoint layout and achieves the desired load-once / run-many behavior.
@@ -1808,4 +1929,4 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
-- Validate Phase 23 on a real long-running cluster job and tune any remaining color/noise issues around replica snapshots, warning verbosity, and throughput cadence.
+- Validate Phase 25 on a real long-running multi-replica cluster run and tune the live replica board based on observed readability, smoothness, and `running.log` verbosity.

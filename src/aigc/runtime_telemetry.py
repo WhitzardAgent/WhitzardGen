@@ -13,6 +13,11 @@ _WORKER_RE = re.compile(
     r"^\[worker\]\[(?P<model>[^\]]+)\]\[replica=(?P<replica>\d+)\] "
     r"GPUs=(?P<gpus>\[[^\]]*\]) (?P<message>.+)$"
 )
+_PROGRESS_RE = re.compile(
+    r"^\[progress\]\s+model=(?P<model>\S+)\s+replica=(?P<replica>\d+)\s+"
+    r"task=(?P<task>\S+)(?:\s+batch_id=(?P<batch_id>\S+))?(?:\s+batch=(?P<batch_size>\d+))?\s+"
+    r"phase=(?P<phase>\S+)(?:\s+step=(?P<current>\d+)/(?P<total>\d+))?(?:\s+true_progress=(?P<true_progress>\S+))?"
+)
 
 
 @dataclass(slots=True)
@@ -28,6 +33,17 @@ class ReplicaTelemetry:
     state: str = "pending"
     load_duration_sec: float | None = None
     first_active_at: float | None = None
+    startup_failures: int = 0
+    unavailable: bool = False
+    current_task_id: str | None = None
+    current_batch_id: str | None = None
+    batch_size: int | None = None
+    current_phase: str | None = None
+    current_step: int | None = None
+    total_steps: int | None = None
+    last_progress_at: float | None = None
+    current_task_started_at: float | None = None
+    supports_true_progress: bool = False
 
     @property
     def processed_prompts(self) -> int:
@@ -121,7 +137,20 @@ class RunTelemetry:
         if not normalized:
             return
         match = _WORKER_RE.match(normalized)
-        if not match:
+        if match is None:
+            progress_match = _PROGRESS_RE.match(normalized)
+            if progress_match is not None:
+                self.record_progress_event(
+                    model_name=progress_match.group("model"),
+                    replica_id=int(progress_match.group("replica")),
+                    task_id=progress_match.group("task"),
+                    batch_id=progress_match.group("batch_id"),
+                    batch_size=int(progress_match.group("batch_size")) if progress_match.group("batch_size") else None,
+                    phase=progress_match.group("phase"),
+                    current_step=int(progress_match.group("current")) if progress_match.group("current") else None,
+                    total_steps=int(progress_match.group("total")) if progress_match.group("total") else None,
+                    supports_true_progress=(progress_match.group("true_progress") == "yes"),
+                )
             return
 
         model_name = match.group("model")
@@ -160,6 +189,44 @@ class RunTelemetry:
             replica.state = "stopped"
         self._write_status_snapshot(status="running")
 
+    def record_progress_event(
+        self,
+        *,
+        model_name: str,
+        replica_id: int,
+        task_id: str,
+        batch_id: str | None,
+        batch_size: int | None,
+        phase: str,
+        current_step: int | None,
+        total_steps: int | None,
+        supports_true_progress: bool,
+    ) -> None:
+        now = self._time()
+        model_metrics = self._models.setdefault(model_name, ModelTelemetry(model_name=model_name))
+        replica = model_metrics.replicas.setdefault(replica_id, ReplicaTelemetry(replica_id=replica_id))
+        if model_metrics.first_active_at is None:
+            model_metrics.first_active_at = now
+        if replica.first_active_at is None:
+            replica.first_active_at = now
+        replica.current_task_id = task_id
+        replica.current_batch_id = batch_id
+        replica.batch_size = batch_size
+        replica.current_phase = phase
+        replica.current_step = current_step
+        replica.total_steps = total_steps
+        replica.last_progress_at = now
+        replica.supports_true_progress = supports_true_progress
+        if replica.current_task_started_at is None:
+            replica.current_task_started_at = now
+        if phase in {"preparing_batch", "generating", "exporting"}:
+            replica.state = "running"
+        elif phase == "completed":
+            replica.state = "ready"
+        elif phase == "failed":
+            replica.state = "failed"
+        self._write_status_snapshot(status="running")
+
     def record_task_start(
         self,
         *,
@@ -177,6 +244,26 @@ class RunTelemetry:
             if replica.first_active_at is None:
                 replica.first_active_at = now
             replica.state = "running"
+            replica.current_task_id = task_id
+            replica.current_task_started_at = now
+        self._write_status_snapshot(status="running")
+
+    def record_replica_startup_failure(
+        self,
+        *,
+        model_name: str,
+        replica_id: int,
+        gpu_assignment: list[int],
+        unavailable: bool,
+    ) -> None:
+        model_metrics = self._models.setdefault(model_name, ModelTelemetry(model_name=model_name))
+        replica = model_metrics.replicas.setdefault(replica_id, ReplicaTelemetry(replica_id=replica_id))
+        replica.gpu_assignment = list(gpu_assignment)
+        replica.startup_failures += 1
+        replica.unavailable = unavailable
+        replica.state = "unavailable" if unavailable else "failed"
+        if model_metrics.first_active_at is None:
+            model_metrics.first_active_at = self._time()
         self._write_status_snapshot(status="running")
 
     def record_task_outcome(
@@ -215,6 +302,11 @@ class RunTelemetry:
             replica.successful_prompts += successful_prompts
             replica.failed_prompts += failed_prompts
             replica.state = "ready" if not task_failed else "failed"
+            replica.current_phase = "completed" if not task_failed else "failed"
+            replica.current_step = replica.total_steps
+            replica.current_task_id = None
+            replica.current_batch_id = None
+            replica.current_task_started_at = None
             if replica.first_active_at is None:
                 replica.first_active_at = now
 
@@ -240,6 +332,16 @@ class RunTelemetry:
         for model_name, model_metrics in sorted(self._models.items()):
             model_elapsed = _elapsed_since(model_metrics.first_active_at, self._started_at, self._time)
             model_rate = _rate_per_min(model_metrics.processed_prompts, model_elapsed)
+            started_replicas = sum(
+                1
+                for replica in model_metrics.replicas.values()
+                if replica.state not in {"pending"}
+            )
+            active_replicas = sum(
+                1
+                for replica in model_metrics.replicas.values()
+                if replica.state not in {"pending", "failed", "unavailable"}
+            )
             models_payload[model_name] = {
                 "total_prompts": model_metrics.total_prompts,
                 "processed_prompts": model_metrics.processed_prompts,
@@ -254,6 +356,10 @@ class RunTelemetry:
                     total=model_metrics.total_prompts,
                     rate_per_min=model_rate,
                 ),
+                "requested_replicas": len(model_metrics.replicas),
+                "started_replicas": started_replicas,
+                "active_replicas": active_replicas,
+                "replica_startup_failures": sum(replica.startup_failures for replica in model_metrics.replicas.values()),
                 "avg_model_load_sec": round(sum(model_metrics.load_durations_sec) / len(model_metrics.load_durations_sec), 3)
                 if model_metrics.load_durations_sec
                 else None,
@@ -278,6 +384,17 @@ class RunTelemetry:
                         3,
                     ),
                     "load_duration_sec": replica.load_duration_sec,
+                    "startup_failures": replica.startup_failures,
+                    "unavailable": replica.unavailable,
+                    "current_task_id": replica.current_task_id,
+                    "current_batch_id": replica.current_batch_id,
+                    "batch_size": replica.batch_size,
+                    "current_phase": replica.current_phase,
+                    "current_step": replica.current_step,
+                    "total_steps": replica.total_steps,
+                    "last_progress_at": round(replica.last_progress_at, 3) if replica.last_progress_at is not None else None,
+                    "current_task_started_at": round(replica.current_task_started_at, 3) if replica.current_task_started_at is not None else None,
+                    "supports_true_progress": replica.supports_true_progress,
                 }
                 for replica_id, replica in sorted(model_metrics.replicas.items())
             }
@@ -355,6 +472,7 @@ class RunTelemetry:
                     rate_per_min=float(payload["rate_per_min"]),
                     eta_sec=payload["eta_sec"],
                     replica_count=replica_count if replica_count > 1 else None,
+                    active_replica_count=int(payload.get("active_replicas", 0)),
                 )
             )
             if isinstance(replicas, dict) and len(replicas) > 1:
@@ -433,6 +551,7 @@ def _format_throughput_line(
     rate_per_min: float,
     eta_sec: object,
     replica_count: int | None = None,
+    active_replica_count: int | None = None,
 ) -> str:
     parts = [
         "[THROUGHPUT]",
@@ -442,7 +561,10 @@ def _format_throughput_line(
         f"failed={failed_prompts}",
     ]
     if replica_count is not None:
-        parts.append(f"replicas={replica_count}")
+        if active_replica_count is not None and active_replica_count > 0:
+            parts.append(f"replicas_active={active_replica_count}/{replica_count}")
+        else:
+            parts.append(f"replicas={replica_count}")
     eta = _format_eta(eta_sec)
     if eta is not None:
         parts.append(f"eta={eta}")
@@ -460,5 +582,6 @@ def _format_replica_line(
         f"[REPLICA] model={model_name} {replica_name} {gpus} "
         f"{replica_payload.get('state', 'unknown')} "
         f"{replica_payload.get('processed_prompts', 0)}/{replica_payload.get('assigned_prompts', 0)} "
-        f"rate={float(replica_payload.get('rate_per_min', 0.0)):.1f}/min"
+        f"rate={float(replica_payload.get('rate_per_min', 0.0)):.1f}/min "
+        f"startup_failures={int(replica_payload.get('startup_failures', 0))}"
     )

@@ -254,6 +254,79 @@ class VideoAdapterTests(unittest.TestCase):
 
         self.assertEqual(frames, [[b"frame-1"], [b"frame-2"]])
 
+    def test_wan_generate_frames_emits_true_progress_steps(self) -> None:
+        registry = load_registry()
+        adapter = WanT2VDiffusersAdapter(
+            model_config=registry.get_model("Wan2.2-T2V-A14B-Diffusers")
+        )
+        plan = adapter.prepare(
+            prompts=["prompt one"],
+            prompt_ids=["p001"],
+            params={"_runtime_config": {"execution_mode": "real"}},
+            workdir=tempfile.mkdtemp(),
+        )
+        events: list[dict[str, object]] = []
+
+        class _FakePipe:
+            def __call__(
+                self,
+                *,
+                prompt,
+                negative_prompt,
+                height,
+                width,
+                num_frames,
+                guidance_scale,
+                guidance_scale_2,
+                num_inference_steps,
+                callback_on_step_end=None,
+                callback_on_step_end_tensor_inputs=None,
+                **kwargs,
+            ):
+                del (
+                    prompt,
+                    negative_prompt,
+                    height,
+                    width,
+                    num_frames,
+                    guidance_scale,
+                    guidance_scale_2,
+                    callback_on_step_end_tensor_inputs,
+                    kwargs,
+                )
+                for step_index in range(num_inference_steps):
+                    if callback_on_step_end is not None:
+                        callback_on_step_end(self, step_index, 0, {})
+                return type("Output", (), {"frames": [[b"frame-1"]]})()
+
+        class _FakeTorch:
+            class Generator:
+                def __init__(self, device: str) -> None:
+                    self.device = device
+
+                def manual_seed(self, seed: int):
+                    return self
+
+        frames = adapter.generate_frames_batch(
+            pipe=_FakePipe(),
+            plan=plan,
+            prompts=["prompt one"],
+            negative_prompts=[""],
+            width=1280,
+            height=720,
+            num_frames=81,
+            num_inference_steps=4,
+            guidance_scale=4.0,
+            seed=None,
+            torch=_FakeTorch,
+            device="cuda",
+            progress_callback=events.append,
+        )
+
+        self.assertEqual(frames, [[b"frame-1"]])
+        self.assertEqual([event["current_step"] for event in events], [1, 2, 3, 4])
+        self.assertTrue(all(event["supports_true_progress"] for event in events))
+
     def test_wan_load_pipeline_enables_low_cpu_mem_usage(self) -> None:
         registry = load_registry()
         tmpdir = Path(tempfile.mkdtemp())

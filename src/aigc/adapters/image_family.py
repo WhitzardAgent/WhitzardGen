@@ -5,6 +5,7 @@ import struct
 import zlib
 from pathlib import Path
 from typing import Any
+import inspect
 
 from aigc.adapters.base import (
     AdapterCapabilities,
@@ -14,6 +15,7 @@ from aigc.adapters.base import (
     ExecutionPlan,
     ExecutionResult,
     ModelResult,
+    ProgressCallback,
 )
 
 
@@ -61,6 +63,7 @@ class MockCapableImageAdapter(BaseAdapter):
         prompts: list[str],
         params: dict[str, Any],
         workdir: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> ExecutionResult:
         runtime = dict(plan.inputs.get("runtime", {}))
         if runtime.get("execution_mode") == "mock":
@@ -71,7 +74,12 @@ class MockCapableImageAdapter(BaseAdapter):
                 outputs=outputs,
             )
 
-        outputs = self._execute_real(plan=plan, prompts=prompts, workdir=workdir)
+        outputs = self._execute_real(
+            plan=plan,
+            prompts=prompts,
+            workdir=workdir,
+            progress_callback=progress_callback,
+        )
         return ExecutionResult(
             exit_code=0,
             logs=f"{self.model_config.name} image generation completed.",
@@ -209,6 +217,7 @@ class MockCapableImageAdapter(BaseAdapter):
         plan: ExecutionPlan,
         prompts: list[str],
         workdir: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, dict[str, Any]]:
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement real image execution yet."
@@ -240,6 +249,7 @@ class DiffusersImageAdapterBase(MockCapableImageAdapter):
         plan: ExecutionPlan,
         prompts: list[str],
         workdir: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, dict[str, Any]]:
         prompt_ids = list(plan.inputs["prompt_ids"])
         width = int(plan.inputs["width"])
@@ -265,6 +275,13 @@ class DiffusersImageAdapterBase(MockCapableImageAdapter):
             "num_inference_steps": num_inference_steps,
             self.guidance_argument_name: guidance_scale,
         }
+        call_kwargs.update(
+            _build_diffusers_progress_kwargs(
+                pipe=pipe,
+                total_steps=num_inference_steps,
+                progress_callback=progress_callback,
+            )
+        )
         if generators is not None:
             call_kwargs["generator"] = generators
         if self.capabilities.supports_negative_prompt:
@@ -336,6 +353,54 @@ class DiffusersImageAdapterBase(MockCapableImageAdapter):
 
     def cuda_variant(self) -> str | None:
         return None
+
+
+def _build_diffusers_progress_kwargs(
+    *,
+    pipe: Any,
+    total_steps: int,
+    progress_callback: ProgressCallback | None,
+) -> dict[str, Any]:
+    if progress_callback is None:
+        return {}
+    try:
+        signature = inspect.signature(pipe.__call__)
+    except (TypeError, ValueError):
+        return {}
+
+    def legacy_callback(step_index: int, _timestep: Any, _latents: Any) -> None:
+        progress_callback(
+            {
+                "phase": "generating",
+                "current_step": int(step_index) + 1,
+                "total_steps": int(total_steps),
+                "supports_true_progress": True,
+            }
+        )
+
+    def callback_on_step_end(_pipe: Any, step_index: int, _timestep: Any, callback_kwargs: dict[str, Any]):
+        progress_callback(
+            {
+                "phase": "generating",
+                "current_step": int(step_index) + 1,
+                "total_steps": int(total_steps),
+                "supports_true_progress": True,
+            }
+        )
+        return callback_kwargs
+
+    parameters = signature.parameters
+    if "callback_on_step_end" in parameters:
+        kwargs: dict[str, Any] = {"callback_on_step_end": callback_on_step_end}
+        if "callback_on_step_end_tensor_inputs" in parameters:
+            kwargs["callback_on_step_end_tensor_inputs"] = []
+        return kwargs
+    if "callback" in parameters:
+        kwargs = {"callback": legacy_callback}
+        if "callback_steps" in parameters:
+            kwargs["callback_steps"] = 1
+        return kwargs
+    return {}
 
 
 class ZImageTurboAdapter(DiffusersImageAdapterBase):

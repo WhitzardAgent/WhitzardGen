@@ -18,6 +18,7 @@ from aigc.runtime.persistent_ipc import (
     PersistentWorkerQueueManager,
     register_client_queues,
 )
+from aigc.runtime.progress import TaskProgressReporter
 from aigc.runtime.worker import build_adapter, execute_task_payload
 from aigc.utils.runtime_logging import format_log_line
 
@@ -184,17 +185,51 @@ def run_persistent_worker_loop(
                 gpu_assignment,
                 f"running task {payload.task_id} batch_size={len(payload.prompts)}",
             )
+            progress_reporter = TaskProgressReporter(
+                model_name=model_name,
+                replica_id=replica_id,
+                task_id=payload.task_id,
+                batch_id=payload.batch_id,
+                batch_size=len(payload.prompts),
+                emit_event=lambda progress_payload: _emit_event(
+                    event_queue,
+                    {
+                        **progress_payload,
+                        "event": "task_progress",
+                        "model_name": model_name,
+                        "replica_id": replica_id,
+                        "task_id": payload.task_id,
+                        "batch_id": payload.batch_id,
+                        "batch_size": len(payload.prompts),
+                    },
+                ),
+                emit_log=lambda line: _log(
+                    log_queue,
+                    model_name,
+                    replica_id,
+                    gpu_assignment,
+                    line,
+                ),
+            )
+            progress_reporter.phase("preparing_batch")
             phase = "task_execution"
             try:
                 with contextlib.redirect_stdout(stdio_sink), contextlib.redirect_stderr(stdio_sink):
+                    progress_reporter.phase("generating")
                     result = execute_task_payload(
                         payload,
                         registry_path=registry_path,
                         adapter=adapter,
+                        progress_callback=lambda progress_payload: _handle_progress_payload(
+                            reporter=progress_reporter,
+                            payload=progress_payload,
+                        ),
                     )
+                progress_reporter.phase("exporting")
                 result_file.write_text(json.dumps(result, indent=2), encoding="utf-8")
                 status = str(result["model_result"]["status"])
                 artifact_count = _count_artifacts(result)
+                progress_reporter.phase("completed")
                 _log(
                     log_queue,
                     model_name,
@@ -216,6 +251,7 @@ def run_persistent_worker_loop(
             except Exception as exc:  # pragma: no cover - exercised through subprocess boundary
                 traceback_text = traceback.format_exc()
                 stdio_sink.write(traceback_text)
+                progress_reporter.phase("failed", message=str(exc))
                 failure = {
                     "task_id": payload.task_id,
                     "model_name": payload.model_name,
@@ -309,6 +345,24 @@ def _safe_emit_worker_failed(
                 "traceback": traceback_text,
             },
         )
+
+
+def _handle_progress_payload(*, reporter: TaskProgressReporter, payload: dict[str, object]) -> None:
+    phase = str(payload.get("phase", "generating"))
+    current_step = payload.get("current_step")
+    total_steps = payload.get("total_steps")
+    message = str(payload.get("message", "")).strip() or None
+    supports_true_progress = bool(payload.get("supports_true_progress", False))
+    if current_step is not None and total_steps is not None:
+        reporter.step(
+            int(current_step),
+            int(total_steps),
+            phase=phase,
+            message=message,
+            supports_true_progress=supports_true_progress,
+        )
+        return
+    reporter.phase(phase, message=message)
 
 
 def _log(log_queue, model_name: str, replica_id: int, gpu_assignment: list[int], message: str) -> None:

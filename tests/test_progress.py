@@ -177,6 +177,34 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("completed_with_failures", rendered.plain)
         self.assertGreaterEqual(len(rendered.spans), 2)
 
+    def test_runtime_ui_live_dashboard_tracks_progress_lines(self) -> None:
+        try:
+            from rich.console import Group
+        except Exception as exc:  # pragma: no cover - depends on local env
+            self.skipTest(f"rich not installed: {exc}")
+
+        ui = RuntimeTerminalUI(enable_color=True)
+        ui.render_header(
+            RunHeaderData(
+                run_id="run_001",
+                execution_mode="real",
+                model_names=["Wan2.2-T2V-A14B-Diffusers"],
+                prompt_source="prompts/test.txt",
+                output_dir="/tmp/runs/run_001",
+                running_log_path="/tmp/runs/run_001/running.log",
+                prompt_count=20,
+            )
+        )
+        ui.render_event("[worker][Wan2.2-T2V-A14B-Diffusers][replica=0] GPUs=[0] ready")
+        ui.render_event(
+            "[progress] model=Wan2.2-T2V-A14B-Diffusers replica=0 task=task_001 batch=2 phase=generating step=12/40 true_progress=yes"
+        )
+
+        dashboard = ui.render_live_dashboard(
+            ["2026-03-20 20:15:00 [THROUGHPUT] model=Wan2.2-T2V-A14B-Diffusers prompts=2/20 rate=6.0/min"]
+        )
+        self.assertIsInstance(dashboard, Group)
+
     def test_build_run_progress_uses_null_for_json(self) -> None:
         progress = build_run_progress(output_mode="json")
         # NullRunProgress has no observable behavior; we just ensure stage

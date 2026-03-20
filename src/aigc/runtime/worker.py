@@ -42,6 +42,7 @@ def execute_task_payload(
     registry_path: str | None = None,
     *,
     adapter=None,
+    progress_callback=None,
 ) -> dict:
     workdir = Path(payload.workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +101,7 @@ def execute_task_payload(
             prompts=prompts,
             params=payload.params,
             workdir=str(workdir),
+            progress_callback=progress_callback,
         )
 
     model_result = adapter.collect(

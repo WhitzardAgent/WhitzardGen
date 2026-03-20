@@ -219,11 +219,61 @@ def _build_per_model_summary(
     task_results: list[tuple[ModelInfo, TaskPayload, dict]],
     worker_strategies: dict[str, str],
     replica_plans_by_model: dict[str, list[ReplicaPlan]],
+    runtime_metrics: dict[str, object] | None = None,
 ) -> dict[str, dict[str, object]]:
     per_model_summary: dict[str, dict[str, object]] = {}
+    models_runtime = runtime_metrics.get("models", {}) if isinstance(runtime_metrics, dict) else {}
+    replicas_runtime = runtime_metrics.get("replicas", {}) if isinstance(runtime_metrics, dict) else {}
     for model in models:
         model_records = [record for record in all_records if record["model_name"] == model.name]
         replica_plans = replica_plans_by_model.get(model.name, [])
+        planned_replicas = {
+            replica_plan.replica_id: replica_plan
+            for replica_plan in replica_plans
+        }
+        model_runtime = models_runtime.get(model.name, {}) if isinstance(models_runtime, dict) else {}
+        replica_runtime = replicas_runtime.get(model.name, {}) if isinstance(replicas_runtime, dict) else {}
+        actual_task_counts: dict[int, int] = {}
+        for task_model, payload, _result in task_results:
+            if task_model.name != model.name:
+                continue
+            replica_id = payload.runtime_config.get("replica_id")
+            if replica_id is None:
+                continue
+            actual_task_counts[int(replica_id)] = actual_task_counts.get(int(replica_id), 0) + 1
+
+        replica_entries: list[dict[str, object]] = []
+        all_replica_ids = sorted(
+            set(planned_replicas)
+            | {
+                int(replica_key.removeprefix("r"))
+                for replica_key in replica_runtime.keys()
+            }
+            | set(actual_task_counts)
+        )
+        for replica_id in all_replica_ids:
+            plan = planned_replicas.get(replica_id)
+            runtime_payload = replica_runtime.get(f"r{replica_id}", {}) if isinstance(replica_runtime, dict) else {}
+            gpu_assignment = (
+                list(runtime_payload.get("gpu_assignment", []))
+                if isinstance(runtime_payload, dict) and runtime_payload.get("gpu_assignment") is not None
+                else list(plan.gpu_assignment) if plan is not None else []
+            )
+            replica_entries.append(
+                {
+                    "replica_id": replica_id,
+                    "gpu_assignment": gpu_assignment,
+                    "planned_task_count": len(plan.tasks) if plan is not None else 0,
+                    "task_count": actual_task_counts.get(replica_id, 0),
+                    "state": runtime_payload.get("state") if isinstance(runtime_payload, dict) else None,
+                    "startup_failures": int(runtime_payload.get("startup_failures", 0))
+                    if isinstance(runtime_payload, dict)
+                    else 0,
+                    "unavailable": bool(runtime_payload.get("unavailable", False))
+                    if isinstance(runtime_payload, dict)
+                    else False,
+                }
+            )
         per_model_summary[model.name] = {
             "record_count": len(model_records),
             "task_count": len([result for result in task_results if result[0].name == model.name]),
@@ -231,6 +281,16 @@ def _build_per_model_summary(
             "task_type": model.task_type,
             "worker_strategy": worker_strategies.get(model.name, "per_task_worker"),
             "replica_count": len(replica_plans) or 1,
+            "replica_count_requested": len(replica_plans) or 1,
+            "replica_count_started": int(model_runtime.get("started_replicas", 0))
+            if isinstance(model_runtime, dict)
+            else 0,
+            "replica_count_active_final": int(model_runtime.get("active_replicas", 0))
+            if isinstance(model_runtime, dict)
+            else 0,
+            "replica_startup_failures": int(model_runtime.get("replica_startup_failures", 0))
+            if isinstance(model_runtime, dict)
+            else 0,
             "conda_env_name": model.conda_env_name,
             "execution_mode": model.execution_mode,
             "backend_execution_mode": model.backend_execution_mode,
@@ -240,14 +300,7 @@ def _build_per_model_summary(
             "supports_multi_replica": model.supports_multi_replica,
             "max_gpus": model.max_gpus,
             "local_paths": dict(model.local_paths),
-            "replicas": [
-                {
-                    "replica_id": replica_plan.replica_id,
-                    "gpu_assignment": replica_plan.gpu_assignment,
-                    "task_count": len(replica_plan.tasks),
-                }
-                for replica_plan in replica_plans
-            ],
+            "replicas": replica_entries,
         }
     return per_model_summary
 
@@ -572,15 +625,16 @@ def run_recovery_plan(
         stage_index += 1
 
         progress.stage_start(stage_index, total_stages, "Writing run manifest")
+        runtime_metrics = telemetry.finalize(
+            status="completed_with_failures" if failure_budget.failed_prompt_outputs else "completed"
+        )
         per_model_summary = _build_per_model_summary(
             models=models,
             all_records=all_records,
             task_results=task_results,
             worker_strategies=worker_strategies,
             replica_plans_by_model=replica_plans_by_model,
-        )
-        runtime_metrics = telemetry.finalize(
-            status="completed_with_failures" if failure_budget.failed_prompt_outputs else "completed"
+            runtime_metrics=runtime_metrics,
         )
 
         run_manifest = {
@@ -712,6 +766,8 @@ def run_recovery_plan(
         raise
     finally:
         ledger_writer.close()
+        with contextlib.suppress(Exception):
+            progress.close()
         run_logger.close()
 
     return RunSummary(
@@ -1093,15 +1149,16 @@ def run_models(
         stage_index += 1
 
         progress.stage_start(stage_index, total_stages, "Writing run manifest")
+        runtime_metrics = telemetry.finalize(
+            status="completed_with_failures" if failure_budget.failed_prompt_outputs else "completed"
+        )
         per_model_summary = _build_per_model_summary(
             models=models,
             all_records=all_records,
             task_results=task_results,
             worker_strategies=worker_strategies,
             replica_plans_by_model=replica_plans_by_model,
-        )
-        runtime_metrics = telemetry.finalize(
-            status="completed_with_failures" if failure_budget.failed_prompt_outputs else "completed"
+            runtime_metrics=runtime_metrics,
         )
 
         run_manifest = {
@@ -1244,6 +1301,8 @@ def run_models(
         raise
     finally:
         ledger_writer.close()
+        with contextlib.suppress(Exception):
+            progress.close()
         run_logger.close()
 
     return RunSummary(
@@ -1479,6 +1538,9 @@ class _PersistentWorkerSession:
                     event["task_id"] = task_id
                 self._state = "failed"
                 raise self._build_worker_failed_error(event)
+            if event_name == "task_progress":
+                self._log_line(self._format_progress_event(event))
+                continue
             if event_name == "shutdown" and expected_event == "shutdown":
                 return event
             self._log_line(
@@ -1655,6 +1717,32 @@ class _PersistentWorkerSession:
             self._replica_log_handle.flush()
         if self.log_callback is not None:
             self.log_callback(text)
+
+    def _format_progress_event(self, event: dict[str, object]) -> str:
+        parts = [
+            f"[progress] model={self.model.name}",
+            f"replica={self.replica_id}",
+        ]
+        task_id = event.get("task_id")
+        if task_id not in (None, ""):
+            parts.append(f"task={task_id}")
+        batch_id = event.get("batch_id")
+        if batch_id not in (None, ""):
+            parts.append(f"batch_id={batch_id}")
+        batch_size = event.get("batch_size")
+        if batch_size not in (None, ""):
+            parts.append(f"batch={batch_size}")
+        parts.append(f"phase={event.get('phase', 'unknown')}")
+        current_step = event.get("current_step")
+        total_steps = event.get("total_steps")
+        if current_step is not None and total_steps is not None:
+            parts.append(f"step={current_step}/{total_steps}")
+        if event.get("supports_true_progress"):
+            parts.append("true_progress=yes")
+        message = str(event.get("message", "")).strip()
+        if message:
+            parts.append(f"message={message}")
+        return " ".join(parts)
 
 
 def _execute_prepared_task(
@@ -2280,13 +2368,6 @@ def _plan_replicas_for_model(
     for replica_id in range(replica_count):
         tasks = sharded_tasks[replica_id]
         gpu_assignment = gpu_assignments[replica_id] if replica_id < len(gpu_assignments) else []
-        for prepared_task in tasks:
-            _annotate_task_with_replica_context(
-                prepared_task=prepared_task,
-                replica_id=replica_id,
-                gpu_assignment=gpu_assignment,
-                replica_count=replica_count,
-            )
         replica_plans.append(
             ReplicaPlan(
                 replica_id=replica_id,
@@ -2379,6 +2460,23 @@ def _annotate_task_with_replica_context(
     )
 
 
+def _build_dynamic_replica_task_queue(replica_plans: list[ReplicaPlan]) -> queue.Queue[PreparedTask]:
+    task_queue: queue.Queue[PreparedTask] = queue.Queue()
+    replica_count = len(replica_plans)
+    ordered_tasks = sorted(
+        (prepared_task for replica_plan in replica_plans for prepared_task in replica_plan.tasks),
+        key=lambda prepared_task: (prepared_task.batch_number, prepared_task.payload.task_id),
+    )
+    for prepared_task in ordered_tasks:
+        prepared_task.payload.runtime_config["replica_count"] = replica_count
+        prepared_task.task_file.write_text(
+            json.dumps(prepared_task.payload.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        task_queue.put(prepared_task)
+    return task_queue
+
+
 def _log_replica_plan(
     *,
     progress: RunProgress,
@@ -2399,6 +2497,43 @@ def _log_replica_plan(
 
 def _replica_log_path(workers_root: Path, model_name: str, replica_id: int) -> Path:
     return workers_root / _slugify(model_name) / f"replica_{replica_id}.log"
+
+
+def _record_replica_startup_failure(
+    *,
+    run_root: Path,
+    failures: list[dict[str, object]],
+    model: ModelInfo,
+    replica_id: int,
+    gpu_assignment: list[int],
+    error_message: str,
+    state_lock: threading.Lock | None = None,
+    unavailable: bool,
+) -> None:
+    failure_record = {
+        "task_id": None,
+        "model_name": model.name,
+        "status": "failed",
+        "error": error_message,
+        "category": "worker_startup_error",
+        "execution_mode": model.execution_mode,
+        "worker_strategy": model.worker_strategy,
+        "batch_id": None,
+        "prompt_count": 0,
+        "prompt_ids": [],
+        "replica_id": replica_id,
+        "gpu_assignment": list(gpu_assignment),
+        "non_fatal": True,
+        "phase": "replica_startup",
+        "unavailable": unavailable,
+    }
+    if state_lock is not None:
+        with state_lock:
+            failures.append(failure_record)
+            write_failures_summary(run_root, failures)
+    else:
+        failures.append(failure_record)
+        write_failures_summary(run_root, failures)
 
 
 def _run_persistent_worker_replicas(
@@ -2424,87 +2559,174 @@ def _run_persistent_worker_replicas(
     errors: list[BaseException] = []
     threads: list[threading.Thread] = []
     stop_event = threading.Event()
-    session_bindings: list[tuple[ReplicaPlan, _PersistentWorkerSession]] = []
+    primary_ready = threading.Event()
+    dispatch_started = threading.Event()
+    task_queue = _build_dynamic_replica_task_queue(replica_plans)
+    total_replicas = len(replica_plans)
+    active_replicas: set[int] = set()
 
-    def run_replica(replica_plan: ReplicaPlan) -> None:
+    def current_active_count() -> int:
+        with lock:
+            return len(active_replicas)
+
+    def run_replica(replica_plan: ReplicaPlan, *, is_primary: bool) -> None:
+        max_attempts = 1 if is_primary else 2
+        attempt = 0
         try:
-            session = next(
-                bound_session
-                for bound_plan, bound_session in session_bindings
-                if bound_plan.replica_id == replica_plan.replica_id
-            )
-            for prepared_task in replica_plan.tasks:
-                if stop_event.is_set():
-                    break
-                outcome = _execute_prepared_task(
-                    prepared_task=prepared_task,
-                    runner=lambda task, session=session: session.run_task(task),
-                    run_id=run_id,
-                    run_root=run_root,
-                    failures=failures,
-                    progress=progress,
-                    ledger_writer=ledger_writer,
-                    telemetry=telemetry,
-                    state_lock=lock,
-                )
-                _apply_failure_policy_after_task(
-                    outcome=outcome,
-                    prepared_task=prepared_task,
-                    failure_policy=failure_policy,
-                    failure_budget=failure_budget,
-                    progress=progress,
-                    model_name=model.name,
-                )
-                with lock:
-                    task_results.append((model, prepared_task.payload, outcome.result_payload))
+            while attempt < max_attempts and not stop_event.is_set():
+                attempt += 1
+                try:
+                    with _PersistentWorkerSession(
+                        model=model,
+                        env_record=env_record,
+                        execution_mode=execution_mode,
+                        replica_id=replica_plan.replica_id,
+                        gpu_assignment=replica_plan.gpu_assignment,
+                        replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
+                        log_callback=log_callback,
+                    ) as session:
+                        with lock:
+                            active_replicas.add(replica_plan.replica_id)
+                        if is_primary:
+                            progress.env_message(
+                                f"[run][{model.name}] primary replica ready, starting early dispatch "
+                                f"replica={replica_plan.replica_id} GPUs={replica_plan.gpu_assignment}"
+                            )
+                            primary_ready.set()
+                        else:
+                            progress.env_message(
+                                f"[run][{model.name}] secondary replica={replica_plan.replica_id} "
+                                f"ready, joined active pool GPUs={replica_plan.gpu_assignment} "
+                                f"replicas_active={current_active_count()}/{total_replicas}"
+                            )
+
+                        if is_primary:
+                            dispatch_started.wait()
+
+                        while not stop_event.is_set():
+                            try:
+                                prepared_task = task_queue.get_nowait()
+                            except queue.Empty:
+                                return
+                            _annotate_task_with_replica_context(
+                                prepared_task=prepared_task,
+                                replica_id=replica_plan.replica_id,
+                                gpu_assignment=replica_plan.gpu_assignment,
+                                replica_count=total_replicas,
+                            )
+                            outcome = _execute_prepared_task(
+                                prepared_task=prepared_task,
+                                runner=lambda task, session=session: session.run_task(task),
+                                run_id=run_id,
+                                run_root=run_root,
+                                failures=failures,
+                                progress=progress,
+                                ledger_writer=ledger_writer,
+                                telemetry=telemetry,
+                                state_lock=lock,
+                            )
+                            _apply_failure_policy_after_task(
+                                outcome=outcome,
+                                prepared_task=prepared_task,
+                                failure_policy=failure_policy,
+                                failure_budget=failure_budget,
+                                progress=progress,
+                                model_name=model.name,
+                            )
+                            with lock:
+                                task_results.append((model, prepared_task.payload, outcome.result_payload))
+                        return
+                except BaseException as exc:  # pragma: no cover - exercised via thread/integration path
+                    error_message = str(exc).strip() or exc.__class__.__name__
+                    if is_primary:
+                        with lock:
+                            errors.append(exc)
+                        stop_event.set()
+                        primary_ready.set()
+                        return
+                    if attempt < max_attempts and not stop_event.is_set():
+                        if telemetry is not None:
+                            telemetry.record_replica_startup_failure(
+                                model_name=model.name,
+                                replica_id=replica_plan.replica_id,
+                                gpu_assignment=replica_plan.gpu_assignment,
+                                unavailable=False,
+                            )
+                        progress.env_message(
+                            f"[run][{model.name}] secondary replica={replica_plan.replica_id} "
+                            f"startup failed, retrying GPUs={replica_plan.gpu_assignment}"
+                        )
+                        continue
+                    if telemetry is not None:
+                        telemetry.record_replica_startup_failure(
+                            model_name=model.name,
+                            replica_id=replica_plan.replica_id,
+                            gpu_assignment=replica_plan.gpu_assignment,
+                            unavailable=True,
+                        )
+                    _record_replica_startup_failure(
+                        run_root=run_root,
+                        failures=failures,
+                        model=model,
+                        replica_id=replica_plan.replica_id,
+                        gpu_assignment=replica_plan.gpu_assignment,
+                        error_message=error_message,
+                        state_lock=lock,
+                        unavailable=True,
+                    )
+                    progress.env_message(
+                        f"[run][{model.name}] secondary replica={replica_plan.replica_id} "
+                        f"unavailable after retry, continuing with {current_active_count()}/{total_replicas} "
+                        f"active replicas GPUs={replica_plan.gpu_assignment}"
+                    )
+                    return
         except BaseException as exc:  # pragma: no cover - exercised via thread/integration path
             with lock:
                 errors.append(exc)
                 stop_event.set()
+        finally:
+            with lock:
+                active_replicas.discard(replica_plan.replica_id)
 
-    with contextlib.ExitStack() as stack:
-        total_replicas = len(replica_plans)
-        for warmup_index, replica_plan in enumerate(replica_plans, start=1):
-            progress.env_message(
-                f"[run][{model.name}] warming replica {warmup_index}/{total_replicas} "
-                f"replica={replica_plan.replica_id} GPUs={replica_plan.gpu_assignment}"
-            )
-            session = stack.enter_context(
-                _PersistentWorkerSession(
-                    model=model,
-                    env_record=env_record,
-                    execution_mode=execution_mode,
-                    replica_id=replica_plan.replica_id,
-                    gpu_assignment=replica_plan.gpu_assignment,
-                    replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
-                    log_callback=log_callback,
-                )
-            )
-            session_bindings.append((replica_plan, session))
-            progress.env_message(
-                f"[run][{model.name}] replica={replica_plan.replica_id} ready "
-                f"({warmup_index}/{total_replicas}) GPUs={replica_plan.gpu_assignment}"
-            )
+    primary_plan = replica_plans[0]
+    progress.env_message(
+        f"[run][{model.name}] bootstrapping primary replica=0 GPUs={primary_plan.gpu_assignment}"
+    )
+    primary_thread = threading.Thread(
+        target=run_replica,
+        kwargs={"replica_plan": primary_plan, "is_primary": True},
+        name=f"{_slugify(model.name)}-replica-{primary_plan.replica_id}",
+    )
+    primary_thread.start()
+    threads.append(primary_thread)
+    primary_ready.wait()
 
-        progress.env_message(
-            f"[run][{model.name}] all replicas ready, dispatching tasks"
-        )
-
-        for replica_plan, _session in session_bindings:
-            thread = threading.Thread(
-                target=run_replica,
-                args=(replica_plan,),
-                name=f"{_slugify(model.name)}-replica-{replica_plan.replica_id}",
-            )
-            thread.start()
-            threads.append(thread)
-
+    if errors:
         for thread in threads:
             thread.join()
+        raise errors[0]
 
-        if errors:
-            raise errors[0]
-        return task_results
+    secondary_plans = replica_plans[1:]
+    if secondary_plans:
+        progress.env_message(
+            f"[run][{model.name}] warming secondary replicas count={len(secondary_plans)}"
+        )
+    for replica_plan in secondary_plans:
+        thread = threading.Thread(
+            target=run_replica,
+            kwargs={"replica_plan": replica_plan, "is_primary": False},
+            name=f"{_slugify(model.name)}-replica-{replica_plan.replica_id}",
+        )
+        thread.start()
+        threads.append(thread)
+    dispatch_started.set()
+
+    for thread in threads:
+        thread.join()
+
+    if errors:
+        raise errors[0]
+    return task_results
 
 
 def _append_ledger_records(

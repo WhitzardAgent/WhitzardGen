@@ -9,8 +9,10 @@ from aigc.utils.runtime_logging import RunLogger, format_log_line
 
 try:  # pragma: no cover - optional dependency
     from rich.console import Console
+    from rich.live import Live
 except Exception:  # pragma: no cover - graceful fallback without rich
     Console = None  # type: ignore[assignment]
+    Live = None  # type: ignore[assignment]
 
 
 def _safe_isatty(stream: IO[str] | None) -> bool:
@@ -183,6 +185,9 @@ class RunProgress:
     def print_summary(self, summary: RunSummaryData) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def close(self) -> None:  # pragma: no cover - interface
+        return
+
 
 class NullRunProgress(RunProgress):
     """No-op implementation used for JSON or fully quiet output."""
@@ -224,6 +229,9 @@ class NullRunProgress(RunProgress):
     def print_summary(self, summary: RunSummaryData) -> None:
         return
 
+    def close(self) -> None:
+        return
+
 
 class TextRunProgress(RunProgress):
     """Plain-text progress reporter that works in all terminals."""
@@ -233,6 +241,8 @@ class TextRunProgress(RunProgress):
         self._enable_color = _safe_isatty(self._stream) if enable_color is None else enable_color
         self._ui = RuntimeTerminalUI(enable_color=self._enable_color)
         self._console = None
+        self._live = None
+        self._recent_events: list[str] = []
         if self._enable_color and Console is not None:
             self._console = Console(
                 file=self._stream,
@@ -241,17 +251,36 @@ class TextRunProgress(RunProgress):
                 soft_wrap=True,
                 highlight=False,
             )
+        if self._console is not None and Live is not None:
+            self._live = Live(
+                self._ui.render_live_dashboard(self._recent_events),
+                console=self._console,
+                auto_refresh=False,
+                transient=False,
+                vertical_overflow="visible",
+            )
+            self._live.start()
 
     def _write(self, line: str) -> None:
         try:
             rendered = format_log_line(line)
-            if self._console is not None:
+            if self._live is not None:
+                if not line.startswith("[REPLICA]"):
+                    self._recent_events.append(rendered)
+                    self._recent_events = self._recent_events[-8:]
+                self._refresh_live()
+            elif self._console is not None:
                 self._console.print(self._ui.render_console_line(rendered))
             else:
                 print(rendered, file=self._stream, flush=True)
         except Exception:
             # Best-effort only; never crash the run on progress failure.
             return
+
+    def _refresh_live(self) -> None:
+        if self._live is None:
+            return
+        self._live.update(self._ui.render_live_dashboard(self._recent_events), refresh=True)
 
     def run_header(self, header: RunHeaderData) -> None:
         for line in self._ui.render_header(header):
@@ -264,8 +293,14 @@ class TextRunProgress(RunProgress):
         self._write(self._ui.render_stage_end(index, total, name))
 
     def env_message(self, message: str) -> None:
-        for line in self._ui.render_event(message):
+        if self._live is None and message.strip().startswith("[REPLICA]"):
+            self._write(message)
+            return
+        lines = self._ui.render_event(message)
+        for line in lines:
             self._write(line)
+        if not lines:
+            self._refresh_live()
 
     def task_start(
         self,
@@ -306,8 +341,16 @@ class TextRunProgress(RunProgress):
         )
 
     def print_summary(self, summary: RunSummaryData) -> None:
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
         for line in self._ui.render_summary(summary):
             self._write(line)
+
+    def close(self) -> None:
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
 
 
 class LoggedRunProgress(RunProgress):
@@ -390,6 +433,9 @@ class LoggedRunProgress(RunProgress):
         for line in format_summary_lines(summary):
             self._logger.log(line)
         self._base.print_summary(summary)
+
+    def close(self) -> None:
+        self._base.close()
 
 
 def build_run_progress(

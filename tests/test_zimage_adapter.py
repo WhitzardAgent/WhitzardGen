@@ -94,3 +94,62 @@ class ZImageAdapterTests(unittest.TestCase):
         self.assertEqual(second_item.metadata["batch_index"], 1)
         self.assertEqual(first_item.artifacts[0].metadata["width"], 32)
         self.assertEqual(first_item.artifacts[0].metadata["height"], 16)
+
+    def test_real_execute_emits_true_progress_steps_when_pipeline_supports_callback(self) -> None:
+        registry = load_registry()
+        adapter = ZImageAdapter(model_config=registry.get_model("Z-Image"))
+        tmpdir = Path(tempfile.mkdtemp())
+        plan = adapter.prepare(
+            prompts=["a futuristic city"],
+            prompt_ids=["p001"],
+            params={"width": 32, "height": 32, "num_inference_steps": 4},
+            workdir=str(tmpdir),
+        )
+        events: list[dict[str, object]] = []
+
+        class _FakeImage:
+            def save(self, path: Path) -> None:
+                path.write_bytes(TINY_PNG)
+
+        class _FakePipe:
+            def __call__(
+                self,
+                *,
+                prompt,
+                height,
+                width,
+                num_inference_steps,
+                guidance_scale,
+                callback_on_step_end=None,
+                callback_on_step_end_tensor_inputs=None,
+                **kwargs,
+            ):
+                del prompt, height, width, guidance_scale, callback_on_step_end_tensor_inputs, kwargs
+                for step_index in range(num_inference_steps):
+                    if callback_on_step_end is not None:
+                        callback_on_step_end(self, step_index, 0, {})
+                return type("Output", (), {"images": [_FakeImage()]})()
+
+        class _FakeTorch:
+            class Generator:
+                def __init__(self, device: str) -> None:
+                    self.device = device
+
+                def manual_seed(self, seed: int):
+                    return self
+
+        adapter._loaded_pipeline = _FakePipe()
+        adapter._loaded_torch = _FakeTorch
+        adapter._loaded_device = "cuda"
+
+        result = adapter.execute(
+            plan=plan,
+            prompts=["a futuristic city"],
+            params={},
+            workdir=str(tmpdir),
+            progress_callback=events.append,
+        )
+
+        self.assertIn("p001", result.outputs)
+        self.assertEqual([event["current_step"] for event in events], [1, 2, 3, 4])
+        self.assertTrue(all(event["supports_true_progress"] for event in events))

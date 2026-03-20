@@ -96,11 +96,29 @@ class EchoTestAdapter(BaseAdapter):
         prompts: list[str],
         params: dict[str, object],
         workdir: str,
+        progress_callback=None,
     ) -> ExecutionResult:
         if self.model_config.weights.get("hard_exit_in_execute"):
             os._exit(17)
         if self.model_config.weights.get("crash_in_execute"):
             raise RuntimeError("EchoTestAdapter crash_in_execute")
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "generating",
+                    "current_step": 1,
+                    "total_steps": 3,
+                    "supports_true_progress": True,
+                }
+            )
+            progress_callback(
+                {
+                    "phase": "generating",
+                    "current_step": 3,
+                    "total_steps": 3,
+                    "supports_true_progress": True,
+                }
+            )
         prompt_ids = list(plan.inputs.get("prompt_ids", []))
         outputs = {}
         for prompt_id, prompt in zip(prompt_ids, prompts, strict=True):

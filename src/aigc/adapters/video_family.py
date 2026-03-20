@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from aigc.adapters.base import (
     ExecutionPlan,
     ExecutionResult,
     ModelResult,
+    ProgressCallback,
 )
 
 
@@ -95,6 +97,7 @@ class MockCapableVideoAdapter(BaseAdapter):
         prompts: list[str],
         params: dict[str, Any],
         workdir: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> ExecutionResult:
         runtime = dict(plan.inputs.get("runtime", {}))
         if runtime.get("execution_mode") == "mock":
@@ -104,7 +107,12 @@ class MockCapableVideoAdapter(BaseAdapter):
                 logs=f"{self.model_config.name} mock video generation completed.",
                 outputs=outputs,
             )
-        outputs = self._execute_real(plan=plan, prompts=prompts, workdir=workdir)
+        outputs = self._execute_real(
+            plan=plan,
+            prompts=prompts,
+            workdir=workdir,
+            progress_callback=progress_callback,
+        )
         return ExecutionResult(
             exit_code=0,
             logs=f"{self.model_config.name} video generation completed.",
@@ -246,6 +254,7 @@ class MockCapableVideoAdapter(BaseAdapter):
         plan: ExecutionPlan,
         prompts: list[str],
         workdir: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, dict[str, Any]]:
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement real in-process video execution yet."
@@ -334,6 +343,7 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
         plan: ExecutionPlan,
         prompts: list[str],
         workdir: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> dict[str, dict[str, Any]]:
         from diffusers.utils import export_to_video
 
@@ -360,6 +370,7 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
             seed=seed,
             torch=torch,
             device=device,
+            progress_callback=progress_callback,
         )
         if len(frame_batches) != len(prompt_ids):
             raise RuntimeError(
@@ -452,6 +463,7 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
         seed: int | None,
         torch: Any,
         device: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> list[list[Any]]:
         generator_device = "cuda" if device == "cuda" else "cpu"
         generator = None
@@ -469,6 +481,13 @@ class DiffusersVideoAdapterBase(MockCapableVideoAdapter):
             "num_inference_steps": num_inference_steps,
             "guidance_scale": guidance_scale,
         }
+        kwargs.update(
+            _build_diffusers_progress_kwargs(
+                pipe=pipe,
+                total_steps=num_inference_steps,
+                progress_callback=progress_callback,
+            )
+        )
         if generator is not None:
             kwargs["generator"] = generator
         if self.capabilities.supports_negative_prompt:
@@ -567,6 +586,7 @@ class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
         seed: int | None,
         torch: Any,
         device: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> list[list[Any]]:
         generator_device = "cuda" if device == "cuda" else "cpu"
         generator = None
@@ -585,6 +605,11 @@ class WanT2VDiffusersAdapter(DiffusersVideoAdapterBase):
             guidance_scale=guidance_scale,
             guidance_scale_2=float(plan.inputs.get("guidance_scale_2", 3.0)),
             num_inference_steps=num_inference_steps,
+            **_build_diffusers_progress_kwargs(
+                pipe=pipe,
+                total_steps=num_inference_steps,
+                progress_callback=progress_callback,
+            ),
             **({"generator": generator} if generator is not None else {}),
         )
         frames = getattr(output, "frames", None)
@@ -693,6 +718,7 @@ class CogVideoX5BAdapter(DiffusersVideoAdapterBase):
         seed: int | None,
         torch: Any,
         device: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> list[list[Any]]:
         generator_device = "cuda" if device == "cuda" else "cpu"
         generator = None
@@ -708,6 +734,11 @@ class CogVideoX5BAdapter(DiffusersVideoAdapterBase):
             num_inference_steps=num_inference_steps,
             num_frames=num_frames,
             guidance_scale=guidance_scale,
+            **_build_diffusers_progress_kwargs(
+                pipe=pipe,
+                total_steps=num_inference_steps,
+                progress_callback=progress_callback,
+            ),
             **({"generator": generator} if generator is not None else {}),
         )
         frames = getattr(output, "frames", None)
@@ -911,7 +942,9 @@ class LongCatVideoAdapter(DiffusersVideoAdapterBase):
         seed: int | None,
         torch: Any,
         device: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> list[list[Any]]:
+        del progress_callback
         use_distill = bool(plan.inputs.get("use_distill", False))
         effective_steps = 16 if use_distill else num_inference_steps
         effective_guidance = 1.0 if use_distill else guidance_scale
@@ -1156,6 +1189,54 @@ def resolve_video_cache_dir(model_config: Any) -> str | None:
 def metadata_sidecar_path(path: str | Path) -> Path:
     target = Path(path)
     return target.with_name(f"{target.stem}.metadata.json")
+
+
+def _build_diffusers_progress_kwargs(
+    *,
+    pipe: Any,
+    total_steps: int,
+    progress_callback: ProgressCallback | None,
+) -> dict[str, Any]:
+    if progress_callback is None:
+        return {}
+    try:
+        signature = inspect.signature(pipe.__call__)
+    except (TypeError, ValueError):
+        return {}
+
+    def legacy_callback(step_index: int, _timestep: Any, _latents: Any) -> None:
+        progress_callback(
+            {
+                "phase": "generating",
+                "current_step": int(step_index) + 1,
+                "total_steps": int(total_steps),
+                "supports_true_progress": True,
+            }
+        )
+
+    def callback_on_step_end(_pipe: Any, step_index: int, _timestep: Any, callback_kwargs: dict[str, Any]):
+        progress_callback(
+            {
+                "phase": "generating",
+                "current_step": int(step_index) + 1,
+                "total_steps": int(total_steps),
+                "supports_true_progress": True,
+            }
+        )
+        return callback_kwargs
+
+    parameters = signature.parameters
+    if "callback_on_step_end" in parameters:
+        kwargs: dict[str, Any] = {"callback_on_step_end": callback_on_step_end}
+        if "callback_on_step_end_tensor_inputs" in parameters:
+            kwargs["callback_on_step_end_tensor_inputs"] = []
+        return kwargs
+    if "callback" in parameters:
+        kwargs = {"callback": legacy_callback}
+        if "callback_steps" in parameters:
+            kwargs["callback_steps"] = 1
+        return kwargs
+    return {}
 
 
 def _normalize_frame_batches(model_name: str, frames: Any) -> list[list[Any]]:

@@ -63,6 +63,8 @@ class PersistentWorkerTests(unittest.TestCase):
         self.assertIn("starting persistent worker", replica_log)
         self.assertIn("running task task_001 batch_size=1", replica_log)
         self.assertIn("running task task_002 batch_size=1", replica_log)
+        self.assertIn("[progress] model=Echo-Test replica=0 task=task_001", replica_log)
+        self.assertIn("step=3/3", replica_log)
         self.assertIn("shutting down", replica_log)
         self.assertTrue(any("ready" in line for line in logged_lines))
 

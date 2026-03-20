@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 if TYPE_CHECKING:
     from aigc.registry.models import ModelInfo
@@ -12,6 +12,7 @@ WorkerStrategy = Literal["per_task_worker", "persistent_worker"]
 ArtifactType = Literal["image", "video", "audio", "text", "json"]
 BatchStatus = Literal["success", "failed"]
 ModelStatus = Literal["success", "partial_success", "failed"]
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 @dataclass(slots=True)
@@ -114,7 +115,9 @@ class BaseAdapter(ABC):
         prompts: list[str],
         params: dict[str, Any],
         workdir: str,
+        progress_callback: ProgressCallback | None = None,
     ) -> ExecutionResult:
+        del progress_callback
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement in-process execution."
         )

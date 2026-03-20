@@ -1,22 +1,40 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 try:  # pragma: no cover - rich is optional in non-terminal contexts
+    from rich.console import Group
+    from rich.panel import Panel
+    from rich.spinner import Spinner
+    from rich.table import Table
     from rich.text import Text
 except Exception:  # pragma: no cover - graceful fallback when rich is unavailable
+    Group = None  # type: ignore[assignment]
+    Panel = None  # type: ignore[assignment]
+    Spinner = None  # type: ignore[assignment]
+    Table = None  # type: ignore[assignment]
     Text = None  # type: ignore[assignment]
 
 
 @dataclass(slots=True)
 class ReplicaStatus:
     replica_id: int
+    model_name: str = ""
     gpu_assignment: str = "[]"
     state: str = "starting"
     completed_tasks: int = 0
     assigned_tasks: int = 0
+    current_task_id: str | None = None
+    current_batch_size: int | None = None
+    current_phase: str | None = None
+    current_step: int | None = None
+    total_steps: int | None = None
+    supports_true_progress: bool = False
+    last_progress_at: float | None = None
+    last_task_started_at: float | None = None
 
 
 class RuntimeTerminalUI:
@@ -29,6 +47,11 @@ class RuntimeTerminalUI:
         r"GPUs=(?P<gpus>\[[^\]]*\]) (?P<message>.+)$"
     )
     _RUN_MODEL_RE = re.compile(r"^\[run\]\[(?P<model>[^\]]+)\] (?P<message>.+)$")
+    _PROGRESS_RE = re.compile(
+        r"^\[progress\]\s+model=(?P<model>\S+)\s+replica=(?P<replica>\d+)\s+"
+        r"task=(?P<task>\S+)(?:\s+batch_id=(?P<batch_id>\S+))?(?:\s+batch=(?P<batch>\d+))?\s+"
+        r"phase=(?P<phase>\S+)(?:\s+step=(?P<current>\d+)/(?P<total>\d+))?(?:\s+true_progress=(?P<true_progress>\S+))?"
+    )
     _KV_VALUE_PATTERNS = {
         "run_id": re.compile(r"\brun_id=(?P<value>\S+)"),
         "model": re.compile(r"\bmodel=(?P<value>[^|\s]+)"),
@@ -46,13 +69,14 @@ class RuntimeTerminalUI:
         "artifacts": re.compile(r"\bartifacts=(?P<value>\d+)"),
         "status": re.compile(r"\bstatus=(?P<value>[A-Za-z_]+)"),
         "mode": re.compile(r"\bmode=(?P<value>\S+)"),
+        "replicas_active": re.compile(r"\breplicas_active=(?P<value>\d+/\d+)"),
     }
     _PATH_VALUE_PATTERN = re.compile(
         r"\b(?:source|out|log|dataset|manifest|failures|path)=(?P<value>\S+)"
     )
     _SUMMARY_STATUS_PATTERN = re.compile(r"^\[SUMMARY\]\s+(?P<value>completed_with_failures|completed|failed)\b")
     _STATE_WORD_PATTERN = re.compile(
-        r"\b(?P<value>starting|loading|loaded|ready|running|failed|stopped|shutdown|shutting down)\b"
+        r"\b(?P<value>starting|loading|loaded|ready|running|failed|stopped|shutdown|shutting down|unavailable|disabled)\b"
     )
     _WARN_TOKEN_RE = re.compile(r"\b(?:warning|futurewarning|userwarning|deprecationwarning)\b", re.IGNORECASE)
     _SEMANTIC_STYLES = {
@@ -78,6 +102,8 @@ class RuntimeTerminalUI:
         "state_failed": "bold bright_red",
         "state_stopped": "bold bright_black",
         "state_shutdown": "bold bright_black",
+        "state_unavailable": "bold yellow",
+        "state_disabled": "bold bright_black",
     }
     _TAG_STYLE_MAP = {
         "RUN": "run",
@@ -96,8 +122,10 @@ class RuntimeTerminalUI:
     def __init__(self, *, enable_color: bool = False) -> None:
         self._replicas: dict[str, dict[int, ReplicaStatus]] = {}
         self._enable_color = enable_color and Text is not None
+        self._header = None
 
     def render_header(self, header) -> list[str]:
+        self._header = header
         lines = [
             f"[RUN] {header.run_id} | mode={header.execution_mode}",
             f"[RUN] models={', '.join(header.model_names)}",
@@ -176,10 +204,16 @@ class RuntimeTerminalUI:
         normalized = self._TIMESTAMP_RE.sub("", message.strip(), count=1)
         if not normalized:
             return []
+        progress_match = self._PROGRESS_RE.match(normalized)
+        if progress_match:
+            self._record_progress_event(progress_match)
+            return []
         if self._is_noise(normalized):
             return []
-        if normalized.startswith("[THROUGHPUT]") or normalized.startswith("[REPLICA]"):
+        if normalized.startswith("[THROUGHPUT]"):
             return [normalized]
+        if normalized.startswith("[REPLICA]"):
+            return []
         if normalized.startswith("[run] ERROR:"):
             return [f"[ERROR] {normalized.removeprefix('[run] ERROR:').strip()}"]
         if normalized.startswith("[run] WARN:") or normalized.startswith("[run] WARNING:"):
@@ -216,7 +250,7 @@ class RuntimeTerminalUI:
     ) -> list[str]:
         state = self._replicas.setdefault(model_name, {}).setdefault(
             replica_id,
-            ReplicaStatus(replica_id=replica_id),
+            ReplicaStatus(replica_id=replica_id, model_name=model_name),
         )
         state.gpu_assignment = gpu_assignment
         lines: list[str] = []
@@ -235,10 +269,15 @@ class RuntimeTerminalUI:
             lines.append(f"[WORKER] model={model_name} replica=r{replica_id} ready")
         elif message.startswith("running task "):
             state.state = "running"
+            state.current_task_id = message.split("running task ", 1)[1].split()[0]
+            state.last_task_started_at = time.monotonic()
             lines.append(f"[TASK] model={model_name} replica=r{replica_id} {message}")
         elif message.startswith("finished task "):
             state.state = "ready"
             state.completed_tasks += 1
+            state.current_phase = "completed"
+            state.current_step = state.total_steps
+            state.current_task_id = None
             lines.append(f"[TASK] model={model_name} replica=r{replica_id} {message}")
         elif message == "shutting down":
             state.state = "stopped"
@@ -267,13 +306,65 @@ class RuntimeTerminalUI:
             gpu_assignment = message.split("GPUs=", 1)[1].strip()
             state = self._replicas.setdefault(model_name, {}).setdefault(
                 replica_id,
-                ReplicaStatus(replica_id=replica_id),
+                ReplicaStatus(replica_id=replica_id, model_name=model_name),
             )
             state.assigned_tasks = assigned_tasks
             state.gpu_assignment = gpu_assignment
             lines.append(f"[SCHED] model={model_name} {message}")
         elif message.startswith("warming replica "):
             lines.append(f"[SCHED] model={model_name} {message}")
+        elif message.startswith("bootstrapping primary "):
+            replica_id = int(message.split("replica=", 1)[1].split()[0])
+            gpu_assignment = message.split("GPUs=", 1)[1].strip()
+            state = self._replicas.setdefault(model_name, {}).setdefault(
+                replica_id,
+                ReplicaStatus(replica_id=replica_id, model_name=model_name),
+            )
+            state.gpu_assignment = gpu_assignment
+            state.state = "starting"
+            lines.append(f"[SCHED] model={model_name} {message}")
+        elif message.startswith("primary replica ready, starting early dispatch "):
+            replica_id = int(message.split("replica=", 1)[1].split()[0])
+            gpu_assignment = message.split("GPUs=", 1)[1].strip()
+            state = self._replicas.setdefault(model_name, {}).setdefault(
+                replica_id,
+                ReplicaStatus(replica_id=replica_id, model_name=model_name),
+            )
+            state.gpu_assignment = gpu_assignment
+            state.state = "ready"
+            lines.append(f"[SCHED] model={model_name} {message}")
+        elif message.startswith("warming secondary replicas count="):
+            lines.append(f"[SCHED] model={model_name} {message}")
+        elif "ready, joined active pool" in message and message.startswith("secondary replica="):
+            replica_id = int(message.split("secondary replica=", 1)[1].split()[0])
+            gpu_assignment = message.split("GPUs=", 1)[1].split()[0].strip()
+            state = self._replicas.setdefault(model_name, {}).setdefault(
+                replica_id,
+                ReplicaStatus(replica_id=replica_id, model_name=model_name),
+            )
+            state.gpu_assignment = gpu_assignment
+            state.state = "ready"
+            lines.append(f"[SCHED] model={model_name} {message}")
+        elif "startup failed, retrying" in message and message.startswith("secondary replica="):
+            replica_id = int(message.split("secondary replica=", 1)[1].split()[0])
+            gpu_assignment = message.split("GPUs=", 1)[1].strip()
+            state = self._replicas.setdefault(model_name, {}).setdefault(
+                replica_id,
+                ReplicaStatus(replica_id=replica_id, model_name=model_name),
+            )
+            state.gpu_assignment = gpu_assignment
+            state.state = "failed"
+            lines.append(f"[WARN] model={model_name} {message}")
+        elif "unavailable after retry" in message and message.startswith("secondary replica="):
+            replica_id = int(message.split("secondary replica=", 1)[1].split()[0])
+            gpu_assignment = message.split("GPUs=", 1)[1].split()[0].strip()
+            state = self._replicas.setdefault(model_name, {}).setdefault(
+                replica_id,
+                ReplicaStatus(replica_id=replica_id, model_name=model_name),
+            )
+            state.gpu_assignment = gpu_assignment
+            state.state = "unavailable"
+            lines.append(f"[WARN] model={model_name} {message}")
         elif "ready (" in message and message.startswith("replica="):
             lines.append(f"[SCHED] model={model_name} {message}")
         elif message.startswith("all replicas ready"):
@@ -285,6 +376,17 @@ class RuntimeTerminalUI:
         if snapshot:
             lines.append(snapshot)
         return lines
+
+    def render_live_dashboard(self, recent_events: list[str]):
+        if not self._enable_color or Group is None or Panel is None or Table is None:
+            return "\n".join(recent_events)
+        parts = []
+        header_panel = self._render_header_panel()
+        if header_panel is not None:
+            parts.append(header_panel)
+        parts.append(self._render_replica_board())
+        parts.append(self._render_recent_events_panel(recent_events))
+        return Group(*parts)
 
     def _render_replica_snapshot(self, model_name: str) -> str | None:
         states = self._replicas.get(model_name, {})
@@ -300,6 +402,127 @@ class RuntimeTerminalUI:
                 f"r{replica_id} {state.gpu_assignment} {state.state} {state.completed_tasks}/{total}"
             )
         return f"[REPLICA] model={model_name} " + " | ".join(parts)
+
+    def _record_progress_event(self, match: re.Match[str]) -> None:
+        model_name = match.group("model")
+        replica_id = int(match.group("replica"))
+        state = self._replicas.setdefault(model_name, {}).setdefault(
+            replica_id,
+            ReplicaStatus(replica_id=replica_id, model_name=model_name),
+        )
+        state.current_task_id = match.group("task")
+        state.current_batch_size = int(match.group("batch")) if match.group("batch") else state.current_batch_size
+        state.current_phase = match.group("phase")
+        state.current_step = int(match.group("current")) if match.group("current") else None
+        state.total_steps = int(match.group("total")) if match.group("total") else None
+        state.supports_true_progress = match.group("true_progress") == "yes"
+        state.last_progress_at = time.monotonic()
+        if state.last_task_started_at is None:
+            state.last_task_started_at = state.last_progress_at
+        if state.current_phase in {"preparing_batch", "generating", "exporting"}:
+            state.state = "running"
+        elif state.current_phase == "completed":
+            state.state = "ready"
+            state.current_task_id = None
+        elif state.current_phase == "failed":
+            state.state = "failed"
+
+    def _render_header_panel(self):
+        if self._header is None or Panel is None or Table is None:
+            return None
+        table = Table.grid(expand=True)
+        table.add_column(style=self._style("secondary"), ratio=1)
+        table.add_column(style=self._style("metric"), ratio=5)
+        table.add_row("Run", self._header.run_id)
+        table.add_row("Mode", self._header.execution_mode)
+        table.add_row("Models", ", ".join(self._header.model_names))
+        table.add_row("Prompts", str(self._header.prompt_count if self._header.prompt_count is not None else "-"))
+        table.add_row("Source", self._shorten_path(self._header.prompt_source))
+        table.add_row("Out", self._shorten_path(self._header.output_dir))
+        table.add_row("Log", self._shorten_path(self._header.running_log_path))
+        return Panel(table, title="[RUN] Overview", border_style="bright_cyan")
+
+    def _render_replica_board(self):
+        if Table is None:
+            return ""
+        table = Table(title="[REPLICA] Live Progress", expand=True)
+        table.add_column("Model", style=self._style("metric"), no_wrap=True)
+        table.add_column("Replica", style=self._style("metric"), no_wrap=True)
+        table.add_column("GPUs", style=self._style("metric"), no_wrap=True)
+        table.add_column("State", no_wrap=True)
+        table.add_column("Task", overflow="fold")
+        table.add_column("Batch", style=self._style("metric"), no_wrap=True)
+        table.add_column("Phase", no_wrap=True)
+        table.add_column("Progress", overflow="fold")
+        table.add_column("Elapsed", style=self._style("metric"), no_wrap=True)
+
+        rows_added = 0
+        for model_name in sorted(self._replicas):
+            for replica_id in sorted(self._replicas[model_name]):
+                rows_added += 1
+                state = self._replicas[model_name][replica_id]
+                table.add_row(
+                    model_name,
+                    f"r{replica_id}",
+                    state.gpu_assignment,
+                    self._styled_state_text(state.state),
+                    state.current_task_id or "-",
+                    str(state.current_batch_size or "-"),
+                    state.current_phase or state.state,
+                    self._render_progress_cell(state),
+                    self._format_elapsed(state),
+                )
+        if rows_added == 0:
+            table.add_row("-", "-", "-", "-", "-", "-", "-", "-", "-")
+        return table
+
+    def _render_recent_events_panel(self, recent_events: list[str]):
+        if Panel is None or Text is None:
+            return "\n".join(recent_events)
+        body = Text()
+        if not recent_events:
+            body.append("Waiting for runtime events...", style=self._style("secondary"))
+        else:
+            for index, line in enumerate(recent_events[-8:]):
+                if index:
+                    body.append("\n")
+                body.append_text(self.render_console_line(line))
+        return Panel(body, title="Recent Events", border_style="blue")
+
+    def _render_progress_cell(self, state: ReplicaStatus):
+        if state.supports_true_progress and state.current_step is not None and state.total_steps:
+            return self._build_bar_text(state.current_step, state.total_steps)
+        if Spinner is not None and state.state in {"running", "starting", "loading"}:
+            return Spinner("dots", text=state.current_phase or state.state)
+        return state.current_phase or state.state
+
+    def _build_bar_text(self, current: int, total: int):
+        current = max(current, 0)
+        total = max(total, 1)
+        width = 18
+        filled = min(width, int(round((current / total) * width)))
+        bar = "█" * filled + "░" * (width - filled)
+        if Text is None:
+            return f"{bar} {current}/{total}"
+        text = Text()
+        text.append(bar[:filled], style=self._style("throughput"))
+        text.append(bar[filled:], style=self._style("secondary"))
+        text.append(f" {current}/{total}", style=self._style("metric"))
+        return text
+
+    def _styled_state_text(self, state: str):
+        if Text is None:
+            return state
+        text = Text(state)
+        text.stylize(self._style(self._state_style_key(state.lower())), 0, len(state))
+        return text
+
+    def _format_elapsed(self, state: ReplicaStatus) -> str:
+        if state.last_task_started_at is None:
+            return "-"
+        elapsed = max(time.monotonic() - state.last_task_started_at, 0.0)
+        minutes, seconds = divmod(int(elapsed), 60)
+        return f"{minutes:02d}:{seconds:02d}"
 
     def _is_noise(self, message: str) -> bool:
         noisy_tokens = (
@@ -413,6 +636,10 @@ class RuntimeTerminalUI:
             return "state_running"
         if state in {"failed"}:
             return "state_failed"
+        if state in {"unavailable"}:
+            return "state_unavailable"
+        if state in {"disabled"}:
+            return "state_disabled"
         return "state_stopped" if state in {"stopped", "shutdown", "shutting down"} else "metric"
 
     def _looks_like_warning(self, message: str) -> bool:

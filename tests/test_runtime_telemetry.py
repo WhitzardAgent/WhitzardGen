@@ -91,11 +91,83 @@ class RuntimeTelemetryTests(unittest.TestCase):
             task_failed=False,
         )
 
-        self.assertTrue(any("replicas=2" in line for line in emitted if "model=Wan2.2-T2V-A14B-Diffusers" in line))
+        self.assertTrue(
+            any(
+                "replicas_active=2/2" in line
+                for line in emitted
+                if "model=Wan2.2-T2V-A14B-Diffusers" in line
+            )
+        )
         self.assertTrue(any("[REPLICA] model=Wan2.2-T2V-A14B-Diffusers r0 [0]" in line for line in emitted))
 
         snapshot = telemetry.snapshot_dict()
         model_metrics = snapshot["models"]["Wan2.2-T2V-A14B-Diffusers"]
         self.assertEqual(model_metrics["avg_model_load_sec"], 5.2)
+        self.assertEqual(model_metrics["active_replicas"], 2)
         self.assertEqual(snapshot["replicas"]["Wan2.2-T2V-A14B-Diffusers"]["r0"]["processed_prompts"], 1)
 
+    def test_telemetry_tracks_unavailable_secondary_replicas(self) -> None:
+        telemetry = RunTelemetry(
+            run_id="run_replicas",
+            execution_mode="real",
+            emit_callback=lambda _line: None,
+            emit_prompt_interval=1,
+            emit_sec_interval=999.0,
+        )
+        prepared_task = SimpleNamespace(payload=SimpleNamespace(prompts=[object()]))
+        telemetry.set_plan(prepared_tasks_by_model={"CogVideoX-5B": [prepared_task]})
+        telemetry.register_replica_assignments(
+            model_name="CogVideoX-5B",
+            replica_plans=[
+                SimpleNamespace(replica_id=0, gpu_assignment=[0], tasks=[prepared_task]),
+                SimpleNamespace(replica_id=1, gpu_assignment=[1], tasks=[]),
+            ],
+        )
+        telemetry.record_runtime_event(
+            "[worker][CogVideoX-5B][replica=0] GPUs=[0] ready"
+        )
+        telemetry.record_replica_startup_failure(
+            model_name="CogVideoX-5B",
+            replica_id=1,
+            gpu_assignment=[1],
+            unavailable=False,
+        )
+        telemetry.record_replica_startup_failure(
+            model_name="CogVideoX-5B",
+            replica_id=1,
+            gpu_assignment=[1],
+            unavailable=True,
+        )
+
+        snapshot = telemetry.snapshot_dict()
+        self.assertEqual(snapshot["models"]["CogVideoX-5B"]["replica_startup_failures"], 2)
+        self.assertEqual(snapshot["models"]["CogVideoX-5B"]["active_replicas"], 1)
+        self.assertTrue(snapshot["replicas"]["CogVideoX-5B"]["r1"]["unavailable"])
+
+    def test_telemetry_tracks_replica_task_progress_state(self) -> None:
+        telemetry = RunTelemetry(
+            run_id="run_progress",
+            execution_mode="real",
+            emit_callback=lambda _line: None,
+            emit_prompt_interval=1,
+            emit_sec_interval=999.0,
+        )
+        prepared_task = SimpleNamespace(payload=SimpleNamespace(prompts=[object(), object()]))
+        telemetry.set_plan(prepared_tasks_by_model={"Z-Image": [prepared_task]})
+        telemetry.register_replica_assignments(
+            model_name="Z-Image",
+            replica_plans=[SimpleNamespace(replica_id=0, gpu_assignment=[0], tasks=[prepared_task])],
+        )
+
+        telemetry.record_runtime_event(
+            "[progress] model=Z-Image replica=0 task=task_001 batch=2 phase=generating step=12/40 true_progress=yes"
+        )
+        snapshot = telemetry.snapshot_dict()
+        replica = snapshot["replicas"]["Z-Image"]["r0"]
+
+        self.assertEqual(replica["current_task_id"], "task_001")
+        self.assertEqual(replica["batch_size"], 2)
+        self.assertEqual(replica["current_phase"], "generating")
+        self.assertEqual(replica["current_step"], 12)
+        self.assertEqual(replica["total_steps"], 40)
+        self.assertTrue(replica["supports_true_progress"])
