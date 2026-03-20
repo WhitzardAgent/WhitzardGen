@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from aigc.prompts import validate_generation_parameters
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUN_PROFILES_ROOT = REPO_ROOT / "configs" / "run_profiles"
 
@@ -22,6 +24,7 @@ class RunProfile:
     prompt_file: Path
     execution_mode: str | None
     output_dir: Path | None
+    generation_defaults: dict[str, Any]
     runtime: dict[str, Any]
     raw: dict[str, Any]
 
@@ -45,6 +48,8 @@ class RunProfile:
         payload["prompts"] = str(self.prompt_file)
         if self.output_dir is not None:
             payload["out"] = str(self.output_dir)
+        if self.generation_defaults:
+            payload["generation_defaults"] = dict(self.generation_defaults)
         return payload
 
 
@@ -85,6 +90,21 @@ def load_run_profile(path: str | Path) -> RunProfile:
         else None
     )
 
+    generation_defaults = payload.get("generation_defaults") or {}
+    if not isinstance(generation_defaults, dict):
+        raise RunProfileError(
+            f"Run profile {profile_path} has invalid generation_defaults section."
+        )
+    try:
+        generation_defaults = validate_generation_parameters(
+            generation_defaults,
+            owner_label=f"profile={profile_path}",
+            prompt_source=profile_path,
+            warn=None,
+        )
+    except ValueError as exc:
+        raise RunProfileError(str(exc)) from exc
+
     runtime = payload.get("runtime") or {}
     if not isinstance(runtime, dict):
         raise RunProfileError(f"Run profile {profile_path} has invalid runtime section.")
@@ -96,6 +116,7 @@ def load_run_profile(path: str | Path) -> RunProfile:
         prompt_file=prompt_file,
         execution_mode=execution_mode,
         output_dir=output_dir,
+        generation_defaults=generation_defaults,
         runtime=runtime,
         raw=payload,
     )
@@ -148,6 +169,7 @@ def resolve_profile_run_request(
         "run_name": run_name,
         "profile_name": profile.name if profile is not None else None,
         "profile_path": str(profile.path) if profile is not None else None,
+        "generation_defaults": dict(profile.generation_defaults) if profile is not None else {},
         "runtime": dict(profile.runtime) if profile is not None else {},
     }
 

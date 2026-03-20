@@ -42,6 +42,11 @@ class RunSummaryData:
     manifest_path: str
     failures_path: str | None = None
     running_log_path: str | None = None
+    wall_time_sec: float | None = None
+    processed_prompt_outputs: int | None = None
+    failed_prompt_outputs: int | None = None
+    throughput_per_min: float | None = None
+    stop_reason: str | None = None
 
 
 def format_stage_start_line(index: int, total: int, name: str) -> str:
@@ -91,7 +96,12 @@ def format_task_end_line(
 
 def format_summary_lines(summary: RunSummaryData) -> list[str]:
     models_display = ", ".join(summary.model_names)
-    title = "Run complete" if summary.status == "completed" else "Run failed"
+    if summary.status == "completed":
+        title = "Run complete"
+    elif summary.status == "completed_with_failures":
+        title = "Run complete with failures"
+    else:
+        title = "Run failed"
     lines = [
         f"[summary] {title}",
         f"[summary] status: {summary.status}",
@@ -102,10 +112,25 @@ def format_summary_lines(summary: RunSummaryData) -> list[str]:
         f"[summary] tasks: {summary.task_count}",
         f"[summary] success: {summary.success_tasks}",
         f"[summary] failed: {summary.failed_tasks}",
+    ]
+    if summary.processed_prompt_outputs is not None:
+        throughput_suffix = ""
+        if summary.throughput_per_min is not None:
+            throughput_suffix = f" rate={summary.throughput_per_min:.1f}/min"
+        lines.append(
+            f"[summary] prompt_outputs: {summary.processed_prompt_outputs} failed_outputs: {summary.failed_prompt_outputs or 0}{throughput_suffix}"
+        )
+    if summary.wall_time_sec is not None:
+        lines.append(f"[summary] wall_time_sec: {summary.wall_time_sec:.2f}")
+    lines.extend(
+        [
         f"[summary] output_dir: {summary.output_dir}",
         f"[summary] dataset: {summary.dataset_path}",
         f"[summary] manifest: {summary.manifest_path}",
-    ]
+        ]
+    )
+    if summary.stop_reason:
+        lines.append(f"[summary] reason: {summary.stop_reason}")
     if summary.failures_path:
         lines.append(f"[summary] failures: {summary.failures_path}")
     if summary.running_log_path:

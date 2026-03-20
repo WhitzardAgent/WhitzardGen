@@ -11,6 +11,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from aigc.runtime.persistent_ipc import (
     unregister_parent_queues,
 )
 from aigc.runtime.payloads import TaskPayload, TaskPrompt
+from aigc.runtime_telemetry import RunTelemetry
 from aigc.settings import get_default_seed, get_runs_root
 from aigc.utils.progress import (
     LoggedRunProgress,
@@ -52,6 +54,7 @@ class RunFlowError(RuntimeError):
 
 @dataclass(slots=True)
 class RunSummary:
+    status: str
     run_id: str
     model_names: list[str]
     prompt_file: str
@@ -61,6 +64,7 @@ class RunSummary:
     export_path: str
     execution_mode: str = "real"
     running_log_path: str | None = None
+    stop_reason: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -94,6 +98,69 @@ class ReplicaPlan:
 
 
 @dataclass(slots=True)
+class FailurePolicy:
+    continue_on_error: bool = False
+    max_failures: int | None = None
+    max_failure_rate: float | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "continue_on_error": self.continue_on_error,
+            "max_failures": self.max_failures,
+            "max_failure_rate": self.max_failure_rate,
+        }
+
+
+@dataclass(slots=True)
+class FailureBudget:
+    total_planned_outputs: int
+    failed_prompt_outputs: int = 0
+    failed_tasks: int = 0
+
+    def record(self, *, failed_prompt_outputs: int, task_failed: bool) -> None:
+        self.failed_prompt_outputs += max(failed_prompt_outputs, 0)
+        if task_failed:
+            self.failed_tasks += 1
+
+    @property
+    def failure_rate(self) -> float:
+        if self.total_planned_outputs <= 0:
+            return 0.0
+        return self.failed_prompt_outputs / self.total_planned_outputs
+
+    def check_thresholds(self, policy: FailurePolicy) -> str | None:
+        if policy.max_failures is not None and self.failed_prompt_outputs > policy.max_failures:
+            return (
+                "Failure policy threshold exceeded: "
+                f"failed_outputs={self.failed_prompt_outputs} "
+                f"> max_failures={policy.max_failures}"
+            )
+        if (
+            policy.max_failure_rate is not None
+            and self.total_planned_outputs > 0
+            and self.failure_rate > policy.max_failure_rate
+        ):
+            return (
+                "Failure policy threshold exceeded: "
+                f"failure_rate={self.failure_rate:.3f} "
+                f"> max_failure_rate={policy.max_failure_rate:.3f} "
+                f"({self.failed_prompt_outputs}/{self.total_planned_outputs})"
+            )
+        return None
+
+
+@dataclass(slots=True)
+class TaskExecutionOutcome:
+    result_payload: dict
+    task_failed: bool
+    failed_prompt_count: int
+    successful_prompt_count: int
+    duration_sec: float
+    failure_message: str | None = None
+    failure_category: str | None = None
+
+
+@dataclass(slots=True)
 class _WorkerCrashContext:
     phase: str
     task_id: str | None
@@ -107,15 +174,18 @@ def _build_profile_manifest(
     *,
     profile_name: str | None,
     profile_path: str | None,
+    profile_generation_defaults: dict[str, object] | None,
     profile_runtime: dict[str, object] | None,
 ) -> dict[str, object] | None:
-    if not profile_name and not profile_path and not profile_runtime:
+    if not profile_name and not profile_path and not profile_generation_defaults and not profile_runtime:
         return None
     payload: dict[str, object] = {}
     if profile_name:
         payload["name"] = profile_name
     if profile_path:
         payload["path"] = profile_path
+    if profile_generation_defaults:
+        payload["generation_defaults"] = dict(profile_generation_defaults)
     if profile_runtime:
         payload["runtime"] = dict(profile_runtime)
     return payload
@@ -124,6 +194,22 @@ def _build_profile_manifest(
 def _mirror_runtime_event(*, logger: RunLogger, terminal_progress: RunProgress, message: str) -> None:
     logger.log(message, already_timestamped=True)
     terminal_progress.env_message(message)
+
+
+def _handle_runtime_event(
+    *,
+    logger: RunLogger,
+    terminal_progress: RunProgress,
+    telemetry: RunTelemetry | None,
+    message: str,
+) -> None:
+    if telemetry is not None:
+        telemetry.record_runtime_event(message)
+    _mirror_runtime_event(
+        logger=logger,
+        terminal_progress=terminal_progress,
+        message=message,
+    )
 
 
 def _build_per_model_summary(
@@ -178,6 +264,10 @@ def run_single_model(
     worker_runner: Callable[[EnvironmentRecord, Path, Path], tuple[int, str]] | None = None,
     batch_limit: int | None = None,
     progress: RunProgress | None = None,
+    profile_generation_defaults: dict[str, object] | None = None,
+    continue_on_error: bool | None = None,
+    max_failures: int | None = None,
+    max_failure_rate: float | None = None,
 ) -> RunSummary:
     return run_models(
         model_names=[model_name],
@@ -190,6 +280,10 @@ def run_single_model(
         worker_runner=worker_runner,
         batch_limit=batch_limit,
         progress=progress,
+        profile_generation_defaults=profile_generation_defaults,
+        continue_on_error=continue_on_error,
+        max_failures=max_failures,
+        max_failure_rate=max_failure_rate,
     )
 
 
@@ -202,6 +296,9 @@ def run_recovery_plan(
     worker_runner: Callable[[EnvironmentRecord, Path, Path], tuple[int, str]] | None = None,
     batch_limit: int | None = None,
     progress: RunProgress | None = None,
+    continue_on_error: bool | None = None,
+    max_failures: int | None = None,
+    max_failure_rate: float | None = None,
 ) -> RunSummary:
     registry = load_registry()
     if not recovery_plan.model_names:
@@ -232,7 +329,20 @@ def run_recovery_plan(
     run_logger = RunLogger(log_path=run_root / "running.log")
     progress = LoggedRunProgress(base=base_progress, logger=run_logger)
     ledger_writer = RunLedgerWriter(run_root / "samples.jsonl")
+    runtime_status_path = run_root / "runtime_status.json"
+    telemetry = RunTelemetry(
+        run_id=run_id,
+        execution_mode=resolved_execution_mode,
+        emit_callback=progress.env_message,
+        status_path=runtime_status_path,
+    )
     prompt_source_label = f"{recovery_plan.recovery_mode}:{recovery_plan.source_run_id}:{recovery_plan.prompt_source}"
+    failure_policy = _resolve_failure_policy(
+        continue_on_error=continue_on_error,
+        max_failures=max_failures,
+        max_failure_rate=max_failure_rate,
+        profile_runtime=None,
+    )
 
     total_stages = 8
     stage_index = 1
@@ -265,8 +375,12 @@ def run_recovery_plan(
         "execution_mode": resolved_execution_mode,
         "task_count": 0,
         "output_dir": str(run_root),
-        "export_paths": {"samples_jsonl": str(run_root / "samples.jsonl")},
+        "export_paths": {
+            "samples_jsonl": str(run_root / "samples.jsonl"),
+            "runtime_status_json": str(runtime_status_path),
+        },
         "samples_ledger_path": str(run_root / "samples.jsonl"),
+        "runtime_status_path": str(runtime_status_path),
         "running_log_path": str(run_logger.log_path),
         "registry_path": str(registry.registry_path),
         "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
@@ -274,6 +388,7 @@ def run_recovery_plan(
         "source_run_id": recovery_plan.source_run_id,
         "recovery_mode": recovery_plan.recovery_mode,
         "recovered_item_count": recovery_plan.selected_count,
+        "failure_policy": failure_policy.to_dict(),
     }
     write_run_manifest(run_root, initial_manifest)
     failures: list[dict[str, object]] = []
@@ -281,6 +396,7 @@ def run_recovery_plan(
     export_path: Path | None = None
     failures_path = run_root / "failures.json"
     manifest_path = run_root / "run_manifest.json"
+    threshold_stop_reason: str | None = None
     try:
         progress.stage_start(stage_index, total_stages, "Ensuring environments")
         env_records: dict[str, EnvironmentRecord] = {}
@@ -306,6 +422,14 @@ def run_recovery_plan(
             worker_runner=worker_runner,
             registry=registry,
         )
+        failure_budget = FailureBudget(
+            total_planned_outputs=sum(
+                len(prepared_task.payload.prompts)
+                for prepared_tasks in prepared_tasks_by_model.values()
+                for prepared_task in prepared_tasks
+            )
+        )
+        telemetry.set_plan(prepared_tasks_by_model=prepared_tasks_by_model)
         progress.stage_end(stage_index, total_stages, "Preparing recovery tasks")
         stage_index += 1
 
@@ -321,6 +445,10 @@ def run_recovery_plan(
                     execution_mode=resolved_execution_mode,
                 )
                 replica_plans_by_model[model.name] = replica_plans
+                telemetry.register_replica_assignments(
+                    model_name=model.name,
+                    replica_plans=replica_plans,
+                )
                 _log_replica_plan(progress=progress, model=model, replica_plans=replica_plans)
                 if len(replica_plans) == 1:
                     replica_plan = replica_plans[0]
@@ -331,14 +459,15 @@ def run_recovery_plan(
                         replica_id=replica_plan.replica_id,
                         gpu_assignment=replica_plan.gpu_assignment,
                         replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
-                        log_callback=lambda line: _mirror_runtime_event(
+                        log_callback=lambda line: _handle_runtime_event(
                             logger=run_logger,
                             terminal_progress=base_progress,
+                            telemetry=telemetry,
                             message=line,
                         ),
                     ) as session:
                         for prepared_task in replica_plan.tasks:
-                            result_payload = _execute_prepared_task(
+                            outcome = _execute_prepared_task(
                                 prepared_task=prepared_task,
                                 runner=lambda task, session=session: session.run_task(task),
                                 run_id=run_id,
@@ -346,41 +475,54 @@ def run_recovery_plan(
                                 failures=failures,
                                 progress=progress,
                                 ledger_writer=ledger_writer,
+                                telemetry=telemetry,
                             )
-                            task_results.append((model, prepared_task.payload, result_payload))
+                            task_results.append((model, prepared_task.payload, outcome.result_payload))
+                            _apply_failure_policy_after_task(
+                                outcome=outcome,
+                                prepared_task=prepared_task,
+                                failure_policy=failure_policy,
+                                failure_budget=failure_budget,
+                                progress=progress,
+                                model_name=model.name,
+                            )
                 else:
-                    task_results.extend(
-                        _run_persistent_worker_replicas(
-                            model=model,
-                            env_record=env_records[model.name],
-                            replica_plans=replica_plans,
-                            execution_mode=resolved_execution_mode,
-                            run_id=run_id,
-                            run_root=run_root,
-                            workers_root=workers_root,
-                            failures=failures,
-                            progress=progress,
-                            ledger_writer=ledger_writer,
-                            log_callback=lambda line: _mirror_runtime_event(
-                                logger=run_logger,
-                                terminal_progress=base_progress,
-                                message=line,
-                            ),
-                        )
+                    _run_persistent_worker_replicas(
+                        model=model,
+                        env_record=env_records[model.name],
+                        replica_plans=replica_plans,
+                        execution_mode=resolved_execution_mode,
+                        run_id=run_id,
+                        run_root=run_root,
+                        workers_root=workers_root,
+                        failures=failures,
+                        progress=progress,
+                        ledger_writer=ledger_writer,
+                        failure_policy=failure_policy,
+                        failure_budget=failure_budget,
+                        task_results_out=task_results,
+                        telemetry=telemetry,
+                        log_callback=lambda line: _handle_runtime_event(
+                            logger=run_logger,
+                            terminal_progress=base_progress,
+                            telemetry=telemetry,
+                            message=line,
+                        ),
                     )
             else:
                 runner = worker_runner or _run_worker_task
                 for prepared_task in prepared_tasks:
-                    result_payload = _execute_prepared_task(
+                    outcome = _execute_prepared_task(
                         prepared_task=prepared_task,
                         runner=lambda task, env_record=env_records[model.name], runner=runner: _invoke_worker_runner(
                             runner,
                             env_record,
                             task.task_file,
                             task.result_file,
-                            log_callback=lambda line: _mirror_runtime_event(
+                            log_callback=lambda line: _handle_runtime_event(
                                 logger=run_logger,
                                 terminal_progress=base_progress,
+                                telemetry=telemetry,
                                 message=line,
                             ),
                         ),
@@ -389,12 +531,25 @@ def run_recovery_plan(
                         failures=failures,
                         progress=progress,
                         ledger_writer=ledger_writer,
+                        telemetry=telemetry,
                     )
-                    task_results.append((model, prepared_task.payload, result_payload))
+                    task_results.append((model, prepared_task.payload, outcome.result_payload))
+                    _apply_failure_policy_after_task(
+                        outcome=outcome,
+                        prepared_task=prepared_task,
+                        failure_policy=failure_policy,
+                        failure_budget=failure_budget,
+                        progress=progress,
+                        model_name=model.name,
+                    )
                 if prepared_tasks:
                     replica_plans_by_model[model.name] = [
                         ReplicaPlan(replica_id=0, gpu_assignment=[], tasks=list(prepared_tasks))
                     ]
+                    telemetry.register_replica_assignments(
+                        model_name=model.name,
+                        replica_plans=replica_plans_by_model[model.name],
+                    )
         task_results.sort(key=lambda item: item[1].task_id)
         progress.stage_end(stage_index, total_stages, "Running tasks")
         stage_index += 1
@@ -424,10 +579,13 @@ def run_recovery_plan(
             worker_strategies=worker_strategies,
             replica_plans_by_model=replica_plans_by_model,
         )
+        runtime_metrics = telemetry.finalize(
+            status="completed_with_failures" if failure_budget.failed_prompt_outputs else "completed"
+        )
 
         run_manifest = {
             "run_id": run_id,
-            "status": "completed",
+            "status": "completed_with_failures" if failure_budget.failed_prompt_outputs else "completed",
             "created_at": created_at,
             "completed_at": datetime.now(UTC).isoformat(),
             "models": [model.name for model in models],
@@ -440,19 +598,25 @@ def run_recovery_plan(
             "export_paths": {
                 "dataset_jsonl": str(export_path),
                 "samples_jsonl": str(run_root / "samples.jsonl"),
+                "runtime_status_json": str(runtime_status_path),
                 "running_log": str(run_logger.log_path),
             },
             "export_path": str(export_path),
             "running_log_path": str(run_logger.log_path),
             "samples_ledger_path": str(run_root / "samples.jsonl"),
+            "runtime_status_path": str(runtime_status_path),
             "failures_path": str(failures_path),
             "per_model_summary": per_model_summary,
+            "runtime_metrics": runtime_metrics,
             "registry_path": str(registry.registry_path),
             "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
             "parent_run_id": recovery_plan.source_run_id,
             "source_run_id": recovery_plan.source_run_id,
             "recovery_mode": recovery_plan.recovery_mode,
             "recovered_item_count": recovery_plan.selected_count,
+            "failure_policy": failure_policy.to_dict(),
+            "failed_prompt_outputs": failure_budget.failed_prompt_outputs,
+            "failure_rate": failure_budget.failure_rate,
         }
         manifest_path = write_run_manifest(run_root, run_manifest)
         failures_path = write_failures_summary(run_root, failures)
@@ -467,7 +631,7 @@ def run_recovery_plan(
         success_tasks, failed_tasks = summarize_task_statuses(task_statuses)
         progress.print_summary(
             RunSummaryData(
-                status="completed",
+                status="completed" if not failure_budget.failed_prompt_outputs else "completed_with_failures",
                 run_id=run_id,
                 execution_mode=resolved_execution_mode,
                 model_names=[model.name for model in models],
@@ -480,10 +644,17 @@ def run_recovery_plan(
                 manifest_path=str(manifest_path),
                 failures_path=str(failures_path),
                 running_log_path=str(run_logger.log_path),
+                wall_time_sec=runtime_metrics.get("elapsed_sec"),
+                processed_prompt_outputs=runtime_metrics.get("processed_prompts"),
+                failed_prompt_outputs=runtime_metrics.get("failed_prompts"),
+                throughput_per_min=runtime_metrics.get("rate_per_min"),
+                stop_reason=None,
             )
         )
         progress.stage_end(stage_index, total_stages, "Done")
     except Exception as exc:
+        if threshold_stop_reason is None and str(exc).startswith("Failure policy threshold exceeded"):
+            threshold_stop_reason = str(exc)
         progress.env_message(f"[run] ERROR: {exc}")
         failure_manifest = {
             **initial_manifest,
@@ -493,9 +664,13 @@ def run_recovery_plan(
                 [path for path in tasks_dir.rglob("*.json") if ".result." not in path.name]
             ),
             "error": str(exc),
+            "stop_reason": threshold_stop_reason,
             "running_log_path": str(run_logger.log_path),
             "samples_ledger_path": str(run_root / "samples.jsonl"),
+            "runtime_status_path": str(runtime_status_path),
             "failures_path": str(failures_path),
+            "failure_policy": failure_policy.to_dict(),
+            "runtime_metrics": telemetry.finalize(status="failed"),
         }
         manifest_path = write_run_manifest(run_root, failure_manifest)
         failures_path = write_failures_summary(run_root, failures)
@@ -519,6 +694,19 @@ def run_recovery_plan(
                 manifest_path=str(manifest_path),
                 failures_path=str(failures_path),
                 running_log_path=str(run_logger.log_path),
+                wall_time_sec=failure_manifest["runtime_metrics"].get("elapsed_sec")
+                if isinstance(failure_manifest.get("runtime_metrics"), dict)
+                else None,
+                processed_prompt_outputs=failure_manifest["runtime_metrics"].get("processed_prompts")
+                if isinstance(failure_manifest.get("runtime_metrics"), dict)
+                else None,
+                failed_prompt_outputs=failure_manifest["runtime_metrics"].get("failed_prompts")
+                if isinstance(failure_manifest.get("runtime_metrics"), dict)
+                else None,
+                throughput_per_min=failure_manifest["runtime_metrics"].get("rate_per_min")
+                if isinstance(failure_manifest.get("runtime_metrics"), dict)
+                else None,
+                stop_reason=threshold_stop_reason or str(exc),
             )
         )
         raise
@@ -527,6 +715,7 @@ def run_recovery_plan(
         run_logger.close()
 
     return RunSummary(
+        status="completed_with_failures" if failure_budget.failed_prompt_outputs else "completed",
         run_id=run_id,
         model_names=[model.name for model in models],
         prompt_file=prompt_source_label,
@@ -536,6 +725,7 @@ def run_recovery_plan(
         export_path=str(export_path),
         execution_mode=resolved_execution_mode,
         running_log_path=str(run_logger.log_path),
+        stop_reason=None,
     )
 
 
@@ -553,7 +743,11 @@ def run_models(
     progress: RunProgress | None = None,
     profile_name: str | None = None,
     profile_path: str | None = None,
+    profile_generation_defaults: dict[str, object] | None = None,
     profile_runtime: dict[str, object] | None = None,
+    continue_on_error: bool | None = None,
+    max_failures: int | None = None,
+    max_failure_rate: float | None = None,
 ) -> RunSummary:
     resolved_execution_mode = _resolve_execution_mode(
         execution_mode=execution_mode,
@@ -600,7 +794,7 @@ def run_models(
     )
 
     progress.stage_start(stage_index, total_stages, "Loading prompts")
-    prompts = load_prompts(prompt_file)
+    prompts = load_prompts(prompt_file, warn=progress.env_message)
     progress.stage_end(stage_index, total_stages, "Loading prompts")
     stage_index += 1
 
@@ -614,10 +808,23 @@ def run_models(
     progress.stage_start(stage_index, total_stages, "Resolving models")
 
     manager = env_manager or EnvManager(registry=registry)
+    failure_policy = _resolve_failure_policy(
+        continue_on_error=continue_on_error,
+        max_failures=max_failures,
+        max_failure_rate=max_failure_rate,
+        profile_runtime=profile_runtime,
+    )
     progress.stage_end(stage_index, total_stages, "Resolving models")
     stage_index += 1
     ledger_path = run_root / "samples.jsonl"
     ledger_writer = RunLedgerWriter(ledger_path)
+    runtime_status_path = run_root / "runtime_status.json"
+    telemetry = RunTelemetry(
+        run_id=run_id,
+        execution_mode=resolved_execution_mode,
+        emit_callback=progress.env_message,
+        status_path=runtime_status_path,
+    )
     created_at = datetime.now(UTC).isoformat()
     initial_manifest = {
         "run_id": run_id,
@@ -629,12 +836,22 @@ def run_models(
         "execution_mode": resolved_execution_mode,
         "task_count": 0,
         "output_dir": str(run_root),
-        "export_paths": {"samples_jsonl": str(ledger_path)},
+        "export_paths": {
+            "samples_jsonl": str(ledger_path),
+            "runtime_status_json": str(runtime_status_path),
+        },
         "samples_ledger_path": str(ledger_path),
+        "runtime_status_path": str(runtime_status_path),
         "running_log_path": str(run_logger.log_path),
         "registry_path": str(registry.registry_path),
         "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
-        "profile": _build_profile_manifest(profile_name=profile_name, profile_path=profile_path, profile_runtime=profile_runtime),
+        "profile": _build_profile_manifest(
+            profile_name=profile_name,
+            profile_path=profile_path,
+            profile_generation_defaults=profile_generation_defaults,
+            profile_runtime=profile_runtime,
+        ),
+        "failure_policy": failure_policy.to_dict(),
     }
     write_run_manifest(run_root, initial_manifest)
     failures: list[dict[str, object]] = []
@@ -642,6 +859,7 @@ def run_models(
     export_path: Path | None = None
     failures_path = run_root / "failures.json"
     manifest_path = run_root / "run_manifest.json"
+    threshold_stop_reason: str | None = None
     try:
         progress.stage_start(stage_index, total_stages, "Ensuring environments")
         env_records: dict[str, EnvironmentRecord] = {}
@@ -680,6 +898,7 @@ def run_models(
                     model=model,
                     prompts=prompts,
                     batch_limit=batch_limit,
+                    generation_defaults=profile_generation_defaults,
                 )
             )
             total_tasks_for_model = len(batched_prompts)
@@ -693,7 +912,11 @@ def run_models(
                     model_name=model.name,
                     execution_mode=resolved_execution_mode,
                     prompts=[_prompt_to_task_prompt(prompt) for prompt in prompt_batch],
-                    params=_default_generation_params(model, prompt_batch),
+                    params=_default_generation_params(
+                        model,
+                        prompt_batch,
+                        generation_defaults=profile_generation_defaults,
+                    ),
                     workdir=str(task_workdir),
                     batch_id=batch_id,
                     runtime_config={"worker_strategy": strategy},
@@ -719,6 +942,14 @@ def run_models(
 
             prepared_tasks_by_model[model.name] = model_prepared_tasks
 
+        failure_budget = FailureBudget(
+            total_planned_outputs=sum(
+                len(prepared_task.payload.prompts)
+                for prepared_tasks in prepared_tasks_by_model.values()
+                for prepared_task in prepared_tasks
+            )
+        )
+        telemetry.set_plan(prepared_tasks_by_model=prepared_tasks_by_model)
         progress.stage_end(stage_index, total_stages, "Preparing tasks")
         stage_index += 1
 
@@ -734,6 +965,10 @@ def run_models(
                     execution_mode=resolved_execution_mode,
                 )
                 replica_plans_by_model[model.name] = replica_plans
+                telemetry.register_replica_assignments(
+                    model_name=model.name,
+                    replica_plans=replica_plans,
+                )
                 _log_replica_plan(progress=progress, model=model, replica_plans=replica_plans)
                 if len(replica_plans) == 1:
                     replica_plan = replica_plans[0]
@@ -744,14 +979,15 @@ def run_models(
                         replica_id=replica_plan.replica_id,
                         gpu_assignment=replica_plan.gpu_assignment,
                         replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
-                        log_callback=lambda line: _mirror_runtime_event(
+                        log_callback=lambda line: _handle_runtime_event(
                             logger=run_logger,
                             terminal_progress=base_progress,
+                            telemetry=telemetry,
                             message=line,
                         ),
                     ) as session:
                         for prepared_task in replica_plan.tasks:
-                            result_payload = _execute_prepared_task(
+                            outcome = _execute_prepared_task(
                                 prepared_task=prepared_task,
                                 runner=lambda task, session=session: session.run_task(task),
                                 run_id=run_id,
@@ -759,41 +995,54 @@ def run_models(
                                 failures=failures,
                                 progress=progress,
                                 ledger_writer=ledger_writer,
+                                telemetry=telemetry,
                             )
-                            task_results.append((model, prepared_task.payload, result_payload))
+                            task_results.append((model, prepared_task.payload, outcome.result_payload))
+                            _apply_failure_policy_after_task(
+                                outcome=outcome,
+                                prepared_task=prepared_task,
+                                failure_policy=failure_policy,
+                                failure_budget=failure_budget,
+                                progress=progress,
+                                model_name=model.name,
+                            )
                 else:
-                    task_results.extend(
-                        _run_persistent_worker_replicas(
-                            model=model,
-                            env_record=env_records[model.name],
-                            replica_plans=replica_plans,
-                            execution_mode=resolved_execution_mode,
-                            run_id=run_id,
-                            run_root=run_root,
-                            workers_root=workers_root,
-                            failures=failures,
-                            progress=progress,
-                            ledger_writer=ledger_writer,
-                            log_callback=lambda line: _mirror_runtime_event(
-                                logger=run_logger,
-                                terminal_progress=base_progress,
-                                message=line,
-                            ),
-                        )
+                    _run_persistent_worker_replicas(
+                        model=model,
+                        env_record=env_records[model.name],
+                        replica_plans=replica_plans,
+                        execution_mode=resolved_execution_mode,
+                        run_id=run_id,
+                        run_root=run_root,
+                        workers_root=workers_root,
+                        failures=failures,
+                        progress=progress,
+                        ledger_writer=ledger_writer,
+                        telemetry=telemetry,
+                        failure_policy=failure_policy,
+                        failure_budget=failure_budget,
+                        task_results_out=task_results,
+                        log_callback=lambda line: _handle_runtime_event(
+                            logger=run_logger,
+                            terminal_progress=base_progress,
+                            telemetry=telemetry,
+                            message=line,
+                        ),
                     )
             else:
                 runner = worker_runner or _run_worker_task
                 for prepared_task in prepared_tasks:
-                    result_payload = _execute_prepared_task(
+                    outcome = _execute_prepared_task(
                         prepared_task=prepared_task,
                         runner=lambda task, env_record=env_records[model.name], runner=runner: _invoke_worker_runner(
                             runner,
                             env_record,
                             task.task_file,
                             task.result_file,
-                            log_callback=lambda line: _mirror_runtime_event(
+                            log_callback=lambda line: _handle_runtime_event(
                                 logger=run_logger,
                                 terminal_progress=base_progress,
+                                telemetry=telemetry,
                                 message=line,
                             ),
                         ),
@@ -802,12 +1051,25 @@ def run_models(
                         failures=failures,
                         progress=progress,
                         ledger_writer=ledger_writer,
+                        telemetry=telemetry,
                     )
-                    task_results.append((model, prepared_task.payload, result_payload))
+                    task_results.append((model, prepared_task.payload, outcome.result_payload))
+                    _apply_failure_policy_after_task(
+                        outcome=outcome,
+                        prepared_task=prepared_task,
+                        failure_policy=failure_policy,
+                        failure_budget=failure_budget,
+                        progress=progress,
+                        model_name=model.name,
+                    )
                 if prepared_tasks:
                     replica_plans_by_model[model.name] = [
                         ReplicaPlan(replica_id=0, gpu_assignment=[], tasks=list(prepared_tasks))
                     ]
+                    telemetry.register_replica_assignments(
+                        model_name=model.name,
+                        replica_plans=replica_plans_by_model[model.name],
+                    )
         task_results.sort(key=lambda item: item[1].task_id)
         progress.stage_end(stage_index, total_stages, "Running tasks")
         stage_index += 1
@@ -838,10 +1100,13 @@ def run_models(
             worker_strategies=worker_strategies,
             replica_plans_by_model=replica_plans_by_model,
         )
+        runtime_metrics = telemetry.finalize(
+            status="completed_with_failures" if failure_budget.failed_prompt_outputs else "completed"
+        )
 
         run_manifest = {
             "run_id": run_id,
-            "status": "completed",
+            "status": "completed_with_failures" if failure_budget.failed_prompt_outputs else "completed",
             "created_at": created_at,
             "completed_at": datetime.now(UTC).isoformat(),
             "models": [model.name for model in models],
@@ -854,16 +1119,27 @@ def run_models(
             "export_paths": {
                 "dataset_jsonl": str(export_path),
                 "samples_jsonl": str(ledger_path),
+                "runtime_status_json": str(runtime_status_path),
                 "running_log": str(run_logger.log_path),
             },
             "export_path": str(export_path),
             "running_log_path": str(run_logger.log_path),
             "samples_ledger_path": str(ledger_path),
+            "runtime_status_path": str(runtime_status_path),
             "failures_path": str(failures_path),
             "per_model_summary": per_model_summary,
+            "runtime_metrics": runtime_metrics,
             "registry_path": str(registry.registry_path),
             "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
-            "profile": _build_profile_manifest(profile_name=profile_name, profile_path=profile_path, profile_runtime=profile_runtime),
+            "profile": _build_profile_manifest(
+                profile_name=profile_name,
+                profile_path=profile_path,
+                profile_generation_defaults=profile_generation_defaults,
+                profile_runtime=profile_runtime,
+            ),
+            "failure_policy": failure_policy.to_dict(),
+            "failed_prompt_outputs": failure_budget.failed_prompt_outputs,
+            "failure_rate": failure_budget.failure_rate,
         }
         (run_root / "run.json").write_text(json.dumps(run_manifest, indent=2), encoding="utf-8")
         manifest_path = write_run_manifest(run_root, run_manifest)
@@ -882,7 +1158,7 @@ def run_models(
 
         progress.print_summary(
             RunSummaryData(
-                status="completed",
+                status="completed" if not failure_budget.failed_prompt_outputs else "completed_with_failures",
                 run_id=run_id,
                 execution_mode=resolved_execution_mode,
                 model_names=[model.name for model in models],
@@ -895,11 +1171,18 @@ def run_models(
                 manifest_path=str(manifest_path),
                 failures_path=str(failures_path),
                 running_log_path=str(run_logger.log_path),
+                wall_time_sec=runtime_metrics.get("elapsed_sec"),
+                processed_prompt_outputs=runtime_metrics.get("processed_prompts"),
+                failed_prompt_outputs=runtime_metrics.get("failed_prompts"),
+                throughput_per_min=runtime_metrics.get("rate_per_min"),
+                stop_reason=None,
             )
         )
 
         progress.stage_end(stage_index, total_stages, "Done")
     except Exception as exc:
+        if threshold_stop_reason is None and str(exc).startswith("Failure policy threshold exceeded"):
+            threshold_stop_reason = str(exc)
         progress.env_message(f"[run] ERROR: {exc}")
         failure_manifest = {
             **initial_manifest,
@@ -913,9 +1196,13 @@ def run_models(
                 ]
             ),
             "error": str(exc),
+            "stop_reason": threshold_stop_reason,
             "running_log_path": str(run_logger.log_path),
             "samples_ledger_path": str(ledger_path),
+            "runtime_status_path": str(runtime_status_path),
             "failures_path": str(failures_path),
+            "failure_policy": failure_policy.to_dict(),
+            "runtime_metrics": telemetry.finalize(status="failed"),
         }
         manifest_path = write_run_manifest(run_root, failure_manifest)
         failures_path = write_failures_summary(run_root, failures)
@@ -939,6 +1226,19 @@ def run_models(
                 manifest_path=str(manifest_path),
                 failures_path=str(failures_path),
                 running_log_path=str(run_logger.log_path),
+                wall_time_sec=failure_manifest["runtime_metrics"].get("elapsed_sec")
+                if isinstance(failure_manifest.get("runtime_metrics"), dict)
+                else None,
+                processed_prompt_outputs=failure_manifest["runtime_metrics"].get("processed_prompts")
+                if isinstance(failure_manifest.get("runtime_metrics"), dict)
+                else None,
+                failed_prompt_outputs=failure_manifest["runtime_metrics"].get("failed_prompts")
+                if isinstance(failure_manifest.get("runtime_metrics"), dict)
+                else None,
+                throughput_per_min=failure_manifest["runtime_metrics"].get("rate_per_min")
+                if isinstance(failure_manifest.get("runtime_metrics"), dict)
+                else None,
+                stop_reason=threshold_stop_reason or str(exc),
             )
         )
         raise
@@ -947,6 +1247,7 @@ def run_models(
         run_logger.close()
 
     return RunSummary(
+        status="completed_with_failures" if failure_budget.failed_prompt_outputs else "completed",
         run_id=run_id,
         model_names=[model.name for model in models],
         prompt_file=str(prompt_file),
@@ -956,6 +1257,7 @@ def run_models(
         export_path=str(export_path),
         execution_mode=resolved_execution_mode,
         running_log_path=str(run_logger.log_path),
+        stop_reason=None,
     )
 
 
@@ -1364,8 +1666,16 @@ def _execute_prepared_task(
     failures: list[dict[str, object]],
     progress: RunProgress,
     ledger_writer: RunLedgerWriter,
+    telemetry: RunTelemetry | None = None,
     state_lock: threading.Lock | None = None,
-) -> dict:
+) -> TaskExecutionOutcome:
+    task_started_at = time.monotonic()
+    if telemetry is not None:
+        telemetry.record_task_start(
+            task_id=prepared_task.payload.task_id,
+            model_name=prepared_task.model.name,
+            replica_id=prepared_task.payload.runtime_config.get("replica_id"),
+        )
     progress.task_start(
         current=prepared_task.batch_number,
         total=prepared_task.total_tasks_for_model,
@@ -1374,39 +1684,76 @@ def _execute_prepared_task(
         execution_mode=prepared_task.payload.execution_mode,
     )
 
-    returncode, logs = runner(prepared_task)
-    if not prepared_task.result_file.exists():
-        error_message = "Worker did not produce a result file."
-        failure_record = {
-            "task_id": prepared_task.payload.task_id,
-            "model_name": prepared_task.model.name,
-            "status": "failed",
-            "error": error_message,
-        }
-        _append_ledger_records(
-            ledger_writer=ledger_writer,
-            run_id=run_id,
-            model=prepared_task.model,
-            task_payload=prepared_task.payload,
-            task_result=None,
+    try:
+        returncode, logs = runner(prepared_task)
+    except Exception as exc:
+        error_message = str(exc).strip() or exc.__class__.__name__
+        failure_category = _categorize_failure(error_message=error_message)
+        synthetic_result = _build_task_failure_result_payload(
+            prepared_task=prepared_task,
             error_message=error_message,
+        )
+        _record_task_failure(
+            prepared_task=prepared_task,
+            run_id=run_id,
+            run_root=run_root,
+            failures=failures,
+            progress=progress,
+            ledger_writer=ledger_writer,
+            task_result=synthetic_result,
+            error_message=error_message,
+            failure_category=failure_category,
             state_lock=state_lock,
         )
-        if state_lock is not None:
-            with state_lock:
-                failures.append(failure_record)
-                write_failures_summary(run_root, failures)
-        else:
-            failures.append(failure_record)
-            write_failures_summary(run_root, failures)
-        progress.task_end(
-            current=prepared_task.batch_number,
-            total=prepared_task.total_tasks_for_model,
-            model_name=prepared_task.model.name,
-            status="failed",
-            artifacts=None,
+        if telemetry is not None:
+            telemetry.record_task_outcome(
+                task_id=prepared_task.payload.task_id,
+                model_name=prepared_task.model.name,
+                replica_id=prepared_task.payload.runtime_config.get("replica_id"),
+                successful_prompts=0,
+                failed_prompts=len(prepared_task.payload.prompts),
+                task_failed=True,
+            )
+        raise
+
+    if not prepared_task.result_file.exists():
+        error_message = "Worker did not produce a result file."
+        failure_category = "worker_startup_error"
+        synthetic_result = _build_task_failure_result_payload(
+            prepared_task=prepared_task,
+            error_message=error_message,
         )
-        raise RunFlowError(f"Worker did not produce result file for {prepared_task.payload.task_id}.")
+        _record_task_failure(
+            prepared_task=prepared_task,
+            run_id=run_id,
+            run_root=run_root,
+            failures=failures,
+            progress=progress,
+            ledger_writer=ledger_writer,
+            task_result=synthetic_result,
+            error_message=error_message,
+            failure_category=failure_category,
+            state_lock=state_lock,
+        )
+        outcome = TaskExecutionOutcome(
+            result_payload=synthetic_result,
+            task_failed=True,
+            failed_prompt_count=len(prepared_task.payload.prompts),
+            successful_prompt_count=0,
+            duration_sec=time.monotonic() - task_started_at,
+            failure_message=f"Worker did not produce result file for {prepared_task.payload.task_id}.",
+            failure_category=failure_category,
+        )
+        if telemetry is not None:
+            telemetry.record_task_outcome(
+                task_id=prepared_task.payload.task_id,
+                model_name=prepared_task.model.name,
+                replica_id=prepared_task.payload.runtime_config.get("replica_id"),
+                successful_prompts=0,
+                failed_prompts=outcome.failed_prompt_count,
+                task_failed=True,
+            )
+        return outcome
 
     result_payload = json.loads(prepared_task.result_file.read_text(encoding="utf-8"))
     execution_logs = _merge_diagnostic_logs(
@@ -1416,67 +1763,77 @@ def _execute_prepared_task(
     )
     model_status = result_payload["model_result"]["status"]
     if returncode != 0 and model_status == "failed":
-        _append_ledger_records(
-            ledger_writer=ledger_writer,
+        failure_category = _categorize_failure(
+            error_message=execution_logs,
+            task_result=result_payload,
+        )
+        _record_task_failure(
+            prepared_task=prepared_task,
             run_id=run_id,
-            model=prepared_task.model,
-            task_payload=prepared_task.payload,
+            run_root=run_root,
+            failures=failures,
+            progress=progress,
+            ledger_writer=ledger_writer,
             task_result=result_payload,
             error_message=execution_logs,
+            failure_category=failure_category,
             state_lock=state_lock,
         )
-        failure_record = {
-            "task_id": prepared_task.payload.task_id,
-            "model_name": prepared_task.model.name,
-            "status": "failed",
-            "error": execution_logs,
-        }
-        if state_lock is not None:
-            with state_lock:
-                failures.append(failure_record)
-                write_failures_summary(run_root, failures)
-        else:
-            failures.append(failure_record)
-            write_failures_summary(run_root, failures)
-        progress.task_end(
-            current=prepared_task.batch_number,
-            total=prepared_task.total_tasks_for_model,
-            model_name=prepared_task.model.name,
-            status="failed",
-            artifacts=None,
+        outcome = TaskExecutionOutcome(
+            result_payload=result_payload,
+            task_failed=True,
+            failed_prompt_count=_count_failed_prompt_outputs(prepared_task.payload, result_payload),
+            successful_prompt_count=_count_successful_prompt_outputs(result_payload),
+            duration_sec=time.monotonic() - task_started_at,
+            failure_message=f"Worker failed for {prepared_task.payload.task_id}:\n{execution_logs}",
+            failure_category=failure_category,
         )
-        raise RunFlowError(f"Worker failed for {prepared_task.payload.task_id}:\n{execution_logs}")
+        if telemetry is not None:
+            telemetry.record_task_outcome(
+                task_id=prepared_task.payload.task_id,
+                model_name=prepared_task.model.name,
+                replica_id=prepared_task.payload.runtime_config.get("replica_id"),
+                successful_prompts=outcome.successful_prompt_count,
+                failed_prompts=outcome.failed_prompt_count,
+                task_failed=True,
+            )
+        return outcome
     if model_status == "failed":
-        _append_ledger_records(
-            ledger_writer=ledger_writer,
+        failure_category = _categorize_failure(
+            error_message=execution_logs,
+            task_result=result_payload,
+        )
+        _record_task_failure(
+            prepared_task=prepared_task,
             run_id=run_id,
-            model=prepared_task.model,
-            task_payload=prepared_task.payload,
+            run_root=run_root,
+            failures=failures,
+            progress=progress,
+            ledger_writer=ledger_writer,
             task_result=result_payload,
             error_message=execution_logs,
+            failure_category=failure_category,
             state_lock=state_lock,
         )
-        failure_record = {
-            "task_id": prepared_task.payload.task_id,
-            "model_name": prepared_task.model.name,
-            "status": "failed",
-            "error": execution_logs,
-        }
-        if state_lock is not None:
-            with state_lock:
-                failures.append(failure_record)
-                write_failures_summary(run_root, failures)
-        else:
-            failures.append(failure_record)
-            write_failures_summary(run_root, failures)
-        progress.task_end(
-            current=prepared_task.batch_number,
-            total=prepared_task.total_tasks_for_model,
-            model_name=prepared_task.model.name,
-            status="failed",
-            artifacts=None,
+        outcome = TaskExecutionOutcome(
+            result_payload=result_payload,
+            task_failed=True,
+            failed_prompt_count=_count_failed_prompt_outputs(prepared_task.payload, result_payload),
+            successful_prompt_count=_count_successful_prompt_outputs(result_payload),
+            duration_sec=time.monotonic() - task_started_at,
+            failure_message=f"Task {prepared_task.payload.task_id} failed:\n{execution_logs}",
+            failure_category=failure_category,
         )
-        raise RunFlowError(f"Task {prepared_task.payload.task_id} failed:\n{execution_logs}")
+        if telemetry is not None:
+            telemetry.record_task_outcome(
+                task_id=prepared_task.payload.task_id,
+                model_name=prepared_task.model.name,
+                replica_id=prepared_task.payload.runtime_config.get("replica_id"),
+                successful_prompts=outcome.successful_prompt_count,
+                failed_prompts=outcome.failed_prompt_count,
+                task_failed=True,
+            )
+        return outcome
 
     successful_artifacts = 0
     for batch_item in result_payload.get("model_result", {}).get("batch_items", []):
@@ -1499,7 +1856,25 @@ def _execute_prepared_task(
         task_result=result_payload,
         state_lock=state_lock,
     )
-    return result_payload
+    outcome = TaskExecutionOutcome(
+        result_payload=result_payload,
+        task_failed=False,
+        failed_prompt_count=_count_failed_prompt_outputs(prepared_task.payload, result_payload),
+        successful_prompt_count=_count_successful_prompt_outputs(result_payload),
+        duration_sec=time.monotonic() - task_started_at,
+        failure_message=None,
+        failure_category=None,
+    )
+    if telemetry is not None:
+        telemetry.record_task_outcome(
+            task_id=prepared_task.payload.task_id,
+            model_name=prepared_task.model.name,
+            replica_id=prepared_task.payload.runtime_config.get("replica_id"),
+            successful_prompts=outcome.successful_prompt_count,
+            failed_prompts=outcome.failed_prompt_count,
+            task_failed=False,
+        )
+    return outcome
 
 
 def _run_worker_task(
@@ -1551,6 +1926,225 @@ def _run_worker_task(
     if logs:
         worker_log_file.write_text(logs + "\n", encoding="utf-8")
     return returncode, logs
+
+
+def _build_task_failure_result_payload(
+    *,
+    prepared_task: PreparedTask,
+    error_message: str,
+) -> dict[str, object]:
+    return {
+        "task_id": prepared_task.payload.task_id,
+        "model_name": prepared_task.payload.model_name,
+        "execution_mode": prepared_task.payload.execution_mode,
+        "worker_strategy": prepared_task.payload.worker_strategy,
+        "plan": None,
+        "execution_result": {"exit_code": 1, "logs": error_message, "outputs": {}},
+        "model_result": {
+            "status": "failed",
+            "batch_items": [],
+            "logs": error_message,
+            "metadata": {},
+        },
+    }
+
+
+def _record_task_failure(
+    *,
+    prepared_task: PreparedTask,
+    run_id: str,
+    run_root: Path,
+    failures: list[dict[str, object]],
+    progress: RunProgress,
+    ledger_writer: RunLedgerWriter,
+    task_result: dict[str, object] | None,
+    error_message: str,
+    failure_category: str,
+    state_lock: threading.Lock | None = None,
+) -> None:
+    _append_ledger_records(
+        ledger_writer=ledger_writer,
+        run_id=run_id,
+        model=prepared_task.model,
+        task_payload=prepared_task.payload,
+        task_result=task_result,
+        error_message=error_message,
+        failure_category=failure_category,
+        state_lock=state_lock,
+    )
+    failure_record = {
+        "task_id": prepared_task.payload.task_id,
+        "model_name": prepared_task.model.name,
+        "status": "failed",
+        "error": error_message,
+        "category": failure_category,
+        "execution_mode": prepared_task.payload.execution_mode,
+        "worker_strategy": prepared_task.payload.worker_strategy,
+        "batch_id": prepared_task.payload.batch_id,
+        "prompt_count": len(prepared_task.payload.prompts),
+        "prompt_ids": [prompt.prompt_id for prompt in prepared_task.payload.prompts],
+        "replica_id": prepared_task.payload.runtime_config.get("replica_id"),
+        "gpu_assignment": prepared_task.payload.runtime_config.get("gpu_assignment"),
+    }
+    if state_lock is not None:
+        with state_lock:
+            failures.append(failure_record)
+            write_failures_summary(run_root, failures)
+    else:
+        failures.append(failure_record)
+        write_failures_summary(run_root, failures)
+    progress.task_end(
+        current=prepared_task.batch_number,
+        total=prepared_task.total_tasks_for_model,
+        model_name=prepared_task.model.name,
+        status="failed",
+        artifacts=None,
+    )
+
+
+def _count_successful_prompt_outputs(task_result: dict[str, object]) -> int:
+    count = 0
+    for batch_item in task_result.get("model_result", {}).get("batch_items", []):
+        if batch_item.get("status") == "success":
+            count += 1
+    return count
+
+
+def _count_failed_prompt_outputs(task_payload: TaskPayload, task_result: dict[str, object]) -> int:
+    batch_items = list(task_result.get("model_result", {}).get("batch_items", []))
+    if batch_items:
+        return sum(1 for batch_item in batch_items if batch_item.get("status") != "success")
+    if task_result.get("model_result", {}).get("status") == "failed":
+        return len(task_payload.prompts)
+    return 0
+
+
+def _categorize_failure(
+    *,
+    error_message: str | None,
+    task_result: dict[str, object] | None = None,
+) -> str:
+    lower = (error_message or "").lower()
+    if "conda env" in lower or ("environment for" in lower and "not available" in lower):
+        return "env_error"
+    if any(
+        marker in lower
+        for marker in (
+            "failed during startup",
+            "did not become ready",
+            "worker exited unexpectedly",
+            "worker did not produce result file",
+            "failed to connect to persistent worker queue manager",
+        )
+    ):
+        if any(
+            marker in lower
+            for marker in ("load_pipeline", "load_for_persistent_worker", "from_pretrained", "loading model")
+        ):
+            return "model_load_error"
+        return "worker_startup_error"
+    if any(
+        marker in lower
+        for marker in ("artifact", "collect(", "collect ", "export_to_video", "failed to export", "save image")
+    ):
+        return "artifact_collection_error"
+    if task_result is not None:
+        error_type = str(task_result.get("model_result", {}).get("metadata", {}).get("error_type") or "").strip()
+        if error_type:
+            return "task_execution_error"
+    if lower:
+        return "task_execution_error"
+    return "unknown_error"
+
+
+def _resolve_failure_policy(
+    *,
+    continue_on_error: bool | None,
+    max_failures: int | None,
+    max_failure_rate: float | None,
+    profile_runtime: dict[str, object] | None,
+) -> FailurePolicy:
+    runtime = dict(profile_runtime or {})
+    nested = runtime.get("failure_policy")
+    nested_policy = dict(nested) if isinstance(nested, dict) else {}
+
+    def _resolve(key: str, explicit: object | None) -> object | None:
+        if explicit is not None:
+            return explicit
+        if key in nested_policy:
+            return nested_policy.get(key)
+        return runtime.get(key)
+
+    resolved_max_failures = _coerce_optional_int(_resolve("max_failures", max_failures), field_name="max_failures")
+    resolved_max_failure_rate = _coerce_optional_float(
+        _resolve("max_failure_rate", max_failure_rate),
+        field_name="max_failure_rate",
+    )
+    if resolved_max_failure_rate is not None and not 0.0 <= resolved_max_failure_rate <= 1.0:
+        raise RunFlowError("max_failure_rate must be between 0.0 and 1.0.")
+
+    raw_continue = _resolve("continue_on_error", continue_on_error)
+    if raw_continue is None:
+        resolved_continue_on_error = (
+            resolved_max_failures is not None or resolved_max_failure_rate is not None
+        )
+    elif isinstance(raw_continue, bool):
+        resolved_continue_on_error = raw_continue
+    else:
+        raise RunFlowError("continue_on_error must be a boolean if provided.")
+
+    return FailurePolicy(
+        continue_on_error=resolved_continue_on_error,
+        max_failures=resolved_max_failures,
+        max_failure_rate=resolved_max_failure_rate,
+    )
+
+
+def _coerce_optional_int(value: object | None, *, field_name: str) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError) as exc:
+        raise RunFlowError(f"{field_name} must be an integer.") from exc
+    if resolved < 0:
+        raise RunFlowError(f"{field_name} must be >= 0.")
+    return resolved
+
+
+def _coerce_optional_float(value: object | None, *, field_name: str) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise RunFlowError(f"{field_name} must be a float.") from exc
+
+
+def _apply_failure_policy_after_task(
+    *,
+    outcome: TaskExecutionOutcome,
+    prepared_task: PreparedTask,
+    failure_policy: FailurePolicy,
+    failure_budget: FailureBudget,
+    progress: RunProgress,
+    model_name: str,
+) -> None:
+    failure_budget.record(
+        failed_prompt_outputs=outcome.failed_prompt_count,
+        task_failed=outcome.task_failed,
+    )
+    threshold_reason = failure_budget.check_thresholds(failure_policy)
+    if threshold_reason:
+        raise RunFlowError(threshold_reason)
+    if outcome.task_failed:
+        if failure_policy.continue_on_error:
+            progress.env_message(
+                f"[run][{model_name}] continuing after failed task {prepared_task.payload.task_id} "
+                f"category={outcome.failure_category or 'unknown_error'}"
+            )
+            return
+        raise RunFlowError(outcome.failure_message or f"Task {prepared_task.payload.task_id} failed.")
 
 
 def _invoke_worker_runner(
@@ -1819,10 +2413,14 @@ def _run_persistent_worker_replicas(
     failures: list[dict[str, object]],
     progress: RunProgress,
     ledger_writer: RunLedgerWriter,
+    telemetry: RunTelemetry | None,
+    failure_policy: FailurePolicy,
+    failure_budget: FailureBudget,
+    task_results_out: list[tuple[ModelInfo, TaskPayload, dict]] | None = None,
     log_callback: Callable[[str], None] | None = None,
 ) -> list[tuple[ModelInfo, TaskPayload, dict]]:
     lock = threading.Lock()
-    task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
+    task_results = task_results_out if task_results_out is not None else []
     errors: list[BaseException] = []
     threads: list[threading.Thread] = []
     stop_event = threading.Event()
@@ -1838,7 +2436,7 @@ def _run_persistent_worker_replicas(
             for prepared_task in replica_plan.tasks:
                 if stop_event.is_set():
                     break
-                result_payload = _execute_prepared_task(
+                outcome = _execute_prepared_task(
                     prepared_task=prepared_task,
                     runner=lambda task, session=session: session.run_task(task),
                     run_id=run_id,
@@ -1846,10 +2444,19 @@ def _run_persistent_worker_replicas(
                     failures=failures,
                     progress=progress,
                     ledger_writer=ledger_writer,
+                    telemetry=telemetry,
                     state_lock=lock,
                 )
+                _apply_failure_policy_after_task(
+                    outcome=outcome,
+                    prepared_task=prepared_task,
+                    failure_policy=failure_policy,
+                    failure_budget=failure_budget,
+                    progress=progress,
+                    model_name=model.name,
+                )
                 with lock:
-                    task_results.append((model, prepared_task.payload, result_payload))
+                    task_results.append((model, prepared_task.payload, outcome.result_payload))
         except BaseException as exc:  # pragma: no cover - exercised via thread/integration path
             with lock:
                 errors.append(exc)
@@ -1908,6 +2515,7 @@ def _append_ledger_records(
     task_payload: TaskPayload,
     task_result: dict | None,
     error_message: str | None = None,
+    failure_category: str | None = None,
     state_lock: threading.Lock | None = None,
 ) -> None:
     records = build_sample_ledger_records(
@@ -1916,6 +2524,7 @@ def _append_ledger_records(
         task_payload=task_payload,
         task_result=task_result,
         error_message=error_message,
+        failure_category=failure_category,
     )
     if state_lock is not None:
         with state_lock:
@@ -1946,11 +2555,25 @@ def _prompt_to_task_prompt(prompt: PromptRecord) -> TaskPrompt:
     )
 
 
-def _default_generation_params(model: ModelInfo, prompts: list[PromptRecord]) -> dict[str, object]:
+def _default_generation_params(
+    model: ModelInfo,
+    prompts: list[PromptRecord],
+    *,
+    generation_defaults: dict[str, object] | None = None,
+) -> dict[str, object]:
     if not prompts:
         raise RunFlowError(f"Cannot build generation params for {model.name} with no prompts.")
 
-    prompt = prompts[0]
+    params = _model_default_generation_params(model)
+    params = _merge_generation_param_overrides(params, generation_defaults)
+    params = _merge_generation_param_overrides(params, prompts[0].parameters)
+
+    if model.capabilities.get("supports_negative_prompt"):
+        params["negative_prompts"] = [batch_prompt.negative_prompt or "" for batch_prompt in prompts]
+    return params
+
+
+def _model_default_generation_params(model: ModelInfo) -> dict[str, object]:
     default_seed = get_default_seed()
     if model.modality == "image":
         params: dict[str, object] = {
@@ -2093,57 +2716,33 @@ def _default_generation_params(model: ModelInfo, prompts: list[PromptRecord]) ->
             }
         )
 
-    if model.capabilities.get("supports_negative_prompt"):
-        params["negative_prompts"] = [batch_prompt.negative_prompt or "" for batch_prompt in prompts]
-
-    resolution = prompt.parameters.get("resolution")
-    if isinstance(resolution, str) and "x" in resolution:
-        width, height = resolution.lower().split("x", maxsplit=1)
-        params["width"] = int(width)
-        params["height"] = int(height)
-    if "width" in prompt.parameters:
-        params["width"] = int(prompt.parameters["width"])
-    if "height" in prompt.parameters:
-        params["height"] = int(prompt.parameters["height"])
-    if "guidance_scale" in prompt.parameters:
-        params["guidance_scale"] = float(prompt.parameters["guidance_scale"])
-    if "num_inference_steps" in prompt.parameters:
-        params["num_inference_steps"] = int(prompt.parameters["num_inference_steps"])
-    if "seed" in prompt.parameters:
-        params["seed"] = int(prompt.parameters["seed"])
-    if "max_sequence_length" in prompt.parameters:
-        params["max_sequence_length"] = int(prompt.parameters["max_sequence_length"])
-    if "fps" in prompt.parameters:
-        params["fps"] = int(prompt.parameters["fps"])
-    if "num_frames" in prompt.parameters:
-        params["num_frames"] = int(prompt.parameters["num_frames"])
-    if "guidance_scale_2" in prompt.parameters:
-        params["guidance_scale_2"] = float(prompt.parameters["guidance_scale_2"])
-    if "stream" in prompt.parameters:
-        params["stream"] = bool(prompt.parameters["stream"])
-    if "attn_implementation" in prompt.parameters:
-        params["attn_implementation"] = str(prompt.parameters["attn_implementation"])
-    if "moe_impl" in prompt.parameters:
-        params["moe_impl"] = str(prompt.parameters["moe_impl"])
-    if "local_model_path" in prompt.parameters:
-        params["local_model_path"] = str(prompt.parameters["local_model_path"])
-    if "checkpoint_dir" in prompt.parameters:
-        params["checkpoint_dir"] = str(prompt.parameters["checkpoint_dir"])
-    if "repo_dir" in prompt.parameters:
-        params["repo_dir"] = str(prompt.parameters["repo_dir"])
-    if "offload" in prompt.parameters:
-        params["offload"] = str(prompt.parameters["offload"])
-    if "cp_size" in prompt.parameters:
-        params["cp_size"] = int(prompt.parameters["cp_size"])
-    if "context_parallel_size" in prompt.parameters:
-        params["context_parallel_size"] = int(prompt.parameters["context_parallel_size"])
-    if "image_path" in prompt.parameters:
-        params["image_path"] = str(prompt.parameters["image_path"])
-    if "ref_path" in prompt.parameters:
-        params["ref_path"] = str(prompt.parameters["ref_path"])
-    if "timeout_sec" in prompt.parameters:
-        params["timeout_sec"] = int(prompt.parameters["timeout_sec"])
     return params
+
+
+def _merge_generation_param_overrides(
+    base_params: dict[str, object],
+    overrides: dict[str, object] | None,
+) -> dict[str, object]:
+    params = dict(base_params)
+    if not overrides:
+        return params
+
+    if "resolution" in overrides:
+        width, height = _parse_resolution_value(str(overrides["resolution"]))
+        params["width"] = width
+        params["height"] = height
+
+    for key, value in overrides.items():
+        if key == "resolution":
+            continue
+        params[key] = value
+    return params
+
+
+def _parse_resolution_value(value: str) -> tuple[int, int]:
+    normalized = value.lower().replace("*", "x")
+    width, height = re.split(r"\s*x\s*", normalized, maxsplit=1)
+    return int(width), int(height)
 
 
 def _prepare_recovery_tasks(
@@ -2301,6 +2900,7 @@ def _batch_prompts_for_model(
     model: ModelInfo,
     prompts: list[PromptRecord],
     batch_limit: int | None,
+    generation_defaults: dict[str, object] | None = None,
 ) -> list[list[PromptRecord]]:
     batch_size = _resolve_batch_size(model=model, batch_limit=batch_limit)
     batches: list[list[PromptRecord]] = []
@@ -2308,7 +2908,11 @@ def _batch_prompts_for_model(
     current_signature: str | None = None
 
     for prompt in prompts:
-        signature = _prompt_batch_signature(model=model, prompt=prompt)
+        signature = _prompt_batch_signature(
+            model=model,
+            prompt=prompt,
+            generation_defaults=generation_defaults,
+        )
         if current_batch and (len(current_batch) >= batch_size or signature != current_signature):
             batches.append(current_batch)
             current_batch = []
@@ -2333,8 +2937,13 @@ def _resolve_batch_size(*, model: ModelInfo, batch_limit: int | None) -> int:
     return max(batch_size, 1)
 
 
-def _prompt_batch_signature(*, model: ModelInfo, prompt: PromptRecord) -> str:
-    params = _default_generation_params(model, [prompt])
+def _prompt_batch_signature(
+    *,
+    model: ModelInfo,
+    prompt: PromptRecord,
+    generation_defaults: dict[str, object] | None = None,
+) -> str:
+    params = _default_generation_params(model, [prompt], generation_defaults=generation_defaults)
     params.pop("negative_prompts", None)
     return json.dumps(params, sort_keys=True, ensure_ascii=False)
 

@@ -5,14 +5,55 @@ import json
 import re
 import unicodedata
 from pathlib import Path
+from typing import Any, Callable
 
 from aigc.prompts.models import PromptRecord, PromptValidationError, SUPPORTED_LANGUAGES
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_RESOLUTION_RE = re.compile(r"^\d+\s*[xX*]\s*\d+$")
+
+_INT_PARAMETER_KEYS = {
+    "width",
+    "height",
+    "seed",
+    "num_inference_steps",
+    "fps",
+    "num_frames",
+    "max_sequence_length",
+    "cp_size",
+    "context_parallel_size",
+    "timeout_sec",
+}
+_FLOAT_PARAMETER_KEYS = {
+    "guidance_scale",
+    "guidance_scale_2",
+}
+_BOOL_PARAMETER_KEYS = {"stream"}
+_STRING_PARAMETER_KEYS = {
+    "attn_implementation",
+    "moe_impl",
+    "local_model_path",
+    "checkpoint_dir",
+    "repo_dir",
+    "offload",
+    "image_path",
+    "ref_path",
+    "resolution",
+}
+SUPPORTED_GENERATION_PARAMETER_KEYS = (
+    _INT_PARAMETER_KEYS
+    | _FLOAT_PARAMETER_KEYS
+    | _BOOL_PARAMETER_KEYS
+    | _STRING_PARAMETER_KEYS
+)
 
 
-def load_prompts(path: str | Path) -> list[PromptRecord]:
+def load_prompts(
+    path: str | Path,
+    *,
+    warn: Callable[[str], None] | None = None,
+) -> list[PromptRecord]:
     prompt_path = Path(path)
     suffix = prompt_path.suffix.lower()
     if suffix == ".txt":
@@ -26,12 +67,18 @@ def load_prompts(path: str | Path) -> list[PromptRecord]:
             f"Unsupported prompt file type: {prompt_path.suffix}. "
             "Supported types are .txt, .csv, and .jsonl."
         )
-    validate_prompts(records)
+    validate_prompts(records, prompt_source=prompt_path, warn=warn)
     return records
 
 
-def validate_prompts(records: list[PromptRecord]) -> None:
+def validate_prompts(
+    records: list[PromptRecord],
+    *,
+    prompt_source: str | Path | None = None,
+    warn: Callable[[str], None] | None = None,
+) -> None:
     seen_prompt_ids: set[str] = set()
+    source_label = str(prompt_source) if prompt_source is not None else None
     for record in records:
         if not record.prompt_id:
             raise PromptValidationError("Prompt record is missing prompt_id.")
@@ -56,6 +103,12 @@ def validate_prompts(records: list[PromptRecord]) -> None:
             raise PromptValidationError(
                 f"Prompt {record.prompt_id} parameters must be an object/dict."
             )
+        record.parameters = validate_generation_parameters(
+            record.parameters,
+            owner_label=f"prompt_id={record.prompt_id}",
+            prompt_source=source_label,
+            warn=warn,
+        )
 
         if not isinstance(record.metadata, dict):
             raise PromptValidationError(
@@ -75,6 +128,82 @@ def infer_language(value: str) -> str:
 
 def generate_prompt_id(index: int) -> str:
     return f"prompt_{index:06d}"
+
+
+def validate_generation_parameters(
+    params: dict[str, Any],
+    *,
+    owner_label: str,
+    prompt_source: str | Path | None = None,
+    warn: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(params, dict):
+        raise PromptValidationError(f"{owner_label} parameters must be an object/dict.")
+
+    normalized: dict[str, Any] = {}
+    source_suffix = f" source={prompt_source}" if prompt_source is not None else ""
+    for key, value in params.items():
+        key_str = str(key)
+        if key_str not in SUPPORTED_GENERATION_PARAMETER_KEYS:
+            if warn is not None:
+                warn(
+                    f"[prompt] Unknown generation parameter key owner={owner_label} "
+                    f"key={key_str}{source_suffix}"
+                )
+            normalized[key_str] = value
+            continue
+
+        try:
+            normalized[key_str] = _normalize_generation_parameter_value(key_str, value)
+        except PromptValidationError as exc:
+            raise PromptValidationError(
+                f"{owner_label} has invalid parameter {key_str}: {exc}"
+            ) from exc
+    return normalized
+
+
+def _normalize_generation_parameter_value(key: str, value: Any) -> Any:
+    if key in _INT_PARAMETER_KEYS:
+        if isinstance(value, bool):
+            raise PromptValidationError("expected integer, got boolean")
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise PromptValidationError(f"expected integer, got {value!r}") from exc
+
+    if key in _FLOAT_PARAMETER_KEYS:
+        if isinstance(value, bool):
+            raise PromptValidationError("expected number, got boolean")
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise PromptValidationError(f"expected number, got {value!r}") from exc
+
+    if key in _BOOL_PARAMETER_KEYS:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "1", "yes", "y"}:
+                return True
+            if lowered in {"false", "0", "no", "n"}:
+                return False
+        raise PromptValidationError(f"expected boolean, got {value!r}")
+
+    if key == "resolution":
+        if not isinstance(value, str):
+            raise PromptValidationError(f"expected string resolution, got {value!r}")
+        normalized = normalize_text(value)
+        if not _RESOLUTION_RE.match(normalized):
+            raise PromptValidationError(f"expected resolution like 1024x1024, got {value!r}")
+        return normalized
+
+    if key in _STRING_PARAMETER_KEYS:
+        if value is None:
+            raise PromptValidationError("expected non-null string")
+        return str(value)
+
+    return value
 
 
 def _load_txt(path: Path) -> list[PromptRecord]:

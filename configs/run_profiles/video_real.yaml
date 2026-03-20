@@ -7,5 +7,14 @@ models:
 prompts: prompts/test_video_100.txt
 execution_mode: real
 
+generation_defaults:
+  width: 1280
+  height: 720
+  fps: 16
+  num_frames: 81
+  guidance_scale: 4.0
+  guidance_scale_2: 3.0
+  num_inference_steps: 40
+
 runtime:
   available_gpus: [0, 1, 2, 3]

@@ -101,6 +101,10 @@ class ProgressTests(unittest.TestCase):
             output_dir="/tmp/runs/run_001",
             dataset_path="/tmp/runs/run_001/exports/dataset.jsonl",
             manifest_path="/tmp/runs/run_001/run_manifest.json",
+            wall_time_sec=12.5,
+            processed_prompt_outputs=8,
+            failed_prompt_outputs=0,
+            throughput_per_min=38.4,
         )
 
         progress.print_summary(summary)
@@ -110,9 +114,22 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("[SUMMARY] completed run_id=run_001", output)
         self.assertIn("[SUMMARY] mode=mock models=Z-Image, FLUX.1-dev", output)
         self.assertIn("[SUMMARY] prompts=8 tasks=4 success=4 failed=0", output)
+        self.assertIn("[SUMMARY] prompt_outputs=8 failed_outputs=0 rate=38.4/min", output)
+        self.assertIn("[SUMMARY] wall_time_sec=12.50", output)
         self.assertIn("[SUMMARY] out=", output)
         self.assertIn("[SUMMARY] dataset=", output)
         self.assertIn("[SUMMARY] manifest=", output)
+
+    def test_text_run_progress_preserves_throughput_event_lines(self) -> None:
+        buffer = io.StringIO()
+        progress = TextRunProgress(stream=buffer)
+
+        progress.env_message("[THROUGHPUT] overall prompts=120/800 rate=95.2/min failed=1 eta=00:07:09")
+        progress.env_message("[REPLICA] model=Wan2.2-T2V-A14B-Diffusers r0 [0] ready 12/50 rate=2.4/min")
+
+        output = buffer.getvalue()
+        self.assertIn("[THROUGHPUT] overall prompts=120/800 rate=95.2/min failed=1 eta=00:07:09", output)
+        self.assertIn("[REPLICA] model=Wan2.2-T2V-A14B-Diffusers r0 [0] ready 12/50 rate=2.4/min", output)
 
     def test_build_run_progress_uses_null_for_json(self) -> None:
         progress = build_run_progress(output_mode="json")

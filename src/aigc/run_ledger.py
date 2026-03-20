@@ -39,6 +39,7 @@ def build_sample_ledger_records(
     task_payload: TaskPayload,
     task_result: dict[str, Any] | None,
     error_message: str | None = None,
+    failure_category: str | None = None,
     timestamp: str | None = None,
 ) -> list[dict[str, Any]]:
     prompt_lookup = {prompt.prompt_id: prompt for prompt in task_payload.prompts}
@@ -59,6 +60,7 @@ def build_sample_ledger_records(
                 error_message=error_message
                 or _extract_error_message(task_result)
                 or "Task failed before prompt-level outputs were available.",
+                failure_category=failure_category,
             )
             for index, prompt in enumerate(task_payload.prompts)
         ]
@@ -98,6 +100,11 @@ def build_sample_ledger_records(
                     or str(batch_item.get("logs") or batch_item.get("error") or "").strip()
                     or _extract_error_message(task_result)
                 ),
+                "failure_category": (
+                    None
+                    if status == "success"
+                    else failure_category
+                ),
                 "batch_id": batch_metadata.get("batch_id", task_payload.batch_id),
                 "batch_index": batch_metadata.get("batch_index", batch_index),
                 "execution_mode": batch_metadata.get(
@@ -126,6 +133,7 @@ def build_sample_ledger_records(
             error_message=error_message
             or _extract_error_message(task_result)
             or "Task failed before prompt-level outputs were available.",
+            failure_category=failure_category,
         )
         for index, prompt in enumerate(task_payload.prompts)
     ]
@@ -143,6 +151,7 @@ def _failure_record(
     language: str,
     batch_index: int,
     error_message: str,
+    failure_category: str | None,
 ) -> dict[str, Any]:
     return {
         "timestamp": timestamp,
@@ -159,6 +168,7 @@ def _failure_record(
         "artifact_path": None,
         "artifact_count": 0,
         "error_message": error_message,
+        "failure_category": failure_category,
         "batch_id": task_payload.batch_id,
         "batch_index": batch_index,
         "execution_mode": task_payload.execution_mode,

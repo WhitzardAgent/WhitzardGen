@@ -9,9 +9,12 @@ from unittest.mock import patch
 from aigc.env.manager import EnvManagerError
 from aigc.run_ledger import RunLedgerWriter
 from aigc.run_flow import (
+    FailureBudget,
+    FailurePolicy,
     PreparedTask,
     ReplicaPlan,
     RunFlowError,
+    TaskExecutionOutcome,
     _run_persistent_worker_replicas,
     _default_generation_params,
     _assign_gpus_to_replicas,
@@ -44,6 +47,13 @@ class FakeEnvManager:
 
 
 class RunFlowTests(unittest.TestCase):
+    @staticmethod
+    def _inprocess_worker_runner(_env_record, task_file: Path, result_file: Path):
+        payload = TaskPayload.from_dict(json.loads(task_file.read_text(encoding="utf-8")))
+        result = execute_task_payload(payload)
+        result_file.write_text(json.dumps(result), encoding="utf-8")
+        return 0, "ok"
+
     def test_replica_count_calculation_uses_gpu_count_and_gpus_per_replica(self) -> None:
         self.assertEqual(
             _calculate_replica_count(
@@ -157,8 +167,10 @@ class RunFlowTests(unittest.TestCase):
             out_dir=tmpdir / "runs" / "multi_model_manifest",
             execution_mode="mock",
             env_manager=FakeEnvManager(),
+            worker_runner=self._inprocess_worker_runner,
             profile_name="image_mock",
             profile_path="configs/run_profiles/image_mock.yaml",
+            profile_generation_defaults={"width": 1024, "num_inference_steps": 40},
             profile_runtime={"available_gpus": [0, 1]},
         )
 
@@ -168,6 +180,7 @@ class RunFlowTests(unittest.TestCase):
             {
                 "name": "image_mock",
                 "path": "configs/run_profiles/image_mock.yaml",
+                "generation_defaults": {"width": 1024, "num_inference_steps": 40},
                 "runtime": {"available_gpus": [0, 1]},
             },
         )
@@ -310,6 +323,93 @@ class RunFlowTests(unittest.TestCase):
 
         self.assertEqual(params["seed"], 123)
 
+    def test_generation_params_apply_profile_defaults_then_prompt_overrides(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("Z-Image")
+        prompt = type(
+            "PromptStub",
+            (),
+            {
+                "prompt": "a city at night",
+                "language": "en",
+                "negative_prompt": "blurry",
+                "parameters": {"width": 1280, "guidance_scale": 5.5},
+                "metadata": {},
+            },
+        )()
+
+        params = _default_generation_params(
+            model,
+            [prompt],  # type: ignore[list-item]
+            generation_defaults={
+                "width": 1024,
+                "height": 1024,
+                "guidance_scale": 4.0,
+                "num_inference_steps": 40,
+            },
+        )
+
+        self.assertEqual(params["width"], 1280)
+        self.assertEqual(params["height"], 1024)
+        self.assertEqual(params["guidance_scale"], 5.5)
+        self.assertEqual(params["num_inference_steps"], 40)
+        self.assertEqual(params["negative_prompts"], ["blurry"])
+
+    def test_batching_splits_when_effective_generation_params_differ(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "image_params.jsonl"
+        prompts_path.write_text(
+            "\n".join(
+                [
+                    '{"prompt_id":"p001","prompt":"a city skyline","language":"en"}',
+                    '{"prompt_id":"p002","prompt":"a forest cabin","language":"en","parameters":{"width":1280}}',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        summary = run_single_model(
+            model_name="Z-Image",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "image_params_batching",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=self._inprocess_worker_runner,
+            profile_generation_defaults={"width": 1024, "height": 1024},
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "z-image"
+        task_files = sorted(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        self.assertEqual(len(task_files), 2)
+        payloads = [json.loads(path.read_text(encoding="utf-8")) for path in task_files]
+        self.assertEqual([payload["params"]["width"] for payload in payloads], [1024, 1280])
+
+    def test_unknown_prompt_parameter_warning_flows_through_run_progress(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "image_warn.jsonl"
+        prompts_path.write_text(
+            '{"prompt_id":"p001","prompt":"a city skyline","language":"en","parameters":{"style":"cinematic"}}\n',
+            encoding="utf-8",
+        )
+        progress_stream = StringIO()
+
+        run_single_model(
+            model_name="Z-Image",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "image_warn",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=self._inprocess_worker_runner,
+            progress=TextRunProgress(stream=progress_stream),
+        )
+
+        progress_text = progress_stream.getvalue()
+        self.assertIn("Unknown generation parameter key", progress_text)
+        self.assertIn("prompt_id=p001", progress_text)
+
     def test_multi_replica_mock_run_shards_image_tasks_and_exports_replica_metadata(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "replica_image.txt"
@@ -401,9 +501,9 @@ class RunFlowTests(unittest.TestCase):
         )
 
         progress_text = progress_stream.getvalue()
-        self.assertIn("[run][CogVideoX-5B] available_gpus=[0, 1, 2, 3]", progress_text)
-        self.assertIn("[run][CogVideoX-5B] gpus_per_replica=1", progress_text)
-        self.assertIn("[run][CogVideoX-5B] starting 2 replicas", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B available_gpus=[0, 1, 2, 3]", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B gpus_per_replica=1", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B starting 2 replicas", progress_text)
 
     def test_multi_replica_warmup_is_sequential_before_task_dispatch(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -459,15 +559,22 @@ class RunFlowTests(unittest.TestCase):
             failures,
             progress,
             ledger_writer,
+            telemetry=None,
             state_lock=None,
         ):
             events.append(f"dispatch:{prepared_task.payload.task_id}")
             runner(prepared_task)
-            return {
-                "task_id": prepared_task.payload.task_id,
-                "model_result": {"status": "success", "batch_items": []},
-                "execution_result": {"exit_code": 0, "logs": "", "outputs": {}},
-            }
+            return TaskExecutionOutcome(
+                result_payload={
+                    "task_id": prepared_task.payload.task_id,
+                    "model_result": {"status": "success", "batch_items": []},
+                    "execution_result": {"exit_code": 0, "logs": "", "outputs": {}},
+                },
+                task_failed=False,
+                failed_prompt_count=0,
+                successful_prompt_count=1,
+                duration_sec=0.5,
+            )
 
         def make_prepared(task_id: str, prompt_id: str) -> PreparedTask:
             payload = TaskPayload(
@@ -509,6 +616,9 @@ class RunFlowTests(unittest.TestCase):
                     failures=[],
                     progress=progress,
                     ledger_writer=ledger_writer,
+                    telemetry=None,
+                    failure_policy=FailurePolicy(),
+                    failure_budget=FailureBudget(total_planned_outputs=2),
                 )
         finally:
             ledger_writer.close()
@@ -517,11 +627,43 @@ class RunFlowTests(unittest.TestCase):
         self.assertLess(events.index("enter:1"), events.index("dispatch:task_001"))
         self.assertLess(events.index("enter:1"), events.index("dispatch:task_002"))
         progress_text = progress_stream.getvalue()
-        self.assertIn("[run][CogVideoX-5B] warming replica 1/2 replica=0 GPUs=[0]", progress_text)
-        self.assertIn("[run][CogVideoX-5B] replica=0 ready (1/2) GPUs=[0]", progress_text)
-        self.assertIn("[run][CogVideoX-5B] warming replica 2/2 replica=1 GPUs=[1]", progress_text)
-        self.assertIn("[run][CogVideoX-5B] replica=1 ready (2/2) GPUs=[1]", progress_text)
-        self.assertIn("[run][CogVideoX-5B] all replicas ready, dispatching tasks", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B warming replica 1/2 replica=0 GPUs=[0]", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B replica=0 ready (1/2) GPUs=[0]", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B warming replica 2/2 replica=1 GPUs=[1]", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B replica=1 ready (2/2) GPUs=[1]", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B all replicas ready, dispatching tasks", progress_text)
+
+    def test_runtime_telemetry_is_logged_and_persisted_during_run(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "telemetry_prompts.txt"
+        prompts_path.write_text(
+            "\n".join([f"telemetry prompt {index:03d}" for index in range(1, 11)]) + "\n",
+            encoding="utf-8",
+        )
+
+        summary = run_single_model(
+            model_name="Z-Image",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "telemetry_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=self._inprocess_worker_runner,
+        )
+
+        run_root = Path(summary.output_dir)
+        running_log = (run_root / "running.log").read_text(encoding="utf-8")
+        self.assertIn("[THROUGHPUT] overall prompts=10/10", running_log)
+        self.assertIn("[THROUGHPUT] model=Z-Image prompts=10/10", running_log)
+
+        runtime_status = json.loads((run_root / "runtime_status.json").read_text(encoding="utf-8"))
+        self.assertEqual(runtime_status["processed_prompts"], 10)
+        self.assertEqual(runtime_status["status"], "completed")
+        self.assertIn("Z-Image", runtime_status["models"])
+
+        manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["runtime_status_path"], str(run_root / "runtime_status.json"))
+        self.assertEqual(manifest["runtime_metrics"]["processed_prompts"], 10)
+        self.assertIn("runtime_status_json", manifest["export_paths"])
 
     def test_default_run_root_uses_runtime_settings(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -702,6 +844,270 @@ class RunFlowTests(unittest.TestCase):
 
         self.assertEqual(manager.calls, [("Z-Image-Turbo", True)])
 
+    def test_run_can_continue_after_task_failures_when_policy_allows(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "continue.txt"
+        prompts_path.write_text("prompt one\nprompt two\n", encoding="utf-8")
+        call_count = 0
+
+        def mixed_worker_runner(_env_record, task_file: Path, result_file: Path):
+            nonlocal call_count
+            call_count += 1
+            task_payload = json.loads(task_file.read_text(encoding="utf-8"))
+            prompt = task_payload["prompts"][0]
+            workdir = Path(task_payload["workdir"])
+            workdir.mkdir(parents=True, exist_ok=True)
+            if call_count == 1:
+                result_payload = {
+                    "task_id": task_payload["task_id"],
+                    "model_name": task_payload["model_name"],
+                    "execution_mode": task_payload["execution_mode"],
+                    "plan": {"mode": "in_process"},
+                    "execution_result": {"exit_code": 1, "logs": "RuntimeError: boom", "outputs": {}},
+                    "model_result": {
+                        "status": "failed",
+                        "batch_items": [],
+                        "logs": "RuntimeError: boom",
+                        "metadata": {"error_type": "RuntimeError"},
+                    },
+                }
+                result_file.write_text(json.dumps(result_payload), encoding="utf-8")
+                return 1, "RuntimeError: boom"
+
+            artifact_path = workdir / f"{prompt['prompt_id']}.png"
+            artifact_path.write_bytes(
+                b"\x89PNG\r\n\x1a\n"
+                + b"\x00\x00\x00\rIHDR"
+                + b"\x00\x00\x00\x01"
+                + b"\x00\x00\x00\x01"
+                + b"\x08\x02\x00\x00\x00"
+            )
+            result_payload = {
+                "task_id": task_payload["task_id"],
+                "model_name": task_payload["model_name"],
+                "execution_mode": task_payload["execution_mode"],
+                "plan": {"mode": "in_process"},
+                "execution_result": {"exit_code": 0, "logs": "ok", "outputs": {}},
+                "model_result": {
+                    "status": "success",
+                    "batch_items": [
+                        {
+                            "prompt_id": prompt["prompt_id"],
+                            "status": "success",
+                            "artifacts": [
+                                {
+                                    "type": "image",
+                                    "path": str(artifact_path),
+                                    "metadata": {"width": 1, "height": 1, "format": "png"},
+                                }
+                            ],
+                        }
+                    ],
+                    "logs": "ok",
+                    "metadata": {},
+                },
+            }
+            result_file.write_text(json.dumps(result_payload), encoding="utf-8")
+            return 0, "ok"
+
+        summary = run_single_model(
+            model_name="Z-Image-Turbo",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "continue_on_error",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=mixed_worker_runner,
+            batch_limit=1,
+            continue_on_error=True,
+        )
+
+        self.assertEqual(summary.status, "completed_with_failures")
+        failures = json.loads((Path(summary.output_dir) / "failures.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0]["category"], "task_execution_error")
+        ledger_records = [
+            json.loads(line)
+            for line in (Path(summary.output_dir) / "samples.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual([record["status"] for record in ledger_records], ["failed", "success"])
+        self.assertEqual(ledger_records[0]["failure_category"], "task_execution_error")
+        exported_records = [
+            json.loads(line)
+            for line in Path(summary.export_path).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(exported_records), 1)
+
+    def test_run_stops_when_max_failures_threshold_is_exceeded(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "threshold.txt"
+        prompts_path.write_text("p1\np2\np3\n", encoding="utf-8")
+        call_count = 0
+
+        def always_fail_worker(_env_record, task_file: Path, result_file: Path):
+            nonlocal call_count
+            call_count += 1
+            task_payload = json.loads(task_file.read_text(encoding="utf-8"))
+            result_payload = {
+                "task_id": task_payload["task_id"],
+                "model_name": task_payload["model_name"],
+                "execution_mode": task_payload["execution_mode"],
+                "plan": {"mode": "in_process"},
+                "execution_result": {"exit_code": 1, "logs": "RuntimeError: threshold", "outputs": {}},
+                "model_result": {
+                    "status": "failed",
+                    "batch_items": [],
+                    "logs": "RuntimeError: threshold",
+                    "metadata": {"error_type": "RuntimeError"},
+                },
+            }
+            result_file.write_text(json.dumps(result_payload), encoding="utf-8")
+            return 1, "RuntimeError: threshold"
+
+        with self.assertRaises(RunFlowError) as context:
+            run_single_model(
+                model_name="Z-Image-Turbo",
+                prompt_file=prompts_path,
+                out_dir=tmpdir / "runs" / "max_failures",
+                execution_mode="mock",
+                env_manager=FakeEnvManager(),
+                worker_runner=always_fail_worker,
+                batch_limit=1,
+                continue_on_error=True,
+                max_failures=1,
+            )
+
+        self.assertIn("Failure policy threshold exceeded", str(context.exception))
+        self.assertEqual(call_count, 2)
+        manifest = json.loads((tmpdir / "runs" / "max_failures" / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["status"], "failed")
+        self.assertIn("Failure policy threshold exceeded", manifest["stop_reason"])
+        failures = json.loads((tmpdir / "runs" / "max_failures" / "failures.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(failures), 2)
+
+    def test_run_stops_when_failure_rate_threshold_is_exceeded(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "failure_rate.txt"
+        prompts_path.write_text("p1\np2\np3\np4\n", encoding="utf-8")
+        call_count = 0
+
+        def rate_worker(_env_record, task_file: Path, result_file: Path):
+            nonlocal call_count
+            call_count += 1
+            task_payload = json.loads(task_file.read_text(encoding="utf-8"))
+            prompt = task_payload["prompts"][0]
+            workdir = Path(task_payload["workdir"])
+            workdir.mkdir(parents=True, exist_ok=True)
+            if call_count <= 2:
+                result_payload = {
+                    "task_id": task_payload["task_id"],
+                    "model_name": task_payload["model_name"],
+                    "execution_mode": task_payload["execution_mode"],
+                    "plan": {"mode": "in_process"},
+                    "execution_result": {"exit_code": 1, "logs": "RuntimeError: rate", "outputs": {}},
+                    "model_result": {
+                        "status": "failed",
+                        "batch_items": [],
+                        "logs": "RuntimeError: rate",
+                        "metadata": {"error_type": "RuntimeError"},
+                    },
+                }
+                result_file.write_text(json.dumps(result_payload), encoding="utf-8")
+                return 1, "RuntimeError: rate"
+
+            artifact_path = workdir / f"{prompt['prompt_id']}.png"
+            artifact_path.write_bytes(
+                b"\x89PNG\r\n\x1a\n"
+                + b"\x00\x00\x00\rIHDR"
+                + b"\x00\x00\x00\x01"
+                + b"\x00\x00\x00\x01"
+                + b"\x08\x02\x00\x00\x00"
+            )
+            result_payload = {
+                "task_id": task_payload["task_id"],
+                "model_name": task_payload["model_name"],
+                "execution_mode": task_payload["execution_mode"],
+                "plan": {"mode": "in_process"},
+                "execution_result": {"exit_code": 0, "logs": "ok", "outputs": {}},
+                "model_result": {
+                    "status": "success",
+                    "batch_items": [
+                        {
+                            "prompt_id": prompt["prompt_id"],
+                            "status": "success",
+                            "artifacts": [
+                                {
+                                    "type": "image",
+                                    "path": str(artifact_path),
+                                    "metadata": {"width": 1, "height": 1, "format": "png"},
+                                }
+                            ],
+                        }
+                    ],
+                    "logs": "ok",
+                    "metadata": {},
+                },
+            }
+            result_file.write_text(json.dumps(result_payload), encoding="utf-8")
+            return 0, "ok"
+
+        with self.assertRaises(RunFlowError) as context:
+            run_single_model(
+                model_name="Z-Image-Turbo",
+                prompt_file=prompts_path,
+                out_dir=tmpdir / "runs" / "failure_rate",
+                execution_mode="mock",
+                env_manager=FakeEnvManager(),
+                worker_runner=rate_worker,
+                batch_limit=1,
+                continue_on_error=True,
+                max_failure_rate=0.25,
+            )
+
+        self.assertIn("Failure policy threshold exceeded", str(context.exception))
+        self.assertEqual(call_count, 2)
+
+    def test_failure_category_is_recorded_for_model_load_error(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "model_load.txt"
+        prompts_path.write_text("prompt one\n", encoding="utf-8")
+
+        def failing_worker(_env_record, task_file: Path, result_file: Path):
+            task_payload = json.loads(task_file.read_text(encoding="utf-8"))
+            logs = "Persistent worker failed during startup.\nfrom_pretrained exploded."
+            result_payload = {
+                "task_id": task_payload["task_id"],
+                "model_name": task_payload["model_name"],
+                "execution_mode": task_payload["execution_mode"],
+                "plan": None,
+                "execution_result": {"exit_code": 1, "logs": logs, "outputs": {}},
+                "model_result": {
+                    "status": "failed",
+                    "batch_items": [],
+                    "logs": logs,
+                    "metadata": {"error_type": "RuntimeError"},
+                },
+            }
+            result_file.write_text(json.dumps(result_payload), encoding="utf-8")
+            return 1, logs
+
+        summary = run_single_model(
+            model_name="Wan2.2-T2V-A14B-Diffusers",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "model_load_category",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=failing_worker,
+            continue_on_error=True,
+        )
+
+        self.assertEqual(summary.status, "completed_with_failures")
+        failures = json.loads((Path(summary.output_dir) / "failures.json").read_text(encoding="utf-8"))
+        self.assertEqual(failures[0]["category"], "model_load_error")
+        ledger_record = json.loads((Path(summary.output_dir) / "samples.jsonl").read_text(encoding="utf-8").strip())
+        self.assertEqual(ledger_record["failure_category"], "model_load_error")
+
     def test_real_run_fails_clearly_when_required_conda_env_is_missing(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "example.txt"
@@ -785,7 +1191,7 @@ class RunFlowTests(unittest.TestCase):
         running_log = Path(summary.output_dir) / "running.log"
         self.assertTrue(running_log.exists())
         running_log_text = running_log.read_text(encoding="utf-8")
-        self.assertRegex(running_log_text, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[1/9\] Loading prompts\.\.\.")
+        self.assertRegex(running_log_text, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[STAGE 1/9\] Loading prompts\.\.\.")
         self.assertIn("[summary] Run complete", running_log_text)
         self.assertIn("[summary] running_log:", running_log_text)
         export_path = Path(summary.export_path)

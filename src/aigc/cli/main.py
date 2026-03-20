@@ -110,6 +110,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--out")
     run_parser.add_argument("--mock", action="store_true")
     run_parser.add_argument("--execution-mode", choices=["mock", "real"])
+    run_parser.add_argument("--continue-on-error", action="store_true")
+    run_parser.add_argument("--max-failures", type=int)
+    run_parser.add_argument("--max-failure-rate", type=float)
     run_parser.add_argument("--output", choices=["text", "json"], default="text")
     run_parser.set_defaults(handler=handle_run)
 
@@ -408,7 +411,11 @@ def handle_run(args: argparse.Namespace) -> int:
             progress=progress,
             profile_name=request["profile_name"],
             profile_path=request["profile_path"],
+            profile_generation_defaults=request["generation_defaults"],
             profile_runtime=request["runtime"],
+            continue_on_error=bool(args.continue_on_error) or None,
+            max_failures=args.max_failures,
+            max_failure_rate=args.max_failure_rate,
         )
     if args.output == "json":
         print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))

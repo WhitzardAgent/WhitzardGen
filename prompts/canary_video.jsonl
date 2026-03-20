@@ -1,2 +1,2 @@
-{"prompt_id":"canary_vid_jsonl_en_001","prompt":"cloud shadows moving slowly across a grassy valley","language":"en"}
-{"prompt_id":"canary_vid_jsonl_zh_001","prompt":"夜色中缓慢流动的城市车灯","language":"zh"}
+{"prompt_id":"canary_vid_jsonl_en_001","prompt":"cloud shadows moving slowly across a grassy valley","language":"en","negative_prompt":"西方人、人体畸形、重复、病态、残缺、额外的手指、变异的手、画得不好的手、画得不好的脸、突变、变形、模糊、脱水、不良的解剖结构、不良的比例、额外的肢体、克隆的脸、毁容、总体比例、畸形的四肢、缺失的手臂、缺失的腿、额外的手臂、多余的腿、融合的手指、太多的手指、长脖子"}
+{"prompt_id":"canary_vid_jsonl_zh_001","prompt":"夜色中缓慢流动的城市车灯","language":"zh","negative_prompt":"西方人、人体畸形、重复、病态、残缺、额外的手指、变异的手、画得不好的手、画得不好的脸、突变、变形、模糊、脱水、不良的解剖结构、不良的比例、额外的肢体、克隆的脸、毁容、总体比例、畸形的四肢、缺失的手臂、缺失的腿、额外的手臂、多余的腿、融合的手指、太多的手指、长脖子"}

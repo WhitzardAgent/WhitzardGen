@@ -69,15 +69,33 @@ class RuntimeTerminalUI:
         return f"[TASK] {current}/{total} model={model_name} status={status}{suffix}"
 
     def render_summary(self, summary) -> list[str]:
-        title = "[SUMMARY] completed" if summary.status == "completed" else "[SUMMARY] failed"
+        if summary.status == "completed":
+            title = "[SUMMARY] completed"
+        elif summary.status == "completed_with_failures":
+            title = "[SUMMARY] completed_with_failures"
+        else:
+            title = "[SUMMARY] failed"
         lines = [
             f"{title} run_id={summary.run_id}",
             f"[SUMMARY] mode={summary.execution_mode} models={', '.join(summary.model_names)}",
             f"[SUMMARY] prompts={summary.prompt_count} tasks={summary.task_count} success={summary.success_tasks} failed={summary.failed_tasks}",
-            f"[SUMMARY] out={self._shorten_path(summary.output_dir)}",
-            f"[SUMMARY] dataset={self._shorten_path(summary.dataset_path)}",
-            f"[SUMMARY] manifest={self._shorten_path(summary.manifest_path)}",
         ]
+        if getattr(summary, "processed_prompt_outputs", None) is not None:
+            throughput_suffix = ""
+            if getattr(summary, "throughput_per_min", None) is not None:
+                throughput_suffix = f" rate={summary.throughput_per_min:.1f}/min"
+            lines.append(
+                f"[SUMMARY] prompt_outputs={summary.processed_prompt_outputs} failed_outputs={getattr(summary, 'failed_prompt_outputs', 0) or 0}{throughput_suffix}"
+            )
+        if getattr(summary, "wall_time_sec", None) is not None:
+            lines.append(f"[SUMMARY] wall_time_sec={summary.wall_time_sec:.2f}")
+        lines.extend(
+            [
+                f"[SUMMARY] out={self._shorten_path(summary.output_dir)}",
+                f"[SUMMARY] dataset={self._shorten_path(summary.dataset_path)}",
+                f"[SUMMARY] manifest={self._shorten_path(summary.manifest_path)}",
+            ]
+        )
         if summary.failures_path:
             lines.append(f"[SUMMARY] failures={self._shorten_path(summary.failures_path)}")
         if summary.running_log_path:

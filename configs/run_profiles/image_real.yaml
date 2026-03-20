@@ -8,5 +8,11 @@ models:
 prompts: prompts/test_image_100.txt
 execution_mode: real
 
+generation_defaults:
+  width: 1024
+  height: 1024
+  guidance_scale: 4.0
+  num_inference_steps: 40
+
 runtime:
   available_gpus: [0, 1, 2, 3]

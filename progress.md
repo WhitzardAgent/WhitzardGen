@@ -1,9 +1,216 @@
 # Progress
 
 ## Current Phase
-- CLI / terminal UX redesign for long-running multi-replica runs
+- Phase 20 — Live Throughput Monitoring During Execution
 
 ## Completed
+- 2026-03-20 16:05:00 CST
+- Started Phase 20 to add live throughput visibility during execution for long-running runs:
+  - introduced a supervisor-owned telemetry layer in `src/aigc/runtime_telemetry.py`
+  - added live tracking for:
+    - run start time
+    - total planned prompts/tasks
+    - processed / successful / failed prompt outputs
+    - completed / failed tasks
+    - per-model prompt/task progress
+    - per-replica prompt/task progress
+    - model load durations from worker lifecycle events
+- Wired live telemetry into the runtime execution path in `src/aigc/run_flow.py`:
+  - `RunTelemetry` now attaches at the authoritative task start / task outcome path
+  - worker and persistent-worker lifecycle log events now flow through telemetry-aware handling
+  - run manifests now persist:
+    - `runtime_status_path`
+    - `runtime_metrics`
+  - recovery runs also now persist the same runtime telemetry metadata
+- Added live throughput / ETA emission during execution:
+  - telemetry now emits concise `[THROUGHPUT] ...` lines while work is still running
+  - overall prompt throughput is computed cumulatively during execution
+  - per-model prompt throughput is computed cumulatively during execution
+  - ETA is emitted when enough completed prompt outputs exist to make it meaningful
+  - multi-replica runs now emit compact `[REPLICA] ...` progress lines from the same telemetry snapshot source
+- Added lightweight machine-readable runtime snapshots:
+  - every run now maintains `runtime_status.json` under the run directory
+  - the snapshot is supervisor-owned and updated continuously
+  - it contains:
+    - run id / execution mode / status
+    - elapsed time
+    - prompt/task progress
+    - throughput / ETA
+    - per-model progress
+    - per-replica progress
+- Strengthened terminal and summary visibility:
+  - summary rendering now includes:
+    - processed prompt outputs
+    - failed prompt outputs
+    - throughput per minute
+    - wall time
+  - terminal progress now cleanly preserves telemetry lines like:
+    - `[THROUGHPUT] ...`
+    - `[REPLICA] ...`
+- Added focused regression coverage for:
+  - telemetry throughput calculation
+  - ETA calculation
+  - replica progress / model load metrics
+  - terminal rendering of throughput lines
+  - final summary rendering with runtime metrics
+  - run-flow integration for:
+    - `running.log` throughput lines
+    - `runtime_status.json`
+    - manifest `runtime_metrics`
+- Ran targeted lightweight regression:
+  - `python3 -m py_compile src/aigc/runtime_telemetry.py src/aigc/run_flow.py src/aigc/utils/progress.py src/aigc/ui/runtime_ui.py tests/test_runtime_telemetry.py tests/test_run_flow.py tests/test_progress.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_runtime_telemetry -v`
+  - result: 2 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_progress -v`
+  - result: 7 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_runtime_telemetry_is_logged_and_persisted_during_run tests.test_run_flow.RunFlowTests.test_multi_replica_warmup_is_sequential_before_task_dispatch -v`
+  - result: 2 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_persistent_worker -v`
+  - result: 4 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 7 tests passed
+  - note: one existing local mock persistent-worker run-flow test that exercises queue-manager socket binding still hits the known sandbox limitation on this machine; Phase 20 telemetry changes were validated through the focused tests above
+- 2026-03-20 15:25:00 CST
+- Refreshed the prompt test assets to better match the supported input-format semantics:
+  - kept `.txt` prompt lists minimal and focused on one-line-per-prompt usage
+  - updated rich `.csv` / `.jsonl` canary assets to carry a shared production-style `negative_prompt`
+  - aligned the rich image/video example prompt assets so they now use the same negative prompt string consistently across entries
+  - preserved the existing large `.txt` prompt lists as the lightweight plain-text coverage fixtures
+- Strengthened prompt asset regression coverage:
+  - prompt asset tests now load both image and video canary rich formats
+  - rich prompt asset assertions now explicitly verify `negative_prompt` preservation for CSV and JSONL fixtures
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompts -v`
+  - result: 10 tests passed
+- 2026-03-20 15:05:00 CST
+- Started Phase 19 to make prompt-level generation parameters and profile defaults explicit and operator-friendly:
+  - kept `PromptRecord` structured fields as first-class inputs:
+    - `prompt_id`
+    - `prompt`
+    - `negative_prompt`
+    - `language`
+    - `parameters`
+    - `metadata`
+    - `version`
+  - kept `.txt` and `.csv` support intact while strengthening `.jsonl` as the recommended rich prompt format
+- Hardened prompt-parameter validation and normalization in `src/aigc/prompts/loader.py`:
+  - added a practical supported-key allowlist for generation parameters including:
+    - `width`, `height`, `seed`, `guidance_scale`, `num_inference_steps`
+    - `fps`, `num_frames`, `guidance_scale_2`
+    - `max_sequence_length`, `stream`, `attn_implementation`, `moe_impl`
+    - `local_model_path`, `checkpoint_dir`, `repo_dir`, `offload`
+    - `cp_size`, `context_parallel_size`, `image_path`, `ref_path`, `timeout_sec`, `resolution`
+  - prompt-parameter normalization now actually writes normalized values back into `PromptRecord.parameters`
+  - unknown parameter keys now emit clear warnings through the existing progress/logging path instead of being silently ignored
+  - obviously invalid known-parameter value types now fail early during prompt validation
+  - `resolution` now validates both `1280x720` and `1280*720` style values
+- Added profile-level generation defaults in `src/aigc/run_profiles.py`:
+  - run profiles now support a top-level `generation_defaults` section
+  - profile defaults are validated with the same parameter-normalization path as prompts
+  - `resolve_profile_run_request(...)` now returns the effective `generation_defaults`
+  - CLI `handle_run(...)` now forwards profile generation defaults into `run_models(...)`
+- Implemented explicit generation-parameter precedence in `src/aigc/run_flow.py`:
+  - effective precedence is now:
+    - model defaults
+    - profile `generation_defaults`
+    - prompt-level `parameters`
+  - preserved the current randomness policy:
+    - if no global default seed exists
+    - and no profile/prompt seed is set
+    - generation stays random
+  - global default seed continues to participate as part of the default layer and can be overridden by profile/prompt values
+- Preserved batching correctness under prompt/profile parameter overrides:
+  - `_batch_prompts_for_model(...)` and `_prompt_batch_signature(...)` now use the same effective merged generation-parameter view as task creation
+  - prompts with incompatible effective params are now split into separate tasks correctly even when the difference comes from profile defaults vs prompt overrides
+- Improved traceability in run manifests:
+  - profile manifests now include `generation_defaults` when present
+  - this makes prompt-parameter defaults visible in the run metadata alongside profile name/path/runtime
+- Added example rich assets for operator-facing JSONL usage:
+  - `prompts/example_image_rich.jsonl`
+  - `prompts/example_video_rich.jsonl`
+  - updated example run profiles under `configs/run_profiles/` to include `generation_defaults`
+- Added focused regression coverage for:
+  - JSONL prompt loading with `negative_prompt`, `parameters`, and `metadata`
+  - CSV prompt loading with `negative_prompt` and JSON `parameters`
+  - unknown generation-parameter warning behavior
+  - invalid generation-parameter value failures
+  - run-profile `generation_defaults` loading
+  - CLI profile propagation of generation defaults
+  - effective precedence:
+    - model defaults < profile defaults < prompt parameters
+  - batching splits when effective params differ
+  - manifest profile metadata including `generation_defaults`
+- Ran targeted lightweight regression:
+  - `python3 -m py_compile src/aigc/prompts/loader.py src/aigc/prompts/__init__.py src/aigc/run_profiles.py src/aigc/run_flow.py src/aigc/cli/main.py tests/test_prompts.py tests/test_run_profiles.py tests/test_run_flow.py tests/test_cli_runs.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompts -v`
+  - result: 10 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_profiles -v`
+  - result: 5 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs.RunsCliTests.test_handle_run_uses_profile_and_cli_overrides -v`
+  - result: 1 test passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_generation_params_apply_profile_defaults_then_prompt_overrides tests.test_run_flow.RunFlowTests.test_batching_splits_when_effective_generation_params_differ tests.test_run_flow.RunFlowTests.test_unknown_prompt_parameter_warning_flows_through_run_progress tests.test_run_flow.RunFlowTests.test_multi_model_manifest_includes_profile_and_effective_model_summary -v`
+  - result: 4 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 7 tests passed
+- 2026-03-20 11:40:00 CST
+- Started Phase 14 to make long-running collection jobs less fail-fast and more operationally robust:
+  - added a first explicit failure-policy layer in `src/aigc/run_flow.py`
+  - introduced runtime policy fields:
+    - `continue_on_error`
+    - `max_failures`
+    - `max_failure_rate`
+  - wired policy resolution from:
+    - explicit `aigc run` CLI flags
+    - profile runtime config when present
+    - simple defaults otherwise
+- Hardened supervisor-side task failure handling:
+  - `_execute_prepared_task(...)` now records prompt-level failed samples and task-level failure metadata before deciding whether the run should continue or stop
+  - task failures no longer always abort the run immediately
+  - successful outputs that already completed are preserved in `samples.jsonl` and remain exportable/recoverable
+  - synthetic failed task payloads are materialized when a worker returns no result file so that manifests, ledgers, and summaries remain coherent
+- Added first-pass failure categorization:
+  - `failures.json` records now include `category`
+  - current categories include:
+    - `env_error`
+    - `worker_startup_error`
+    - `model_load_error`
+    - `task_execution_error`
+    - `artifact_collection_error`
+    - `unknown_error`
+  - failed sample ledger rows in `samples.jsonl` now also carry `failure_category`
+- Added run-level failure budgets:
+  - runs can continue past failed tasks when `continue_on_error=true`
+  - runs now stop cleanly when:
+    - failed prompt outputs exceed `max_failures`
+    - failed prompt-output ratio exceeds `max_failure_rate`
+  - threshold-stop reasons are surfaced in terminal summaries and written into failed run manifests via `stop_reason`
+- Improved final run-state reporting:
+  - successful runs with some failures now produce manifest / summary status `completed_with_failures`
+  - failure policy is now written into run manifests for reproducibility
+  - recovery-compatible metadata remains intact:
+    - `samples.jsonl`
+    - `failures.json`
+    - `run_manifest.json`
+- Preserved partial results for multi-replica failure cases:
+  - `_run_persistent_worker_replicas(...)` now appends completed replica task results directly into the shared run accumulator
+  - this avoids dropping already-finished results if another replica later trips the failure policy or crashes
+- Added focused regression coverage for:
+  - continue-on-error behavior
+  - max-failures threshold stop
+  - max-failure-rate threshold stop
+  - failure-category recording for model-load-style failures
+  - no regression of CLI profile overrides
+  - no regression of recovery planning/lineage behavior
+  - no regression of minimal successful runs and sequential replica warmup expectations after recent terminal UX changes
+- Ran targeted lightweight regression:
+  - `python3 -m py_compile src/aigc/run_flow.py tests/test_run_flow.py src/aigc/cli/main.py src/aigc/run_ledger.py src/aigc/utils/progress.py`
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_run_can_continue_after_task_failures_when_policy_allows tests.test_run_flow.RunFlowTests.test_run_stops_when_max_failures_threshold_is_exceeded tests.test_run_flow.RunFlowTests.test_run_stops_when_failure_rate_threshold_is_exceeded tests.test_run_flow.RunFlowTests.test_failure_category_is_recorded_for_model_load_error tests.test_run_flow.RunFlowTests.test_minimal_run_wiring_creates_run_dir_and_export tests.test_run_flow.RunFlowTests.test_multi_replica_warmup_is_sequential_before_task_dispatch -v`
+  - result: 6 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs tests.test_recovery -v`
+  - result: 10 tests passed
+  - note: a full local rerun of the multi-replica video mock test still hits the known sandbox socket-bind limitation in this environment when run standalone; the failure-policy changes themselves were validated through focused tests and `py_compile`
 - 2026-03-18 23:35:00 CST
 - Started the CLI / terminal UX redesign for long-running runs:
   - added a dedicated terminal UI layer in `src/aigc/ui/runtime_ui.py`
@@ -882,6 +1089,29 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime_telemetry.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/utils/progress.py
+- /Users/morinop/coding/whitzardgen/src/aigc/ui/runtime_ui.py
+- /Users/morinop/coding/whitzardgen/tests/test_runtime_telemetry.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/tests/test_progress.py
+- /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/src/aigc/prompts/loader.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompts/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_profiles.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
+- /Users/morinop/coding/whitzardgen/tests/test_prompts.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_profiles.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/tests/test_cli_runs.py
+- /Users/morinop/coding/whitzardgen/configs/run_profiles/image_mock.yaml
+- /Users/morinop/coding/whitzardgen/configs/run_profiles/image_real.yaml
+- /Users/morinop/coding/whitzardgen/configs/run_profiles/video_mock.yaml
+- /Users/morinop/coding/whitzardgen/configs/run_profiles/video_real.yaml
+- /Users/morinop/coding/whitzardgen/prompts/example_image_rich.jsonl
+- /Users/morinop/coding/whitzardgen/prompts/example_video_rich.jsonl
 - /Users/morinop/coding/whitzardgen/src/aigc/ui/__init__.py
 - /Users/morinop/coding/whitzardgen/src/aigc/ui/runtime_ui.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_profiles.py
@@ -1068,7 +1298,28 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-18 23:35:00 CST.
+- Updated at 2026-03-20 16:05:00 CST.
+- Phase 20 live throughput monitoring is now implemented locally.
+- Long-running runs now emit live throughput / ETA updates into both:
+  - terminal output
+  - `running.log`
+- Every run now maintains a supervisor-owned `runtime_status.json` snapshot with:
+  - overall prompt/task progress
+  - per-model metrics
+  - per-replica metrics
+  - ETA / rate
+- Final run manifests and summaries now include structured runtime metrics derived from the same telemetry source.
+- Phase 19 prompt-level generation parameter support is now implemented locally.
+- Run profiles now support `generation_defaults`, and these defaults flow into task creation and batching.
+- Effective generation-parameter precedence is now explicit and tested:
+  - model defaults
+  - profile defaults
+  - prompt-level parameters
+- Prompt parameter validation is now more operator-friendly:
+  - unknown keys warn clearly
+  - invalid known-value types fail early
+  - normalized values are preserved in prompt records
+- Rich `.jsonl` prompt examples now exist for both image and video collection workflows.
 - The terminal UX redesign is now implemented locally on top of the existing run/logging architecture.
 - `aigc run` now has a structured terminal header, clearer stage lines, concise event rendering, replica snapshots, and a stronger final summary.
 - Phase 13 multi-model collection support remains in place and is still passing locally for:
@@ -1147,6 +1398,13 @@
 - The multi-replica scheduling work from Phase 11 remains in place underneath this improved logging layer.
 
 ## Blockers
+- No code blockers in the local Phase 20 implementation path.
+- Real remote validation is still needed to confirm throughput/ETA lines feel appropriately useful and non-spammy on long real cluster runs, especially for slow video tasks and multi-replica jobs.
+- No code blockers in the local Phase 19 implementation path.
+- Real remote validation is still needed to confirm operator ergonomics for:
+  - JSONL prompt files with per-prompt parameter overrides
+  - profile-level `generation_defaults`
+  - batching split behavior under real heavy image/video models
 - No code blockers in the local framework path.
 - Per user instruction, do not continue local heavy real-run validation on this machine.
 - Real remote validation is still needed to confirm the new terminal UX feels appropriately quiet and readable under heavy diffusers model loading on the cluster.
@@ -1167,4 +1425,7 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
-- Validate the new terminal UX on the remote cluster with at least one long-running multi-replica image run and one video run, then continue tightening operator-facing summaries based on real console feedback.
+- Validate Phase 20 on the remote cluster with:
+  - one long-running image job to observe `[THROUGHPUT]` cadence and ETA usefulness
+  - one multi-replica video job to confirm per-replica live visibility and `runtime_status.json` updates
+  - one completed run to inspect `run_manifest.json` runtime metrics against `running.log` telemetry lines.

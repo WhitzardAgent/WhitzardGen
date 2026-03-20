@@ -76,6 +76,9 @@ class RunsCliTests(unittest.TestCase):
                     "models: [Z-Image, FLUX.1-dev]",
                     "prompts: profile_prompts.txt",
                     "execution_mode: real",
+                    "generation_defaults:",
+                    "  width: 1024",
+                    "  num_inference_steps: 40",
                     "runtime:",
                     "  available_gpus: [2, 3]",
                 ]
@@ -95,6 +98,9 @@ class RunsCliTests(unittest.TestCase):
                 "out": None,
                 "mock": True,
                 "execution_mode": None,
+                "continue_on_error": True,
+                "max_failures": 5,
+                "max_failure_rate": 0.25,
                 "output": "json",
             },
         )()
@@ -106,7 +112,14 @@ class RunsCliTests(unittest.TestCase):
             self.assertEqual(kwargs["run_name"], "image_mock")
             self.assertEqual(kwargs["profile_name"], "image_mock")
             self.assertEqual(kwargs["profile_path"], str(profile_path))
+            self.assertEqual(
+                kwargs["profile_generation_defaults"],
+                {"width": 1024, "num_inference_steps": 40},
+            )
             self.assertEqual(kwargs["profile_runtime"], {"available_gpus": [2, 3]})
+            self.assertTrue(kwargs["continue_on_error"])
+            self.assertEqual(kwargs["max_failures"], 5)
+            self.assertEqual(kwargs["max_failure_rate"], 0.25)
             self.assertEqual(os.environ.get("AIGC_AVAILABLE_GPUS"), "2,3")
             return summary
 
@@ -150,6 +163,9 @@ class RunsCliTests(unittest.TestCase):
                 "out": None,
                 "mock": False,
                 "execution_mode": None,
+                "continue_on_error": False,
+                "max_failures": None,
+                "max_failure_rate": None,
                 "output": "text",
             },
         )()
