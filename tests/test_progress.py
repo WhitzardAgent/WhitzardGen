@@ -4,6 +4,7 @@ import io
 import unittest
 
 from aigc.utils.progress import (
+    RunHeaderData,
     RunSummaryData,
     TextRunProgress,
     build_run_progress,
@@ -12,6 +13,29 @@ from aigc.utils.progress import (
 
 
 class ProgressTests(unittest.TestCase):
+    def test_text_run_progress_renders_structured_header(self) -> None:
+        buffer = io.StringIO()
+        progress = TextRunProgress(stream=buffer)
+
+        progress.run_header(
+            RunHeaderData(
+                run_id="run_001",
+                execution_mode="real",
+                model_names=["Z-Image", "FLUX.1-dev"],
+                prompt_source="prompts/test_image_100.txt",
+                prompt_count=100,
+                output_dir="/very/long/path/to/runs/run_001",
+                running_log_path="/very/long/path/to/runs/run_001/running.log",
+                profile_label="image_real",
+            )
+        )
+
+        output = buffer.getvalue()
+        self.assertIn("[RUN] run_001 | mode=real", output)
+        self.assertIn("[RUN] models=Z-Image, FLUX.1-dev", output)
+        self.assertIn("[RUN] prompts=100 | source=", output)
+        self.assertIn("[RUN] profile=image_real", output)
+
     def test_text_run_progress_stage_and_task_messages(self) -> None:
         buffer = io.StringIO()
         progress = TextRunProgress(stream=buffer)
@@ -34,14 +58,33 @@ class ProgressTests(unittest.TestCase):
         )
 
         output = buffer.getvalue()
-        self.assertRegex(output, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[1/3\] Loading prompts\.\.\.")
-        self.assertIn("[1/3] Loading prompts...", output)
-        self.assertIn("[1/3] Loading prompts - done", output)
-        self.assertIn("Running task 1/2 | model=Z-Image | prompts=4 | mode=mock", output)
+        self.assertRegex(output, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[STAGE 1/3\] Loading prompts\.\.\.")
+        self.assertIn("[STAGE 1/3] Loading prompts...", output)
+        self.assertIn("[STAGE 1/3] Loading prompts - done", output)
+        self.assertIn("[TASK] 1/2 model=Z-Image prompts=4 mode=mock", output)
         self.assertIn(
-            "Task 1/2 finished | model=Z-Image | status=success | artifacts=4",
+            "[TASK] 1/2 model=Z-Image status=success artifacts=4",
             output,
         )
+
+    def test_text_run_progress_renders_worker_and_replica_events(self) -> None:
+        buffer = io.StringIO()
+        progress = TextRunProgress(stream=buffer)
+
+        progress.env_message("[run][Wan2.2-T2V-A14B-Diffusers] replica=0 assigned 50 tasks GPUs=[0]")
+        progress.env_message("[run][Wan2.2-T2V-A14B-Diffusers] replica=1 assigned 50 tasks GPUs=[1]")
+        progress.env_message(
+            "[worker][Wan2.2-T2V-A14B-Diffusers][replica=0] GPUs=[0] loading model..."
+        )
+        progress.env_message(
+            "[worker][Wan2.2-T2V-A14B-Diffusers][replica=0] GPUs=[0] ready"
+        )
+
+        output = buffer.getvalue()
+        self.assertIn("[SCHED] model=Wan2.2-T2V-A14B-Diffusers replica=0 assigned 50 tasks GPUs=[0]", output)
+        self.assertIn("[WORKER] model=Wan2.2-T2V-A14B-Diffusers replica=r0 gpus=[0] loading", output)
+        self.assertIn("[WORKER] model=Wan2.2-T2V-A14B-Diffusers replica=r0 ready", output)
+        self.assertIn("[REPLICA] model=Wan2.2-T2V-A14B-Diffusers", output)
 
     def test_text_run_progress_summary(self) -> None:
         buffer = io.StringIO()
@@ -63,19 +106,13 @@ class ProgressTests(unittest.TestCase):
         progress.print_summary(summary)
         output = buffer.getvalue()
 
-        self.assertRegex(output, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} Run complete")
-        self.assertIn("Run complete", output)
-        self.assertIn("status: completed", output)
-        self.assertIn("run_id: run_001", output)
-        self.assertIn("mode: mock", output)
-        self.assertIn("models: Z-Image, FLUX.1-dev", output)
-        self.assertIn("prompts: 8", output)
-        self.assertIn("tasks: 4", output)
-        self.assertIn("success: 4", output)
-        self.assertIn("failed: 0", output)
-        self.assertIn("output_dir:", output)
-        self.assertIn("dataset:", output)
-        self.assertIn("manifest:", output)
+        self.assertRegex(output, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[SUMMARY\] completed run_id=run_001")
+        self.assertIn("[SUMMARY] completed run_id=run_001", output)
+        self.assertIn("[SUMMARY] mode=mock models=Z-Image, FLUX.1-dev", output)
+        self.assertIn("[SUMMARY] prompts=8 tasks=4 success=4 failed=0", output)
+        self.assertIn("[SUMMARY] out=", output)
+        self.assertIn("[SUMMARY] dataset=", output)
+        self.assertIn("[SUMMARY] manifest=", output)
 
     def test_build_run_progress_uses_null_for_json(self) -> None:
         progress = build_run_progress(output_mode="json")

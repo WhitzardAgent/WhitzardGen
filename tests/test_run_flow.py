@@ -353,10 +353,11 @@ class RunFlowTests(unittest.TestCase):
         )
 
         progress_text = progress_stream.getvalue()
-        self.assertIn("[run][Z-Image] available_gpus=[0, 1]", progress_text)
-        self.assertIn("[run][Z-Image] starting 2 replicas", progress_text)
-        self.assertIn("[run][Z-Image] replica=0 assigned 5 tasks GPUs=[0]", progress_text)
-        self.assertIn("[run][Z-Image] replica=1 assigned 4 tasks GPUs=[1]", progress_text)
+        self.assertIn("[SCHED] model=Z-Image available_gpus=[0, 1]", progress_text)
+        self.assertIn("[SCHED] model=Z-Image starting 2 replicas", progress_text)
+        self.assertIn("[SCHED] model=Z-Image replica=0 assigned 5 tasks GPUs=[0]", progress_text)
+        self.assertIn("[SCHED] model=Z-Image replica=1 assigned 4 tasks GPUs=[1]", progress_text)
+        self.assertIn("[REPLICA] model=Z-Image", progress_text)
 
     def test_multi_replica_mock_run_shards_video_tasks_and_uses_gpu_groups(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -785,8 +786,8 @@ class RunFlowTests(unittest.TestCase):
         self.assertTrue(running_log.exists())
         running_log_text = running_log.read_text(encoding="utf-8")
         self.assertRegex(running_log_text, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[1/9\] Loading prompts\.\.\.")
-        self.assertIn("Run complete", running_log_text)
-        self.assertIn("running_log:", running_log_text)
+        self.assertIn("[summary] Run complete", running_log_text)
+        self.assertIn("[summary] running_log:", running_log_text)
         export_path = Path(summary.export_path)
         self.assertTrue(export_path.exists())
         record = json.loads(export_path.read_text(encoding="utf-8").strip())

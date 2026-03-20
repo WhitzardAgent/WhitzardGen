@@ -4,6 +4,7 @@ import sys
 from dataclasses import dataclass
 from typing import IO, Iterable
 
+from aigc.ui.runtime_ui import RuntimeTerminalUI
 from aigc.utils.runtime_logging import RunLogger, format_log_line
 
 
@@ -12,6 +13,18 @@ def _safe_isatty(stream: IO[str] | None) -> bool:
         return bool(stream and stream.isatty())
     except Exception:
         return False
+
+
+@dataclass(slots=True)
+class RunHeaderData:
+    run_id: str
+    execution_mode: str
+    model_names: list[str]
+    prompt_source: str
+    output_dir: str
+    running_log_path: str
+    prompt_count: int | None = None
+    profile_label: str | None = None
 
 
 @dataclass(slots=True)
@@ -32,11 +45,25 @@ class RunSummaryData:
 
 
 def format_stage_start_line(index: int, total: int, name: str) -> str:
-    return f"[{index}/{total}] {name}..."
+    return f"[STAGE {index}/{total}] {name}..."
 
 
 def format_stage_end_line(index: int, total: int, name: str) -> str:
-    return f"[{index}/{total}] {name} - done"
+    return f"[STAGE {index}/{total}] {name} - done"
+
+
+def format_header_lines(header: RunHeaderData) -> list[str]:
+    lines = [
+        f"[run] Starting run run_id={header.run_id} mode={header.execution_mode} models={','.join(header.model_names)}",
+        f"[run] Prompt source: {header.prompt_source}",
+        f"[run] Output dir: {header.output_dir}",
+        f"[run] Running log: {header.running_log_path}",
+    ]
+    if header.prompt_count is not None:
+        lines.append(f"[run] Prompt count: {header.prompt_count}")
+    if header.profile_label:
+        lines.append(f"[run] Profile: {header.profile_label}")
+    return lines
 
 
 def format_task_start_line(
@@ -47,7 +74,7 @@ def format_task_start_line(
     prompts: int,
     execution_mode: str,
 ) -> str:
-    return f"Running task {current}/{total} | model={model_name} | prompts={prompts} | mode={execution_mode}"
+    return f"[TASK] {current}/{total} model={model_name} prompts={prompts} mode={execution_mode}"
 
 
 def format_task_end_line(
@@ -59,35 +86,38 @@ def format_task_end_line(
     artifacts: int | None = None,
 ) -> str:
     suffix = f" | artifacts={artifacts}" if artifacts is not None else ""
-    return f"Task {current}/{total} finished | model={model_name} | status={status}{suffix}"
+    return f"[TASK] {current}/{total} model={model_name} status={status}{suffix}"
 
 
 def format_summary_lines(summary: RunSummaryData) -> list[str]:
     models_display = ", ".join(summary.model_names)
     title = "Run complete" if summary.status == "completed" else "Run failed"
     lines = [
-        title,
-        f"status: {summary.status}",
-        f"run_id: {summary.run_id}",
-        f"mode: {summary.execution_mode}",
-        f"models: {models_display}",
-        f"prompts: {summary.prompt_count}",
-        f"tasks: {summary.task_count}",
-        f"success: {summary.success_tasks}",
-        f"failed: {summary.failed_tasks}",
-        f"output_dir: {summary.output_dir}",
-        f"dataset: {summary.dataset_path}",
-        f"manifest: {summary.manifest_path}",
+        f"[summary] {title}",
+        f"[summary] status: {summary.status}",
+        f"[summary] run_id: {summary.run_id}",
+        f"[summary] mode: {summary.execution_mode}",
+        f"[summary] models: {models_display}",
+        f"[summary] prompts: {summary.prompt_count}",
+        f"[summary] tasks: {summary.task_count}",
+        f"[summary] success: {summary.success_tasks}",
+        f"[summary] failed: {summary.failed_tasks}",
+        f"[summary] output_dir: {summary.output_dir}",
+        f"[summary] dataset: {summary.dataset_path}",
+        f"[summary] manifest: {summary.manifest_path}",
     ]
     if summary.failures_path:
-        lines.append(f"failures: {summary.failures_path}")
+        lines.append(f"[summary] failures: {summary.failures_path}")
     if summary.running_log_path:
-        lines.append(f"running_log: {summary.running_log_path}")
+        lines.append(f"[summary] running_log: {summary.running_log_path}")
     return lines
 
 
 class RunProgress:
     """Abstract progress reporter for long-running runs."""
+
+    def run_header(self, header: RunHeaderData) -> None:  # pragma: no cover - interface
+        raise NotImplementedError
 
     def stage_start(self, index: int, total: int, name: str) -> None:  # pragma: no cover - interface
         raise NotImplementedError
@@ -126,6 +156,9 @@ class RunProgress:
 
 class NullRunProgress(RunProgress):
     """No-op implementation used for JSON or fully quiet output."""
+
+    def run_header(self, header: RunHeaderData) -> None:
+        return
 
     def stage_start(self, index: int, total: int, name: str) -> None:
         return
@@ -167,6 +200,7 @@ class TextRunProgress(RunProgress):
 
     def __init__(self, stream: IO[str] | None = None) -> None:
         self._stream: IO[str] = stream or sys.stderr
+        self._ui = RuntimeTerminalUI()
 
     def _write(self, line: str) -> None:
         try:
@@ -175,15 +209,19 @@ class TextRunProgress(RunProgress):
             # Best-effort only; never crash the run on progress failure.
             return
 
+    def run_header(self, header: RunHeaderData) -> None:
+        for line in self._ui.render_header(header):
+            self._write(line)
+
     def stage_start(self, index: int, total: int, name: str) -> None:
-        self._write(format_stage_start_line(index, total, name))
+        self._write(self._ui.render_stage_start(index, total, name))
 
     def stage_end(self, index: int, total: int, name: str) -> None:
-        # Keep end lines concise but explicit for non-interactive logs.
-        self._write(format_stage_end_line(index, total, name))
+        self._write(self._ui.render_stage_end(index, total, name))
 
     def env_message(self, message: str) -> None:
-        self._write(message)
+        for line in self._ui.render_event(message):
+            self._write(line)
 
     def task_start(
         self,
@@ -195,7 +233,7 @@ class TextRunProgress(RunProgress):
         execution_mode: str,
     ) -> None:
         self._write(
-            format_task_start_line(
+            self._ui.render_task_start(
                 current=current,
                 total=total,
                 model_name=model_name,
@@ -214,7 +252,7 @@ class TextRunProgress(RunProgress):
         artifacts: int | None = None,
     ) -> None:
         self._write(
-            format_task_end_line(
+            self._ui.render_task_end(
                 current=current,
                 total=total,
                 model_name=model_name,
@@ -224,7 +262,7 @@ class TextRunProgress(RunProgress):
         )
 
     def print_summary(self, summary: RunSummaryData) -> None:
-        for line in format_summary_lines(summary):
+        for line in self._ui.render_summary(summary):
             self._write(line)
 
 
@@ -234,6 +272,11 @@ class LoggedRunProgress(RunProgress):
     def __init__(self, *, base: RunProgress, logger: RunLogger) -> None:
         self._base = base
         self._logger = logger
+
+    def run_header(self, header: RunHeaderData) -> None:
+        for line in format_header_lines(header):
+            self._logger.log(line)
+        self._base.run_header(header)
 
     def stage_start(self, index: int, total: int, name: str) -> None:
         self._logger.log(format_stage_start_line(index, total, name))

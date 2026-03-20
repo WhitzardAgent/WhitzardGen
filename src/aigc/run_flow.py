@@ -36,6 +36,7 @@ from aigc.settings import get_default_seed, get_runs_root
 from aigc.utils.progress import (
     LoggedRunProgress,
     RunProgress,
+    RunHeaderData,
     RunSummaryData,
     NullRunProgress,
     summarize_task_statuses,
@@ -118,6 +119,11 @@ def _build_profile_manifest(
     if profile_runtime:
         payload["runtime"] = dict(profile_runtime)
     return payload
+
+
+def _mirror_runtime_event(*, logger: RunLogger, terminal_progress: RunProgress, message: str) -> None:
+    logger.log(message, already_timestamped=True)
+    terminal_progress.env_message(message)
 
 
 def _build_per_model_summary(
@@ -223,20 +229,25 @@ def run_recovery_plan(
     for directory in (run_root, tasks_dir, workdir_root, exports_dir, artifacts_root, workers_root):
         directory.mkdir(parents=True, exist_ok=True)
     base_progress = progress or NullRunProgress()
-    console_logging_enabled = not isinstance(base_progress, NullRunProgress)
     run_logger = RunLogger(log_path=run_root / "running.log")
     progress = LoggedRunProgress(base=base_progress, logger=run_logger)
     ledger_writer = RunLedgerWriter(run_root / "samples.jsonl")
+    prompt_source_label = f"{recovery_plan.recovery_mode}:{recovery_plan.source_run_id}:{recovery_plan.prompt_source}"
 
     total_stages = 8
     stage_index = 1
-    progress.env_message(
-        f"[run] Starting recovery run run_id={run_id} mode={resolved_execution_mode} "
-        f"recovery_mode={recovery_plan.recovery_mode} source_run_id={recovery_plan.source_run_id} "
-        f"models={','.join(model.name for model in models)}"
+    progress.run_header(
+        RunHeaderData(
+            run_id=run_id,
+            execution_mode=resolved_execution_mode,
+            model_names=[model.name for model in models],
+            prompt_source=prompt_source_label,
+            prompt_count=recovery_plan.selected_count,
+            output_dir=str(run_root),
+            running_log_path=str(run_root / "running.log"),
+            profile_label=f"{recovery_plan.recovery_mode}:{recovery_plan.source_run_id}",
+        )
     )
-    progress.env_message(f"[run] Output dir: {run_root}")
-    progress.env_message(f"[run] Running log: {run_root / 'running.log'}")
 
     progress.stage_start(stage_index, total_stages, "Loading recovery plan")
     manager = env_manager or EnvManager(registry=registry)
@@ -244,7 +255,6 @@ def run_recovery_plan(
     stage_index += 1
 
     created_at = datetime.now(UTC).isoformat()
-    prompt_source_label = f"{recovery_plan.recovery_mode}:{recovery_plan.source_run_id}:{recovery_plan.prompt_source}"
     initial_manifest = {
         "run_id": run_id,
         "status": "running",
@@ -321,10 +331,10 @@ def run_recovery_plan(
                         replica_id=replica_plan.replica_id,
                         gpu_assignment=replica_plan.gpu_assignment,
                         replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
-                        log_callback=lambda line: run_logger.log(
-                            line,
-                            to_console=console_logging_enabled,
-                            already_timestamped=True,
+                        log_callback=lambda line: _mirror_runtime_event(
+                            logger=run_logger,
+                            terminal_progress=base_progress,
+                            message=line,
                         ),
                     ) as session:
                         for prepared_task in replica_plan.tasks:
@@ -351,10 +361,10 @@ def run_recovery_plan(
                             failures=failures,
                             progress=progress,
                             ledger_writer=ledger_writer,
-                            log_callback=lambda line: run_logger.log(
-                                line,
-                                to_console=console_logging_enabled,
-                                already_timestamped=True,
+                            log_callback=lambda line: _mirror_runtime_event(
+                                logger=run_logger,
+                                terminal_progress=base_progress,
+                                message=line,
                             ),
                         )
                     )
@@ -368,10 +378,10 @@ def run_recovery_plan(
                             env_record,
                             task.task_file,
                             task.result_file,
-                            log_callback=lambda line: run_logger.log(
-                                line,
-                                to_console=console_logging_enabled,
-                                already_timestamped=True,
+                            log_callback=lambda line: _mirror_runtime_event(
+                                logger=run_logger,
+                                terminal_progress=base_progress,
+                                message=line,
                             ),
                         ),
                         run_id=run_id,
@@ -571,21 +581,23 @@ def run_models(
     for directory in (run_root, tasks_dir, workdir_root, exports_dir, artifacts_root, workers_root):
         directory.mkdir(parents=True, exist_ok=True)
     base_progress = progress or NullRunProgress()
-    console_logging_enabled = not isinstance(base_progress, NullRunProgress)
     run_logger = RunLogger(log_path=run_root / "running.log")
     progress = LoggedRunProgress(base=base_progress, logger=run_logger)
 
     total_stages = 9
     stage_index = 1
-    progress.env_message(
-        f"[run] Starting run run_id={run_id} mode={resolved_execution_mode} models={','.join(model.name for model in models)}"
+    profile_label = profile_name or Path(profile_path).stem if profile_path else None
+    progress.run_header(
+        RunHeaderData(
+            run_id=run_id,
+            execution_mode=resolved_execution_mode,
+            model_names=[model.name for model in models],
+            prompt_source=str(prompt_file),
+            output_dir=str(run_root),
+            running_log_path=str(run_root / "running.log"),
+            profile_label=profile_label,
+        )
     )
-    progress.env_message(f"[run] Output dir: {run_root}")
-    progress.env_message(f"[run] Running log: {run_root / 'running.log'}")
-    progress.env_message(f"[run] Prompt source: {prompt_file}")
-    if profile_path:
-        profile_label = profile_name or Path(profile_path).stem
-        progress.env_message(f"[run] Profile: {profile_label} ({profile_path})")
 
     progress.stage_start(stage_index, total_stages, "Loading prompts")
     prompts = load_prompts(prompt_file)
@@ -597,6 +609,7 @@ def run_models(
         raise RunFlowError("Prompt file did not produce any valid prompts.")
     progress.stage_end(stage_index, total_stages, "Validating prompts")
     stage_index += 1
+    progress.env_message(f"[run] Prompt count: {len(prompts)}")
 
     progress.stage_start(stage_index, total_stages, "Resolving models")
 
@@ -731,10 +744,10 @@ def run_models(
                         replica_id=replica_plan.replica_id,
                         gpu_assignment=replica_plan.gpu_assignment,
                         replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
-                        log_callback=lambda line: run_logger.log(
-                            line,
-                            to_console=console_logging_enabled,
-                            already_timestamped=True,
+                        log_callback=lambda line: _mirror_runtime_event(
+                            logger=run_logger,
+                            terminal_progress=base_progress,
+                            message=line,
                         ),
                     ) as session:
                         for prepared_task in replica_plan.tasks:
@@ -761,10 +774,10 @@ def run_models(
                             failures=failures,
                             progress=progress,
                             ledger_writer=ledger_writer,
-                            log_callback=lambda line: run_logger.log(
-                                line,
-                                to_console=console_logging_enabled,
-                                already_timestamped=True,
+                            log_callback=lambda line: _mirror_runtime_event(
+                                logger=run_logger,
+                                terminal_progress=base_progress,
+                                message=line,
                             ),
                         )
                     )
@@ -778,10 +791,10 @@ def run_models(
                             env_record,
                             task.task_file,
                             task.result_file,
-                            log_callback=lambda line: run_logger.log(
-                                line,
-                                to_console=console_logging_enabled,
-                                already_timestamped=True,
+                            log_callback=lambda line: _mirror_runtime_event(
+                                logger=run_logger,
+                                terminal_progress=base_progress,
+                                message=line,
                             ),
                         ),
                         run_id=run_id,

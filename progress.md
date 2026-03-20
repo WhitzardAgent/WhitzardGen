@@ -1,9 +1,50 @@
 # Progress
 
 ## Current Phase
-- Simple multi-model collection UX
+- CLI / terminal UX redesign for long-running multi-replica runs
 
 ## Completed
+- 2026-03-18 23:35:00 CST
+- Started the CLI / terminal UX redesign for long-running runs:
+  - added a dedicated terminal UI layer in `src/aigc/ui/runtime_ui.py`
+  - moved terminal-facing formatting concerns out of the run flow and into a reusable renderer
+  - kept `running.log` as the detailed append-only log while making terminal output more compact and operational
+- Added a more structured terminal presentation for `aigc run`:
+  - structured run header with:
+    - run id
+    - execution mode
+    - selected models
+    - prompt source
+    - output dir
+    - running log path
+    - optional profile label
+  - clearer stage display using `[STAGE i/n] ...`
+  - cleaner task lines using `[TASK] ...`
+  - stronger final summary using `[SUMMARY] ...`
+- Added more concise event rendering and replica visibility:
+  - run scheduling lines now render as `[SCHED] ...`
+  - worker lifecycle lines now render as `[WORKER] ...`
+  - replica snapshots now render as `[REPLICA] ...`
+  - timestamped worker messages coming back from subprocesses are normalized before terminal display to avoid duplicated timestamps
+  - noisy model-library progress lines such as diffusers loading bars are now filtered from the main terminal view while remaining available in `running.log`
+- Updated the run flow logging bridge:
+  - worker and persistent-worker detailed logs still go to `running.log`
+  - terminal rendering now uses the UI layer instead of dumping raw worker log lines directly
+  - profile-aware run headers are now emitted from the shared progress system
+- Added focused regression coverage for:
+  - structured run header rendering
+  - stage rendering
+  - worker/replica event rendering
+  - stronger final summary rendering
+  - no regression of CLI profile handling
+  - no regression of persistent-worker and multi-replica run-flow behavior
+- Ran targeted lightweight regression:
+  - `PYTHONPATH=src python3 -m unittest tests.test_progress -v`
+  - result: 6 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - result: 7 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_selected_model_uses_persistent_worker_strategy_in_mock_mode tests.test_run_flow.RunFlowTests.test_multi_model_manifest_includes_profile_and_effective_model_summary tests.test_run_flow.RunFlowTests.test_multi_replica_mock_run_shards_image_tasks_and_exports_replica_metadata -v`
+  - result: 3 tests passed
 - 2026-03-18 22:40:00 CST
 - Fixed a real remote batch-inference bug in the diffusers video path:
   - `Wan2.2-T2V-A14B-Diffusers` could fail in real batch execution when the pipeline returned a numpy-like frame container
@@ -841,12 +882,15 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/ui/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/ui/runtime_ui.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_profiles.py
 - /Users/morinop/coding/whitzardgen/configs/run_profiles/image_mock.yaml
 - /Users/morinop/coding/whitzardgen/configs/run_profiles/image_real.yaml
 - /Users/morinop/coding/whitzardgen/configs/run_profiles/video_mock.yaml
 - /Users/morinop/coding/whitzardgen/configs/run_profiles/video_real.yaml
 - /Users/morinop/coding/whitzardgen/tests/test_run_profiles.py
+- /Users/morinop/coding/whitzardgen/tests/test_progress.py
 - /Users/morinop/coding/whitzardgen/src/aigc/recovery.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_store.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
@@ -1024,10 +1068,10 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-18 22:25:00 CST.
-- Phase 13 is now in progress.
-- The new run-profile layer is implemented locally and wired into `aigc run`.
-- Phase 13 focused regression is now passing locally for:
+- Updated at 2026-03-18 23:35:00 CST.
+- The terminal UX redesign is now implemented locally on top of the existing run/logging architecture.
+- `aigc run` now has a structured terminal header, clearer stage lines, concise event rendering, replica snapshots, and a stronger final summary.
+- Phase 13 multi-model collection support remains in place and is still passing locally for:
   - profile loading
   - CLI override precedence
   - profile-based early validation
@@ -1105,6 +1149,7 @@
 ## Blockers
 - No code blockers in the local framework path.
 - Per user instruction, do not continue local heavy real-run validation on this machine.
+- Real remote validation is still needed to confirm the new terminal UX feels appropriately quiet and readable under heavy diffusers model loading on the cluster.
 - Real remote validation is still needed to confirm `aigc run --profile ...` behaves as expected on the target cluster with manually prepared envs and local model overrides.
 - Real remote validation is still needed to confirm the new frame-batch normalization fix fully resolves the Wan diffusers batch path under actual numpy-backed outputs on the cluster.
 - Real remote validation is still needed to confirm `samples.jsonl` behaves as expected during long-running cluster jobs and interrupted runs.
@@ -1122,4 +1167,4 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
-- Validate `aigc run --profile ...` on the remote cluster for at least one image profile and one video profile, then continue tightening operator UX around multi-model collection summaries.
+- Validate the new terminal UX on the remote cluster with at least one long-running multi-replica image run and one video run, then continue tightening operator-facing summaries based on real console feedback.
