@@ -12,6 +12,48 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RegistryTests(unittest.TestCase):
+    def test_default_registry_file_is_actual_yaml_mapping(self) -> None:
+        raw = (ROOT / "configs" / "models.yaml").read_text(encoding="utf-8")
+        self.assertTrue(raw.lstrip().startswith("models:"))
+
+    def test_registry_loader_parses_yaml_registry_files(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        registry_path = tmpdir / "models.yaml"
+        registry_path.write_text(
+            "\n".join(
+                [
+                    "models:",
+                    "  Test-Image:",
+                    "    version: '1.0'",
+                    "    adapter: ZImageAdapter",
+                    "    modality: image",
+                    "    task_type: t2i",
+                    "    capabilities:",
+                    "      supports_batch_prompts: true",
+                    "      max_batch_size: 2",
+                    "      preferred_batch_size: 2",
+                    "      supports_negative_prompt: true",
+                    "      supports_seed: true",
+                    "      output_types: [image]",
+                    "      supported_languages: [en]",
+                    "    runtime:",
+                    "      execution_mode: in_process",
+                    "      env_spec: zimage",
+                    "      conda_env_name: zimage",
+                    "    weights:",
+                    "      hf_repo: Tongyi-MAI/Z-Image",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        registry = load_registry(registry_path)
+        model = registry.get_model("Test-Image")
+        self.assertEqual(model.adapter, "ZImageAdapter")
+        self.assertEqual(model.conda_env_name, "zimage")
+        self.assertEqual(model.weights["hf_repo"], "Tongyi-MAI/Z-Image")
+
     def test_registry_loads_all_target_models(self) -> None:
         registry = load_registry()
         names = [model.name for model in registry.list_models()]

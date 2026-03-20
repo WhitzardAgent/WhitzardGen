@@ -26,6 +26,7 @@ dist/
 # Runtime outputs
 /runs/
 /runtime/
+/references/
 
 # OS and editor files
 .DS_Store

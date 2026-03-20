@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -70,7 +69,7 @@ def load_registry(
 ) -> ModelRegistry:
     registry_path = Path(path)
     raw = registry_path.read_text(encoding="utf-8")
-    payload = _parse_registry_payload(raw)
+    payload = _parse_registry_payload(raw, source_path=registry_path)
     resolved_local_models_path = _resolve_local_models_path(local_models_path)
     try:
         local_override_source, local_overrides = load_local_model_overrides(
@@ -139,20 +138,39 @@ def _resolve_local_models_path(path: str | Path | None) -> Path | None:
     return DEFAULT_LOCAL_MODELS_PATH
 
 
-def _parse_registry_payload(raw: str) -> dict:
+def _parse_registry_payload(raw: str, *, source_path: Path | None = None) -> dict:
+    suffix = source_path.suffix.lower() if source_path is not None else ""
+    if suffix in {".yaml", ".yml"}:
+        return _parse_yaml_registry_payload(raw)
+    if suffix == ".json":
+        return _parse_json_registry_payload(raw)
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        try:
-            import yaml  # type: ignore
-        except ImportError as exc:
-            raise RegistryError(
-                "Registry file is not valid JSON and PyYAML is not installed for YAML parsing."
-            ) from exc
-        payload = yaml.safe_load(raw)
-        if not isinstance(payload, dict):
-            raise RegistryError("Registry payload must be an object.")
-        return payload
+        return _parse_yaml_registry_payload(raw)
+    except RegistryError:
+        return _parse_json_registry_payload(raw)
+
+
+def _parse_yaml_registry_payload(raw: str) -> dict:
+    try:
+        import yaml  # type: ignore
+    except ImportError as exc:
+        raise RegistryError("PyYAML is required to parse YAML registry files.") from exc
+    payload = yaml.safe_load(raw)
+    if not isinstance(payload, dict):
+        raise RegistryError("Registry payload must be an object.")
+    return payload
+
+
+def _parse_json_registry_payload(raw: str) -> dict:
+    import json
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RegistryError("Registry file is not valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise RegistryError("Registry payload must be an object.")
+    return payload
 
 
 def _validate_model_info(model: ModelInfo) -> None:

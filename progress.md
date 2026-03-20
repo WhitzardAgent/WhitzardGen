@@ -4,6 +4,72 @@
 - Phase 20 — Live Throughput Monitoring During Execution
 
 ## Completed
+- 2026-03-20 16:50:00 CST
+- Cleaned up the model registry configuration so `configs/models.yaml` is now a real YAML file instead of JSON text stored in a `.yaml` file:
+  - rewrote `configs/models.yaml` into proper YAML mapping/list syntax
+  - preserved the same registry content and model ordering while making the file operator-friendly to edit
+- Hardened registry loading semantics in `src/aigc/registry/loader.py`:
+  - registry parsing is now suffix-aware
+  - `.yaml` / `.yml` registry files now prefer YAML parsing first
+  - `.json` registry files now prefer JSON parsing first
+  - fallback behavior for extensionless / mixed contexts remains available
+  - this keeps the default registry path aligned with its actual file format while preserving test fixtures that still use temporary JSON registry files
+- Added focused regression coverage for:
+  - the default registry file being an actual YAML mapping
+  - loading a temporary YAML registry file through `load_registry(...)`
+  - no regression of existing CLI/run-flow profile and manifest behavior after the parser change
+- Ran targeted lightweight regression:
+  - `python3 -m py_compile src/aigc/registry/loader.py tests/test_registry.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
+  - result: 7 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs.RunsCliTests.test_handle_run_uses_profile_and_cli_overrides tests.test_run_flow.RunFlowTests.test_multi_model_manifest_includes_profile_and_effective_model_summary -v`
+  - result: 2 tests passed
+- 2026-03-20 16:35:00 CST
+- Switched `LongCat-Video` back to an in-process Python inference path so it can benefit from persistent-worker pipeline reuse instead of per-task external-script launch:
+  - added `references/` to the repository root `.gitignore`
+  - reworked `LongCatVideoAdapter` in `src/aigc/adapters/video_family.py` from `external_process` to `in_process`
+  - LongCat now loads its pipeline components using the reference-style Python imports from the configured `repo_path`
+  - LongCat now supports persistent workers and prompt batching at the framework level
+  - a single loaded LongCat pipeline can now serve multiple prompts within the same worker/task stream without reloading model weights each time
+- LongCat loading now follows the reference `run_streamlit.py` structure more closely:
+  - loads tokenizer, text encoder, VAE, scheduler, and DiT from the configured checkpoint directory
+  - uses the configured `repo_path` as a temporary import root for `longcat_video.*` modules when needed
+  - eagerly loads LongCat LoRA assets if present under `lora/`
+  - keeps generation in Python via `pipe.generate_t2v(...)`
+- Updated LongCat model/runtime configuration:
+  - `configs/models.yaml` now marks `LongCat-Video` as:
+    - `execution_mode: in_process`
+    - `worker_strategy: persistent_worker`
+    - `supports_batch_prompts: true`
+    - `supports_negative_prompt: true`
+    - `gpus_per_replica: 1`
+    - `supports_multi_replica: true`
+  - `configs/local_models.yaml` now exposes the more useful local fields for LongCat:
+    - `local_path`
+    - `repo_path`
+    - `weights_path`
+    - `hf_cache_dir`
+  - `run_flow` default params for LongCat now include both `checkpoint_dir` and `repo_dir`
+- Hardened LongCat environment/config validation:
+  - added lightweight local checkpoint-directory validation for required LongCat subdirectories
+  - `envs/longcat_video/validation.json` now validates `torch`, `transformers`, and `diffusers`
+  - `envs/longcat_video/requirements.txt` now documents the additional Python dependencies used by the in-process path
+- Added focused regression coverage for:
+  - LongCat adapter capability flags
+  - LongCat reference-style pipeline loading and LoRA loading
+  - LongCat prompt-batch generation inside one loaded pipeline
+  - LongCat run-flow batching into a single task for two prompts
+- Ran targeted lightweight regression:
+  - `python3 -m py_compile src/aigc/adapters/video_family.py src/aigc/run_flow.py tests/test_video_adapter.py tests/test_run_flow.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter -v`
+  - result: 14 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_longcat_mock_run_batches_two_prompts_into_one_task -v`
+  - result: passed as part of the focused run-flow batch test command
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
+  - result: 5 tests passed
+  - note: two pre-existing local mock persistent-worker batching tests for Wan/Cog still hit the known sandbox queue-manager socket-bind limitation when run standalone on this machine; the new LongCat path itself validated successfully
 - 2026-03-20 16:05:00 CST
 - Started Phase 20 to add live throughput visibility during execution for long-running runs:
   - introduced a supervisor-owned telemetry layer in `src/aigc/runtime_telemetry.py`
@@ -1089,6 +1155,20 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/configs/models.yaml
+- /Users/morinop/coding/whitzardgen/src/aigc/registry/loader.py
+- /Users/morinop/coding/whitzardgen/tests/test_registry.py
+- /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/.gitignore
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/configs/models.yaml
+- /Users/morinop/coding/whitzardgen/configs/local_models.yaml
+- /Users/morinop/coding/whitzardgen/envs/longcat_video/validation.json
+- /Users/morinop/coding/whitzardgen/envs/longcat_video/requirements.txt
+- /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/progress.md
 - /Users/morinop/coding/whitzardgen/src/aigc/runtime_telemetry.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
 - /Users/morinop/coding/whitzardgen/src/aigc/utils/progress.py
@@ -1298,7 +1378,12 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-20 16:05:00 CST.
+- Updated at 2026-03-20 16:50:00 CST.
+- The default model registry is now stored as actual YAML instead of JSON-in-YAML disguise.
+- Registry parsing now follows file-type-aware semantics, while temporary `.json` test registries still work.
+- `LongCat-Video` is now back on an in-process Python execution path locally.
+- LongCat can now reuse one loaded pipeline through persistent workers instead of repeatedly paying external-script startup cost.
+- LongCat task batching is now enabled locally, with prompt batches executed through one loaded Python pipeline.
 - Phase 20 live throughput monitoring is now implemented locally.
 - Long-running runs now emit live throughput / ETA updates into both:
   - terminal output
@@ -1399,6 +1484,8 @@
 
 ## Blockers
 - No code blockers in the local Phase 20 implementation path.
+- Real remote validation is still needed to confirm the LongCat in-process path and the now-cleaned YAML registry behave as expected in the cluster-synced checkout.
+- Real remote validation is still needed to confirm the new LongCat in-process path works cleanly against the actual cluster checkout / checkpoint layout and achieves the desired load-once / run-many behavior.
 - Real remote validation is still needed to confirm throughput/ETA lines feel appropriately useful and non-spammy on long real cluster runs, especially for slow video tasks and multi-replica jobs.
 - No code blockers in the local Phase 19 implementation path.
 - Real remote validation is still needed to confirm operator ergonomics for:

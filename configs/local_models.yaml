@@ -64,9 +64,10 @@ Wan2.2-TI2V-5B:
 
 LongCat-Video:
   conda_env_name: longcat_video
+  local_path:
   repo_path:
   weights_path:
-  script_root:
+  hf_cache_dir:
 
 HunyuanVideo-1.5:
   conda_env_name: hunyuan_video_15

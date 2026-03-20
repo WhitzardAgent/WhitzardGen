@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -771,15 +773,18 @@ class WanTI2VAdapter(ExternalProcessVideoAdapterBase):
         return command
 
 
-class LongCatVideoAdapter(ExternalProcessVideoAdapterBase):
+class LongCatVideoAdapter(DiffusersVideoAdapterBase):
     capabilities = AdapterCapabilities(
-        supports_batch_prompts=False,
-        max_batch_size=1,
-        preferred_batch_size=1,
-        supports_negative_prompt=False,
+        supports_batch_prompts=True,
+        max_batch_size=2,
+        preferred_batch_size=2,
+        supports_negative_prompt=True,
         supports_seed=True,
         output_types=["video"],
+        supports_persistent_worker=True,
+        preferred_worker_strategy="persistent_worker",
     )
+    real_execution_mode = "in_process"
     default_width = 1280
     default_height = 720
     default_fps = 30
@@ -787,31 +792,153 @@ class LongCatVideoAdapter(ExternalProcessVideoAdapterBase):
     default_num_inference_steps = 50
     default_guidance_scale = 4.0
 
-    def build_real_command(
+    def extra_prepare_inputs(self, params: dict[str, Any]) -> dict[str, Any]:
+        return {"use_distill": bool(params.get("use_distill", False))}
+
+    def validate_model_reference(self, model_ref: str) -> None:
+        validate_local_video_directory(
+            model_name=self.model_config.name,
+            configured_label="weights_path/local_path",
+            configured_path=model_ref,
+            required_entries=("tokenizer", "text_encoder", "vae", "scheduler", "dit"),
+            repo_path=resolve_video_repo_dir(self.model_config),
+            repo_hint=(
+                "For LongCat-Video, repo_path should point to the LongCat-Video checkout, "
+                "and weights_path/local_path should point to the local checkpoint directory."
+            ),
+        )
+
+    def _get_or_load_pipeline(self) -> tuple[Any, Any, str]:
+        if self._loaded_pipeline is not None and self._loaded_torch is not None and self._loaded_device:
+            return self._loaded_pipeline, self._loaded_torch, self._loaded_device
+
+        import torch
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.bfloat16 if device == "cuda" else torch.float32
+        pipe = self.load_pipeline(torch=torch, device=device, dtype=dtype)
+        self._loaded_pipeline = pipe
+        self._loaded_torch = torch
+        self._loaded_device = device
+        return pipe, torch, device
+
+    def load_pipeline(
         self,
         *,
+        torch: Any,
+        device: str,
+        dtype: Any,
+    ) -> Any:
+        checkpoint_dir = resolve_video_model_reference(self.model_config)
+        repo_dir = resolve_video_repo_dir(self.model_config)
+        cache_dir = resolve_video_cache_dir(self.model_config)
+        self.validate_model_reference(checkpoint_dir)
+
+        component_kwargs: dict[str, Any] = {"torch_dtype": dtype}
+        if cache_dir:
+            component_kwargs["cache_dir"] = cache_dir
+
+        with _temporary_repo_import_path(repo_dir):
+            from transformers import AutoTokenizer, UMT5EncoderModel
+
+            from longcat_video.context_parallel import context_parallel_util
+            from longcat_video.modules.autoencoder_kl_wan import AutoencoderKLWan
+            from longcat_video.modules.longcat_video_dit import LongCatVideoTransformer3DModel
+            from longcat_video.modules.scheduling_flow_match_euler_discrete import (
+                FlowMatchEulerDiscreteScheduler,
+            )
+            from longcat_video.pipeline_longcat_video import LongCatVideoPipeline
+
+            cp_split_hw = context_parallel_util.get_optimal_split(1)
+            tokenizer = AutoTokenizer.from_pretrained(
+                checkpoint_dir,
+                subfolder="tokenizer",
+                **component_kwargs,
+            )
+            text_encoder = UMT5EncoderModel.from_pretrained(
+                checkpoint_dir,
+                subfolder="text_encoder",
+                **component_kwargs,
+            )
+            vae = AutoencoderKLWan.from_pretrained(
+                checkpoint_dir,
+                subfolder="vae",
+                **component_kwargs,
+            )
+            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+                checkpoint_dir,
+                subfolder="scheduler",
+                **component_kwargs,
+            )
+            dit = LongCatVideoTransformer3DModel.from_pretrained(
+                checkpoint_dir,
+                subfolder="dit",
+                cp_split_hw=cp_split_hw,
+                **component_kwargs,
+            )
+            pipe = LongCatVideoPipeline(
+                tokenizer=tokenizer,
+                text_encoder=text_encoder,
+                vae=vae,
+                scheduler=scheduler,
+                dit=dit,
+            )
+        if hasattr(pipe, "to"):
+            pipe.to(device)
+
+        checkpoint_path = Path(checkpoint_dir)
+        if checkpoint_path.exists():
+            dit = getattr(pipe, "dit", None)
+            if dit is not None and hasattr(dit, "load_lora"):
+                for lora_name in ("cfg_step_lora", "refinement_lora"):
+                    lora_path = checkpoint_path / "lora" / f"{lora_name}.safetensors"
+                    if lora_path.exists():
+                        dit.load_lora(str(lora_path), lora_name)
+        return pipe
+
+    def generate_frames_batch(
+        self,
+        *,
+        pipe: Any,
+        plan: ExecutionPlan,
         prompts: list[str],
-        prompt_ids: list[str],
-        params: dict[str, Any],
-        workdir: str,
-        inputs: dict[str, Any],
-    ) -> list[str]:
-        checkpoint_dir = str(
-            params.get("checkpoint_dir")
-            or self.model_config.weights.get("weights_path")
-            or self.model_config.weights.get("local_path")
-            or "./weights/LongCat-Video"
-        )
-        command = [
-            "torchrun",
-            "run_demo_text_to_video.py",
-            f"--checkpoint_dir={checkpoint_dir}",
-            "--enable_compile",
-        ]
-        context_parallel_size = params.get("context_parallel_size")
-        if context_parallel_size is not None:
-            command.extend(["--context_parallel_size", str(context_parallel_size)])
-        return command
+        negative_prompts: list[str],
+        width: int,
+        height: int,
+        num_frames: int,
+        num_inference_steps: int,
+        guidance_scale: float,
+        seed: int | None,
+        torch: Any,
+        device: str,
+    ) -> list[list[Any]]:
+        use_distill = bool(plan.inputs.get("use_distill", False))
+        effective_steps = 16 if use_distill else num_inference_steps
+        effective_guidance = 1.0 if use_distill else guidance_scale
+        frame_batches: list[list[Any]] = []
+        for batch_index, prompt in enumerate(prompts):
+            generator = None
+            if seed is not None:
+                generator = torch.Generator(device=device).manual_seed(seed + batch_index)
+            dit = getattr(pipe, "dit", None)
+            if use_distill and dit is not None and hasattr(dit, "enable_loras"):
+                dit.enable_loras(["cfg_step_lora"])
+            output = pipe.generate_t2v(
+                prompt=prompt,
+                negative_prompt=None if use_distill else negative_prompts[batch_index],
+                height=height,
+                width=width,
+                num_frames=num_frames,
+                num_inference_steps=effective_steps,
+                use_distill=use_distill,
+                guidance_scale=effective_guidance,
+                **({"generator": generator} if generator is not None else {}),
+            )[0]
+            if dit is not None and hasattr(dit, "disable_all_loras"):
+                dit.disable_all_loras()
+            frame_batches.append(_normalize_single_video_frames(self.model_config.name, output))
+            _torch_gc(torch)
+        return frame_batches
 
 
 class MOVAVideoAdapter(ExternalProcessVideoAdapterBase):
@@ -920,6 +1047,16 @@ def resolve_video_model_reference(model_config: Any) -> str:
     )
 
 
+def resolve_video_repo_dir(model_config: Any) -> str | None:
+    repo_dir = (
+        model_config.weights.get("repo_path")
+        or model_config.weights.get("script_root")
+    )
+    if repo_dir in (None, ""):
+        return None
+    return str(repo_dir)
+
+
 def validate_local_diffusers_reference(
     *,
     model_config: Any,
@@ -973,6 +1110,42 @@ def validate_local_diffusers_reference(
             )
 
 
+def validate_local_video_directory(
+    *,
+    model_name: str,
+    configured_label: str,
+    configured_path: str,
+    required_entries: tuple[str, ...],
+    repo_path: str | None = None,
+    repo_hint: str | None = None,
+) -> None:
+    candidate_path = Path(configured_path)
+    if candidate_path.exists():
+        missing = [
+            relative_path
+            for relative_path in required_entries
+            if not (candidate_path / relative_path).exists()
+        ]
+        if missing:
+            lines = [
+                f"{model_name} local checkpoint directory is missing required entries: {candidate_path}",
+                f"Configured field: {configured_label}",
+                f"Missing required entries: {', '.join(missing)}",
+            ]
+            if repo_path not in (None, ""):
+                lines.append(f"Configured repo_path: {repo_path}")
+            if repo_hint:
+                lines.append(repo_hint)
+            raise RuntimeError("\n".join(lines))
+    if repo_path not in (None, "") and not Path(str(repo_path)).exists():
+        lines = [
+            f"{model_name} configured repo_path does not exist: {repo_path}",
+        ]
+        if repo_hint:
+            lines.append(repo_hint)
+        raise RuntimeError("\n".join(lines))
+
+
 def resolve_video_cache_dir(model_config: Any) -> str | None:
     cache_dir = model_config.weights.get("hf_cache_dir")
     if cache_dir in (None, ""):
@@ -995,6 +1168,45 @@ def _normalize_frame_batches(model_name: str, frames: Any) -> list[list[Any]]:
     if frame_batch_count == 0:
         raise RuntimeError(f"{model_name} did not return video frames.")
     return [list(video_frames) for video_frames in frames]
+
+
+def _normalize_single_video_frames(model_name: str, frames: Any) -> list[Any]:
+    if frames is None:
+        raise RuntimeError(f"{model_name} did not return video frames.")
+    try:
+        frame_count = len(frames)
+    except TypeError as exc:
+        raise RuntimeError(f"{model_name} returned invalid single-video frames payload.") from exc
+    if frame_count == 0:
+        raise RuntimeError(f"{model_name} did not return video frames.")
+    return list(frames)
+
+
+@contextlib.contextmanager
+def _temporary_repo_import_path(repo_dir: str | None):
+    inserted = False
+    if repo_dir not in (None, ""):
+        repo_path = str(repo_dir)
+        if repo_path not in sys.path:
+            sys.path.insert(0, repo_path)
+            inserted = True
+    try:
+        yield
+    finally:
+        if inserted:
+            with contextlib.suppress(ValueError):
+                sys.path.remove(repo_path)
+
+
+def _torch_gc(torch: Any) -> None:
+    if not getattr(torch, "cuda", None):
+        return
+    if not torch.cuda.is_available():
+        return
+    if hasattr(torch.cuda, "empty_cache"):
+        torch.cuda.empty_cache()
+    if hasattr(torch.cuda, "ipc_collect"):
+        torch.cuda.ipc_collect()
 
 
 def extract_video_metadata(path: str | Path, fallback: dict[str, Any] | None = None) -> dict[str, Any]:

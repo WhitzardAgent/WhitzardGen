@@ -1,4 +1,5 @@
 import tempfile
+import types
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -7,6 +8,7 @@ from unittest.mock import patch
 from aigc.adapters.video_family import (
     CogVideoX5BAdapter,
     HunyuanVideo15Adapter,
+    LongCatVideoAdapter,
     WanT2VDiffusersAdapter,
     extract_video_metadata,
     metadata_sidecar_path,
@@ -376,6 +378,219 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertTrue(adapter.capabilities.supports_batch_prompts)
         self.assertEqual(adapter.capabilities.preferred_batch_size, 2)
         self.assertTrue(adapter.capabilities.supports_persistent_worker)
+
+    def test_longcat_capabilities_enable_persistent_worker_and_batching(self) -> None:
+        registry = load_registry()
+        adapter = LongCatVideoAdapter(model_config=registry.get_model("LongCat-Video"))
+
+        self.assertTrue(adapter.capabilities.supports_batch_prompts)
+        self.assertEqual(adapter.capabilities.preferred_batch_size, 2)
+        self.assertTrue(adapter.capabilities.supports_negative_prompt)
+        self.assertTrue(adapter.capabilities.supports_persistent_worker)
+        self.assertEqual(adapter.real_execution_mode, "in_process")
+
+    def test_longcat_load_pipeline_uses_repo_modules_and_loads_loras(self) -> None:
+        registry = load_registry()
+        tmpdir = Path(tempfile.mkdtemp())
+        repo_dir = tmpdir / "LongCat-Video"
+        repo_dir.mkdir()
+        weights_dir = tmpdir / "weights" / "LongCat-Video"
+        for subdir in ("tokenizer", "text_encoder", "vae", "scheduler", "dit", "lora"):
+            (weights_dir / subdir).mkdir(parents=True, exist_ok=True)
+        (weights_dir / "lora" / "cfg_step_lora.safetensors").write_text("", encoding="utf-8")
+        (weights_dir / "lora" / "refinement_lora.safetensors").write_text("", encoding="utf-8")
+
+        model = replace(
+            registry.get_model("LongCat-Video"),
+            weights={
+                **registry.get_model("LongCat-Video").weights,
+                "repo_path": str(repo_dir),
+                "weights_path": str(weights_dir),
+            },
+        )
+        adapter = LongCatVideoAdapter(model_config=model)
+        captured: dict[str, object] = {}
+
+        class _FakeTokenizer:
+            @classmethod
+            def from_pretrained(cls, checkpoint_dir: str, **kwargs):
+                captured["tokenizer"] = (checkpoint_dir, kwargs)
+                return object()
+
+        class _FakeTextEncoder:
+            @classmethod
+            def from_pretrained(cls, checkpoint_dir: str, **kwargs):
+                captured["text_encoder"] = (checkpoint_dir, kwargs)
+                return object()
+
+        class _FakeVAE:
+            @classmethod
+            def from_pretrained(cls, checkpoint_dir: str, **kwargs):
+                captured["vae"] = (checkpoint_dir, kwargs)
+                return object()
+
+        class _FakeScheduler:
+            @classmethod
+            def from_pretrained(cls, checkpoint_dir: str, **kwargs):
+                captured["scheduler"] = (checkpoint_dir, kwargs)
+                return object()
+
+        class _FakeDit:
+            def __init__(self) -> None:
+                self.loaded_loras: list[tuple[str, str]] = []
+
+            def load_lora(self, path: str, name: str) -> None:
+                self.loaded_loras.append((path, name))
+
+            @classmethod
+            def from_pretrained(cls, checkpoint_dir: str, **kwargs):
+                captured["dit"] = (checkpoint_dir, kwargs)
+                instance = cls()
+                captured["dit_instance"] = instance
+                return instance
+
+        class _FakePipeline:
+            def __init__(self, **kwargs) -> None:
+                captured["pipeline_kwargs"] = kwargs
+                self.dit = kwargs["dit"]
+                self.device = None
+
+            def to(self, device: str):
+                self.device = device
+                return self
+
+        class _FakeContextParallelUtil:
+            @staticmethod
+            def get_optimal_split(value: int):
+                captured["cp_split_input"] = value
+                return "cp-split"
+
+        class _FakeTorch:
+            bfloat16 = "bfloat16"
+            float32 = "float32"
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "longcat_video": types.ModuleType("longcat_video"),
+                "longcat_video.modules": types.ModuleType("longcat_video.modules"),
+                "transformers": type(
+                    "_FakeTransformers",
+                    (),
+                    {"AutoTokenizer": _FakeTokenizer, "UMT5EncoderModel": _FakeTextEncoder},
+                )(),
+                "longcat_video.context_parallel": type(
+                    "_FakeContextParallel",
+                    (),
+                    {"context_parallel_util": _FakeContextParallelUtil},
+                )(),
+                "longcat_video.modules.autoencoder_kl_wan": type(
+                    "_FakeAutoencoderModule",
+                    (),
+                    {"AutoencoderKLWan": _FakeVAE},
+                )(),
+                "longcat_video.modules.scheduling_flow_match_euler_discrete": type(
+                    "_FakeSchedulerModule",
+                    (),
+                    {"FlowMatchEulerDiscreteScheduler": _FakeScheduler},
+                )(),
+                "longcat_video.modules.longcat_video_dit": type(
+                    "_FakeDitModule",
+                    (),
+                    {"LongCatVideoTransformer3DModel": _FakeDit},
+                )(),
+                "longcat_video.pipeline_longcat_video": type(
+                    "_FakePipelineModule",
+                    (),
+                    {"LongCatVideoPipeline": _FakePipeline},
+                )(),
+            },
+        ):
+            pipe = adapter.load_pipeline(torch=_FakeTorch(), device="cuda", dtype="bfloat16")
+
+        self.assertIsInstance(pipe, _FakePipeline)
+        self.assertEqual(captured["cp_split_input"], 1)
+        self.assertEqual(captured["tokenizer"][0], str(weights_dir))
+        self.assertEqual(captured["dit"][1]["cp_split_hw"], "cp-split")
+        self.assertEqual(captured["pipeline_kwargs"]["dit"], captured["dit_instance"])
+        self.assertEqual(captured["dit_instance"].loaded_loras[0][1], "cfg_step_lora")
+        self.assertEqual(captured["dit_instance"].loaded_loras[1][1], "refinement_lora")
+
+    def test_longcat_generate_frames_batch_reuses_loaded_pipeline_across_prompt_batch(self) -> None:
+        registry = load_registry()
+        adapter = LongCatVideoAdapter(model_config=registry.get_model("LongCat-Video"))
+        plan = adapter.prepare(
+            prompts=["prompt one", "prompt two"],
+            prompt_ids=["l001", "l002"],
+            params={"_runtime_config": {"execution_mode": "real"}, "seed": 7},
+            workdir=tempfile.mkdtemp(),
+        )
+
+        class _FakeGenerator:
+            def __init__(self, device: str) -> None:
+                self.device = device
+                self.seed = None
+
+            def manual_seed(self, seed: int):
+                self.seed = seed
+                return self
+
+        class _FakeCuda:
+            @staticmethod
+            def is_available() -> bool:
+                return False
+
+        class _FakeTorch:
+            cuda = _FakeCuda()
+
+            class Generator(_FakeGenerator):
+                pass
+
+        class _FakeDit:
+            def __init__(self) -> None:
+                self.enabled: list[list[str]] = []
+                self.disabled = 0
+
+            def enable_loras(self, names: list[str]) -> None:
+                self.enabled.append(list(names))
+
+            def disable_all_loras(self) -> None:
+                self.disabled += 1
+
+        class _FakePipe:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+                self.dit = _FakeDit()
+
+            def generate_t2v(self, **kwargs):
+                self.calls.append(kwargs)
+                frame_label = kwargs["prompt"]
+                return [[[frame_label.encode("utf-8")]]]
+
+        pipe = _FakePipe()
+        frames = adapter.generate_frames_batch(
+            pipe=pipe,
+            plan=plan,
+            prompts=["prompt one", "prompt two"],
+            negative_prompts=["no blur", "no noise"],
+            width=1280,
+            height=720,
+            num_frames=121,
+            num_inference_steps=50,
+            guidance_scale=4.0,
+            seed=7,
+            torch=_FakeTorch,
+            device="cpu",
+        )
+
+        self.assertEqual(frames, [[[b"prompt one"]], [[b"prompt two"]]])
+        self.assertEqual(len(pipe.calls), 2)
+        self.assertEqual(pipe.calls[0]["prompt"], "prompt one")
+        self.assertEqual(pipe.calls[1]["prompt"], "prompt two")
+        self.assertEqual(pipe.calls[0]["negative_prompt"], "no blur")
+        self.assertEqual(pipe.calls[1]["negative_prompt"], "no noise")
+        self.assertEqual(pipe.calls[0]["generator"].seed, 7)
+        self.assertEqual(pipe.calls[1]["generator"].seed, 8)
 
     def test_cogvideox_mock_video_defaults_match_reference_shape(self) -> None:
         registry = load_registry()

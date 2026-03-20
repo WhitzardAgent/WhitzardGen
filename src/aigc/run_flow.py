@@ -2679,11 +2679,15 @@ def _model_default_generation_params(model: ModelInfo) -> dict[str, object]:
                 "fps": 30,
                 "num_frames": 121,
                 "num_inference_steps": 50,
+                "guidance_scale": 4.0,
                 "checkpoint_dir": str(
                     model.weights.get("weights_path")
                     or model.weights.get("local_path")
                     or "./weights/LongCat-Video"
                 ),
+                "repo_dir": str(model.weights.get("repo_path"))
+                if model.weights.get("repo_path")
+                else None,
             }
         )
     elif model.name == "HunyuanVideo-1.5":

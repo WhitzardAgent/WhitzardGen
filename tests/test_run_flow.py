@@ -292,6 +292,32 @@ class RunFlowTests(unittest.TestCase):
         payload = json.loads(task_files[0].read_text(encoding="utf-8"))
         self.assertEqual(len(payload["prompts"]), 2)
 
+    def test_longcat_mock_run_batches_two_prompts_into_one_task(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "longcat_batch.txt"
+        prompts_path.write_text(
+            "a train crosses a snowy bridge at dawn\nslow dolly through a lantern-lit alley\n",
+            encoding="utf-8",
+        )
+
+        summary = run_single_model(
+            model_name="LongCat-Video",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "longcat_batch_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=self._inprocess_worker_runner,
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "longcat-video"
+        task_files = sorted(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        self.assertEqual(len(task_files), 1)
+        payload = json.loads(task_files[0].read_text(encoding="utf-8"))
+        self.assertEqual(len(payload["prompts"]), 2)
+        self.assertEqual(payload["params"]["guidance_scale"], 4.0)
+
     def test_default_generation_params_omit_seed_without_global_default(self) -> None:
         registry = load_registry()
         model = registry.get_model("Z-Image")
