@@ -4,6 +4,42 @@
 - Phase 25 — Replica-Level Live Batch Progress Board for Long-Running CLI Runs
 
 ## Completed
+- 2026-03-20 21:45:00 CST
+- Moved model-specific default generation parameters out of hard-coded run-flow logic and into configuration:
+  - `configs/models.yaml` now exposes per-model `generation_defaults`
+  - current image/video target models now have explicit configurable defaults for:
+    - width / height
+    - fps / num_frames
+    - num_inference_steps
+    - guidance_scale
+    - model-specific knobs such as:
+      - `guidance_scale_2`
+      - `cfg_normalization`
+      - `max_sequence_length`
+      - `stream`
+      - `attn_implementation`
+      - `moe_impl`
+      - `use_distill`
+- Extended registry plumbing so effective model configs now carry `generation_defaults` cleanly:
+  - `ModelInfo` now exposes `generation_defaults`
+  - `configs/local_models.yaml` can now optionally override `generation_defaults` per machine
+  - redundant local generation-default overrides are pruned the same way as other local overrides
+- Simplified `run_flow` default parameter logic:
+  - generation defaults now come from registry/local override config instead of model-name hard-coding
+  - run flow only keeps a small amount of dynamic path-derived parameter wiring for cases like:
+    - `checkpoint_dir`
+    - `repo_dir`
+    - `local_model_path`
+- Improved model inspection UX:
+  - `aigc models inspect <model>` now prints effective `Generation Defaults`
+  - this makes it easier to see and tune slow models like `LongCat-Video` without reading source code
+- Ran focused validation for the config-driven defaults path:
+  - `python3 -m py_compile src/aigc/registry/models.py src/aigc/registry/loader.py src/aigc/registry/local_overrides.py src/aigc/run_flow.py src/aigc/cli/main.py tests/test_registry.py tests/test_run_flow.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
+  - result: 8 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_default_generation_params_omit_seed_without_global_default tests.test_run_flow.RunFlowTests.test_default_generation_params_honor_global_default_seed tests.test_run_flow.RunFlowTests.test_model_generation_defaults_come_from_registry_config tests.test_run_flow.RunFlowTests.test_generation_params_apply_profile_defaults_then_prompt_overrides -v`
+  - result: 4 tests passed
 - 2026-03-20 21:05:00 CST
 - Started Phase 25 to add true replica-local in-batch progress visibility for long-running CLI runs:
   - extended adapter execution signatures to accept an optional `progress_callback`
@@ -1744,6 +1780,13 @@
 
 ## Current Status
 - Updated at 2026-03-20 21:25:00 CST.
+- Config-driven model generation defaults are now exposed through the registry layer:
+  - `configs/models.yaml` carries per-model `generation_defaults`
+  - `configs/local_models.yaml` can apply optional machine-local generation default overrides
+  - `aigc models inspect <model>` now shows effective `Generation Defaults`
+- Focused validation for the new generation-default config path is green:
+  - `tests.test_registry`: passed
+  - focused `tests.test_run_flow` generation-default cases: passed
 - Phase 25 replica-level live batch progress is now implemented locally:
   - persistent workers emit structured in-task progress events
   - diffusers-based adapters surface true denoising-step progress when callback hooks are available
@@ -1929,4 +1972,5 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
+- Use the new config-driven defaults path to tune `LongCat-Video` and other slow models on the target cluster without touching core code.
 - Validate Phase 25 on a real long-running multi-replica cluster run and tune the live replica board based on observed readability, smoothness, and `running.log` verbosity.

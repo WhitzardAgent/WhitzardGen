@@ -175,6 +175,10 @@ def handle_models_inspect(args: argparse.Namespace) -> int:
     print(f"Max Batch Size: {model.capabilities.get('max_batch_size', 1)}")
     print(f"Environment Spec: {model.env_spec}")
     print(f"Conda Env: {model.conda_env_name}")
+    if model.generation_defaults:
+        print("Generation Defaults:")
+        for key, value in sorted(model.generation_defaults.items()):
+            print(f"  {key}: {value}")
     hf_repo = model.weights.get("hf_repo", "-")
     print(f"HF Repo: {hf_repo}")
     print(f"Local Override File: {model.local_override_source or DEFAULT_LOCAL_MODELS_PATH}")

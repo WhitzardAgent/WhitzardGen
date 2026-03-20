@@ -40,6 +40,9 @@ class RegistryTests(unittest.TestCase):
                     "      execution_mode: in_process",
                     "      env_spec: zimage",
                     "      conda_env_name: zimage",
+                    "    generation_defaults:",
+                    "      width: 768",
+                    "      num_inference_steps: 32",
                     "    weights:",
                     "      hf_repo: Tongyi-MAI/Z-Image",
                 ]
@@ -53,6 +56,8 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(model.adapter, "ZImageAdapter")
         self.assertEqual(model.conda_env_name, "zimage")
         self.assertEqual(model.weights["hf_repo"], "Tongyi-MAI/Z-Image")
+        self.assertEqual(model.generation_defaults["width"], 768)
+        self.assertEqual(model.generation_defaults["num_inference_steps"], 32)
 
     def test_registry_loads_all_target_models(self) -> None:
         registry = load_registry()
@@ -78,6 +83,7 @@ class RegistryTests(unittest.TestCase):
                         "local_path": "/models/Z-Image",
                         "hf_cache_dir": "/cache/hf",
                         "max_gpus": 2,
+                        "generation_defaults": {"num_inference_steps": 28},
                     },
                     "LongCat-Video": {
                         "repo_path": "/repos/LongCat-Video",
@@ -98,9 +104,11 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(zimage.conda_env_name, "zimage_cluster")
         self.assertEqual(zimage.runtime["max_gpus"], 2)
         self.assertEqual(zimage.max_gpus, 2)
+        self.assertEqual(zimage.generation_defaults["num_inference_steps"], 28)
         self.assertEqual(zimage.local_paths["conda_env_name"], "zimage_cluster")
         self.assertEqual(zimage.local_paths["local_path"], "/models/Z-Image")
         self.assertEqual(zimage.local_paths["max_gpus"], 2)
+        self.assertEqual(zimage.local_paths["generation_defaults"]["num_inference_steps"], 28)
         self.assertEqual(zimage.local_override_source, str(local_models_path))
         self.assertEqual(longcat.weights["repo_path"], "/repos/LongCat-Video")
         self.assertEqual(longcat.weights["weights_path"], "/models/LongCat-Video")
@@ -151,3 +159,5 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("Model: Z-Image", result.stdout)
         self.assertIn("Adapter Class: ZImageAdapter", result.stdout)
         self.assertIn("Conda Env: zimage", result.stdout)
+        self.assertIn("Generation Defaults:", result.stdout)
+        self.assertIn("num_inference_steps: 50", result.stdout)

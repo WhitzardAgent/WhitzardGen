@@ -353,6 +353,25 @@ class RunFlowTests(unittest.TestCase):
 
         self.assertEqual(params["seed"], 123)
 
+    def test_model_generation_defaults_come_from_registry_config(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("LongCat-Video")
+        prompt = type(
+            "PromptStub",
+            (),
+            {"prompt": "a city at night", "language": "en", "negative_prompt": None, "parameters": {}, "metadata": {}},
+        )()
+
+        params = _default_generation_params(model, [prompt])  # type: ignore[list-item]
+
+        self.assertEqual(params["width"], 1280)
+        self.assertEqual(params["height"], 720)
+        self.assertEqual(params["fps"], 30)
+        self.assertEqual(params["num_frames"], 121)
+        self.assertEqual(params["num_inference_steps"], 50)
+        self.assertEqual(params["guidance_scale"], 4.0)
+        self.assertIn("checkpoint_dir", params)
+
     def test_generation_params_apply_profile_defaults_then_prompt_overrides(self) -> None:
         registry = load_registry()
         model = registry.get_model("Z-Image")

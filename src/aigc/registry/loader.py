@@ -6,6 +6,7 @@ from pathlib import Path
 from aigc.adapters import ADAPTER_REGISTRY
 from aigc.registry.local_overrides import (
     LOCAL_MODELS_ENV_VAR,
+    LOCAL_NESTED_OVERRIDE_FIELDS,
     LOCAL_OVERRIDE_FIELDS,
     LOCAL_RUNTIME_OVERRIDE_FIELDS,
     LocalOverrideError,
@@ -92,6 +93,7 @@ def load_registry(
         )
         weights = dict(config.get("weights", {}))
         runtime = dict(config.get("runtime", {}))
+        generation_defaults = dict(config.get("generation_defaults", {}))
         weights.update(
             {
                 key: value
@@ -106,6 +108,9 @@ def load_registry(
                 if key in LOCAL_RUNTIME_OVERRIDE_FIELDS
             }
         )
+        nested_override = local_paths.get("generation_defaults")
+        if isinstance(nested_override, dict):
+            generation_defaults.update(nested_override)
         model = ModelInfo(
             name=name,
             version=str(config.get("version", "")),
@@ -115,6 +120,7 @@ def load_registry(
             capabilities=dict(config.get("capabilities", {})),
             runtime=runtime,
             weights=weights,
+            generation_defaults=generation_defaults,
             local_paths=local_paths,
             registry_source=str(registry_path),
             local_override_source=str(local_override_source) if local_paths else None,
@@ -212,6 +218,10 @@ def _prune_redundant_local_overrides(
             default_value = runtime.get(key)
             if key == "conda_env_name" and default_value in (None, ""):
                 default_value = runtime.get("env_spec")
+            if default_value == value:
+                continue
+        elif key in LOCAL_NESTED_OVERRIDE_FIELDS:
+            default_value = config.get(key, {})
             if default_value == value:
                 continue
         pruned[str(key)] = value

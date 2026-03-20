@@ -2814,62 +2814,14 @@ def _model_default_generation_params(model: ModelInfo) -> dict[str, object]:
     else:
         params = {}
 
+    params = _merge_generation_param_overrides(params, model.generation_defaults)
+
     if default_seed is not None:
         params["seed"] = default_seed
 
-    if model.name == "Z-Image":
+    if model.name == "CogVideoX-5B":
         params.update(
             {
-                "cfg_normalization": False,
-                "num_inference_steps": 50,
-                "guidance_scale": 4.0,
-            }
-        )
-    elif model.name == "Z-Image-Turbo":
-        params.update({"num_inference_steps": 9, "guidance_scale": 0.0})
-    elif model.name == "FLUX.1-dev":
-        params.update(
-            {
-                "num_inference_steps": 50,
-                "guidance_scale": 3.5,
-                "max_sequence_length": 512,
-            }
-        )
-    elif model.name == "stable-diffusion-xl-base-1.0":
-        params.update({"num_inference_steps": 40, "guidance_scale": 5.0})
-    elif model.name == "Qwen-Image-2512":
-        params.update({"num_inference_steps": 50, "guidance_scale": 4.0})
-    elif model.name == "HunyuanImage-3.0":
-        params.update(
-            {
-                "num_inference_steps": 50,
-                "guidance_scale": 1.0,
-                "stream": True,
-                "attn_implementation": "sdpa",
-                "moe_impl": "eager",
-            }
-        )
-    elif model.name == "Wan2.2-T2V-A14B-Diffusers":
-        params.update(
-            {
-                "width": 1280,
-                "height": 720,
-                "fps": 16,
-                "num_frames": 81,
-                "num_inference_steps": 40,
-                "guidance_scale": 4.0,
-                "guidance_scale_2": 3.0,
-            }
-        )
-    elif model.name == "CogVideoX-5B":
-        params.update(
-            {
-                "width": 720,
-                "height": 480,
-                "fps": 8,
-                "num_frames": 49,
-                "num_inference_steps": 50,
-                "guidance_scale": 6.0,
                 "local_model_path": str(
                     model.weights.get("weights_path") or model.weights.get("local_path")
                 )
@@ -2880,12 +2832,6 @@ def _model_default_generation_params(model: ModelInfo) -> dict[str, object]:
     elif model.name == "Wan2.2-TI2V-5B":
         params.update(
             {
-                "width": 1280,
-                "height": 704,
-                "fps": 24,
-                "num_frames": 121,
-                "num_inference_steps": 40,
-                "guidance_scale": 4.0,
                 "checkpoint_dir": str(
                     model.weights.get("weights_path")
                     or model.weights.get("local_path")
@@ -2896,12 +2842,6 @@ def _model_default_generation_params(model: ModelInfo) -> dict[str, object]:
     elif model.name == "LongCat-Video":
         params.update(
             {
-                "width": 1280,
-                "height": 720,
-                "fps": 30,
-                "num_frames": 121,
-                "num_inference_steps": 50,
-                "guidance_scale": 4.0,
                 "checkpoint_dir": str(
                     model.weights.get("weights_path")
                     or model.weights.get("local_path")
@@ -2912,26 +2852,9 @@ def _model_default_generation_params(model: ModelInfo) -> dict[str, object]:
                 else None,
             }
         )
-    elif model.name == "HunyuanVideo-1.5":
-        params.update(
-            {
-                "width": 1280,
-                "height": 720,
-                "fps": 24,
-                "num_frames": 121,
-                "num_inference_steps": 50,
-                "guidance_scale": 4.0,
-            }
-        )
     elif model.name == "MOVA-720p":
         params.update(
             {
-                "width": 1280,
-                "height": 720,
-                "fps": 24,
-                "num_frames": 193,
-                "num_inference_steps": 25,
-                "guidance_scale": 5.0,
                 "checkpoint_dir": str(
                     model.weights.get("weights_path")
                     or model.weights.get("local_path")
@@ -2942,7 +2865,7 @@ def _model_default_generation_params(model: ModelInfo) -> dict[str, object]:
             }
         )
 
-    return params
+    return {key: value for key, value in params.items() if value is not None}
 
 
 def _merge_generation_param_overrides(

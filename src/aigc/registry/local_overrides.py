@@ -21,6 +21,9 @@ LOCAL_RUNTIME_OVERRIDE_FIELDS = (
     "max_gpus",
     "conda_env_name",
 )
+LOCAL_NESTED_OVERRIDE_FIELDS = (
+    "generation_defaults",
+)
 
 
 def load_local_model_overrides(path: str | Path | None) -> tuple[Path | None, dict[str, dict[str, Any]]]:

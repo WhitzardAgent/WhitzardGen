@@ -11,6 +11,7 @@
 #   script_root: local script entry root for external-process models
 #   hf_cache_dir: optional Hugging Face cache directory
 #   max_gpus: machine-local cap for one model on this cluster
+#   generation_defaults: optional machine-local generation default overrides
 #
 # Recommended rule:
 #   - `configs/models.yaml` defines what a model is
@@ -34,6 +35,11 @@ LongCat-Video:
   repo_path:
   weights_path:
   hf_cache_dir:
+  # Example:
+  # generation_defaults:
+  #   num_inference_steps: 24
+  #   num_frames: 81
+  #   guidance_scale: 3.5
 
 # Example of a machine-specific env override:
 # MOVA-720p:

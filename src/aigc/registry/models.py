@@ -14,6 +14,7 @@ class ModelInfo:
     capabilities: dict[str, Any]
     runtime: dict[str, Any]
     weights: dict[str, Any]
+    generation_defaults: dict[str, Any] = field(default_factory=dict)
     local_paths: dict[str, Any] = field(default_factory=dict)
     registry_source: str | None = None
     local_override_source: str | None = None
