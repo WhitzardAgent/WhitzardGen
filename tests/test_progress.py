@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 
+from aigc.ui.runtime_ui import RuntimeTerminalUI
 from aigc.utils.progress import (
     RunHeaderData,
     RunSummaryData,
@@ -130,6 +131,51 @@ class ProgressTests(unittest.TestCase):
         output = buffer.getvalue()
         self.assertIn("[THROUGHPUT] overall prompts=120/800 rate=95.2/min failed=1 eta=00:07:09", output)
         self.assertIn("[REPLICA] model=Wan2.2-T2V-A14B-Diffusers r0 [0] ready 12/50 rate=2.4/min", output)
+
+    def test_runtime_ui_emits_warning_tag_for_worker_warning_lines(self) -> None:
+        ui = RuntimeTerminalUI()
+
+        lines = ui.render_event(
+            "[worker][LongCat-Video][replica=2] GPUs=[2] FutureWarning: cache API will change soon"
+        )
+
+        self.assertEqual(
+            lines,
+            ["[WARN] model=LongCat-Video replica=r2 FutureWarning: cache API will change soon"],
+        )
+
+    def test_runtime_ui_builds_semantic_rich_renderables_when_color_enabled(self) -> None:
+        try:
+            from rich.text import Text
+        except Exception as exc:  # pragma: no cover - depends on local env
+            self.skipTest(f"rich not installed: {exc}")
+
+        ui = RuntimeTerminalUI(enable_color=True)
+        rendered = ui.render_console_line(
+            "2026-03-20 20:15:00 [THROUGHPUT] overall prompts=120/800 rate=95.2/min failed=1 eta=00:07:09"
+        )
+
+        self.assertIsInstance(rendered, Text)
+        self.assertEqual(
+            rendered.plain,
+            "2026-03-20 20:15:00 [THROUGHPUT] overall prompts=120/800 rate=95.2/min failed=1 eta=00:07:09",
+        )
+        self.assertGreater(len(rendered.spans), 0)
+
+    def test_runtime_ui_builds_semantic_summary_renderable_when_color_enabled(self) -> None:
+        try:
+            from rich.text import Text
+        except Exception as exc:  # pragma: no cover - depends on local env
+            self.skipTest(f"rich not installed: {exc}")
+
+        ui = RuntimeTerminalUI(enable_color=True)
+        rendered = ui.render_console_line(
+            "2026-03-20 20:15:00 [SUMMARY] completed_with_failures run_id=run_001"
+        )
+
+        self.assertIsInstance(rendered, Text)
+        self.assertIn("completed_with_failures", rendered.plain)
+        self.assertGreaterEqual(len(rendered.spans), 2)
 
     def test_build_run_progress_uses_null_for_json(self) -> None:
         progress = build_run_progress(output_mode="json")

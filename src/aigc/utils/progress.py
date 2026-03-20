@@ -7,6 +7,11 @@ from typing import IO, Iterable
 from aigc.ui.runtime_ui import RuntimeTerminalUI
 from aigc.utils.runtime_logging import RunLogger, format_log_line
 
+try:  # pragma: no cover - optional dependency
+    from rich.console import Console
+except Exception:  # pragma: no cover - graceful fallback without rich
+    Console = None  # type: ignore[assignment]
+
 
 def _safe_isatty(stream: IO[str] | None) -> bool:
     try:
@@ -223,13 +228,27 @@ class NullRunProgress(RunProgress):
 class TextRunProgress(RunProgress):
     """Plain-text progress reporter that works in all terminals."""
 
-    def __init__(self, stream: IO[str] | None = None) -> None:
+    def __init__(self, stream: IO[str] | None = None, *, enable_color: bool | None = None) -> None:
         self._stream: IO[str] = stream or sys.stderr
-        self._ui = RuntimeTerminalUI()
+        self._enable_color = _safe_isatty(self._stream) if enable_color is None else enable_color
+        self._ui = RuntimeTerminalUI(enable_color=self._enable_color)
+        self._console = None
+        if self._enable_color and Console is not None:
+            self._console = Console(
+                file=self._stream,
+                force_terminal=True,
+                color_system="truecolor",
+                soft_wrap=True,
+                highlight=False,
+            )
 
     def _write(self, line: str) -> None:
         try:
-            print(format_log_line(line), file=self._stream, flush=True)
+            rendered = format_log_line(line)
+            if self._console is not None:
+                self._console.print(self._ui.render_console_line(rendered))
+            else:
+                print(rendered, file=self._stream, flush=True)
         except Exception:
             # Best-effort only; never crash the run on progress failure.
             return

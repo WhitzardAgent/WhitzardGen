@@ -1,9 +1,122 @@
 # Progress
 
 ## Current Phase
-- Phase 22 — Multi-Run Dataset Bundles + Split Organization + Model Filtering
+- Phase 23 — Semantic Terminal Color System for Long-Running Runs
 
 ## Completed
+- 2026-03-20 20:32:00 CST
+- Ran targeted Phase 23 regression after wiring the semantic color system:
+  - `python3 -m py_compile src/aigc/ui/runtime_ui.py src/aigc/utils/progress.py tests/test_progress.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_progress -v`
+  - result: 10 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs.RunsCliTests.test_handle_run_uses_profile_and_cli_overrides tests.test_run_flow.RunFlowTests.test_multi_model_manifest_includes_profile_and_effective_model_summary tests.test_run_flow.RunFlowTests.test_runtime_telemetry_is_logged_and_persisted_during_run -v`
+  - result: 3 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_persistent_worker -v`
+  - result: 4 tests passed
+- Ran a broader run-flow regression sweep:
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow -v`
+  - result: 31 tests passed, 1 failed
+  - the failing test was:
+    - `tests.test_run_flow.RunFlowTests.test_video_multi_model_mock_run_exports_video_records`
+  - observed mismatch:
+    - expected `summary.tasks_scheduled == 3`
+    - actual `summary.tasks_scheduled == 2`
+  - this failure appears unrelated to the new semantic terminal color changes, but it is now visible and should be triaged separately
+- 2026-03-20 20:20:00 CST
+- Started Phase 23 to make long-running terminal output semantically color-coded without changing persistent file logging behavior:
+  - kept `running.log` plain-text, timestamped, and append-only
+  - concentrated the new work in terminal rendering rather than execution logic
+- Added a centralized semantic style layer in `src/aigc/ui/runtime_ui.py`:
+  - introduced semantic roles for:
+    - run/header
+    - stage
+    - scheduler
+    - worker
+    - replica
+    - throughput
+    - warning
+    - error
+    - summary success / partial / failed
+    - timestamp
+    - secondary metadata / long paths
+  - added rich-aware semantic rendering for terminal lines while preserving plain-text fallback
+  - improved warning recognition so worker/library warnings can surface as `[WARN] ...` instead of blending into normal worker output
+- Updated `src/aigc/utils/progress.py` so terminal progress now uses the semantic UI renderer:
+  - color is enabled automatically on real TTYs when `rich` is available
+  - non-interactive streams still use stable plain text
+  - this keeps tests and redirected output readable while improving real terminal scans
+- Added focused Phase 23 progress tests in `tests/test_progress.py` for:
+  - worker-warning classification
+  - semantic rich renderable creation for throughput lines
+  - semantic rich renderable creation for summary lines
+- 2026-03-20 19:25:00 CST
+- Added a dedicated model-integration maintenance guide and strengthened export-bundle human-facing summaries:
+  - added `docs/model_integration_checklist.md` as a practical integration checklist for adding or hardening models
+  - the new checklist now covers:
+    - execution-pattern selection
+    - registry entry setup
+    - local override responsibilities
+    - manual Conda env preparation
+    - adapter implementation expectations
+    - prompt-to-artifact mapping checks
+    - batching / persistent-worker considerations
+    - testing and validation order
+    - common failure modes
+- Strengthened the automatically generated export-bundle `README.md` template in `src/aigc/exporters/bundle.py`:
+  - export bundles now produce a more dataset-card-like summary
+  - added sections for:
+    - overview
+    - dataset-card summary
+    - source runs
+    - counts by run
+    - recommended follow-up
+  - preserved `export_manifest.json` as the structured source of truth
+- Linked the new integration checklist from both top-level READMEs:
+  - `README.md`
+  - `README.zh-CN.md`
+- Added focused regression assertions for the richer export-bundle README output.
+- Ran targeted lightweight regression:
+  - `python3 -m py_compile src/aigc/exporters/bundle.py tests/test_dataset_export.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_dataset_export -v`
+  - result: 6 tests passed
+- 2026-03-20 19:05:00 CST
+- Rewrote the top-level project documentation so the repository now has a much more practical operator-facing entrypoint:
+  - replaced the old lightweight `README.md` with a substantially more complete English guide
+  - added a full Chinese companion document at `README.zh-CN.md`
+- The new README set now covers the current framework behavior much more accurately:
+  - project purpose and scope
+  - current capabilities
+  - repository structure
+  - installation
+  - current manual-Conda environment policy
+  - configuration responsibilities for:
+    - `configs/models.yaml`
+    - `configs/local_models.yaml`
+    - `configs/local_runtime.yaml`
+  - prompt formats and generation-parameter precedence
+  - CLI usage for:
+    - models
+    - doctor
+    - run
+    - profiles
+    - runs inspect/failures
+    - retry / resume
+    - single-run and multi-run export bundles
+  - run output artifacts and dataset bundle layout
+  - current model-pattern overview
+  - a clearer “how to add a new model” integration guide
+  - model-specific notes for Wan / LongCat / CogVideoX
+  - future roadmap
+- Corrected outdated README assumptions while rewriting:
+  - removed the old implication that `aigc run` auto-creates Conda environments
+  - aligned export documentation with the current bundle-based export system
+  - aligned configuration guidance with the newer split between registry defaults and machine-local overrides
+- Documentation update only:
+  - no code-path changes
+  - no runtime behavior changes
+  - no test suite rerun was necessary for this documentation-only step
 - 2026-03-20 18:40:00 CST
 - Started Phase 22 to make dataset export useful for real multi-run collection assembly:
   - extended the export bundle layer to support merging multiple source runs into one bundle
@@ -1310,6 +1423,10 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/ui/runtime_ui.py
+- /Users/morinop/coding/whitzardgen/src/aigc/utils/progress.py
+- /Users/morinop/coding/whitzardgen/tests/test_progress.py
+- /Users/morinop/coding/whitzardgen/progress.md
 - /Users/morinop/coding/whitzardgen/configs/models.yaml
 - /Users/morinop/coding/whitzardgen/src/aigc/registry/loader.py
 - /Users/morinop/coding/whitzardgen/tests/test_registry.py
@@ -1533,6 +1650,12 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
+- Updated at 2026-03-20 20:32:00 CST.
+- Phase 23 semantic terminal color work is now implemented locally and covered by targeted regression:
+  - terminal rendering now has a centralized semantic style layer
+  - real TTY terminals can render colored semantic tags and emphasized key fields
+  - plain-text fallback remains intact for logs, tests, and redirected output
+- Next immediate step is real terminal validation on the remote cluster to tune how the new semantic colors feel during long multi-replica runs.
 - Updated at 2026-03-20 16:50:00 CST.
 - The default model registry is now stored as actual YAML instead of JSON-in-YAML disguise.
 - Registry parsing now follows file-type-aware semantics, while temporary `.json` test registries still work.
@@ -1651,6 +1774,11 @@
 - The multi-replica scheduling work from Phase 11 remains in place underneath this improved logging layer.
 
 ## Blockers
+- A broader local `tests.test_run_flow` sweep exposed one unrelated existing failure outside the Phase 23 rendering surface:
+  - `test_video_multi_model_mock_run_exports_video_records`
+  - expected `summary.tasks_scheduled == 3`
+  - actual `summary.tasks_scheduled == 2`
+- This does not appear to stem from the terminal color changes, but it should be investigated before claiming a completely clean full local run-flow sweep.
 - No code blockers in the local Phase 20 implementation path.
 - Real remote validation is still needed to confirm the LongCat in-process path and the now-cleaned YAML registry behave as expected in the cluster-synced checkout.
 - Real remote validation is still needed to confirm the new LongCat in-process path works cleanly against the actual cluster checkout / checkpoint layout and achieves the desired load-once / run-many behavior.
@@ -1680,7 +1808,4 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
-- Validate Phase 20 on the remote cluster with:
-  - one long-running image job to observe `[THROUGHPUT]` cadence and ETA usefulness
-  - one multi-replica video job to confirm per-replica live visibility and `runtime_status.json` updates
-  - one completed run to inspect `run_manifest.json` runtime metrics against `running.log` telemetry lines.
+- Validate Phase 23 on a real long-running cluster job and tune any remaining color/noise issues around replica snapshots, warning verbosity, and throughput cadence.

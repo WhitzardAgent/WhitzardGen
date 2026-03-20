@@ -1,52 +1,114 @@
-# AIGC Framework MVP
+# WhitzardGen
 
-Multimodal AIGC synthetic data generation framework for image and video dataset generation.
+Multimodal synthetic data generation framework for image and video collection.
 
-The current repository is optimized for:
+This repository is designed for:
 
-- lightweight local development in `mock` mode
-- structured run/export/diagnostic flow
-- later real execution on a GPU cluster with local model-path overrides
+- running many open-source image/video models behind one CLI
+- long-running multi-model collection jobs
+- persistent-worker and multi-replica execution
+- traceable run artifacts, ledgers, recovery, and exports
+- cluster deployment with machine-local model paths and manually prepared Conda envs
 
-## Features
+Chinese documentation: [README.zh-CN.md](/Users/morinop/coding/whitzardgen/README.zh-CN.md)
 
-- prompt loading from `.txt`, `.csv`, and `.jsonl`
-- model registry for all current MVP image/video targets
-- local override config via `configs/local_models.yaml`
-- local env-install override config via `configs/local_envs.yaml`
-- mock-capable image and video adapters for local testing
-- JSONL dataset export
-- per-run manifests and failure summaries
-- basic run inspection and environment diagnostics
+## What This Project Does
+
+WhitzardGen is a dataset-generation framework, not a model-serving platform.
+
+The framework turns:
+
+- prompt files
+- selected models
+- cluster-local model/repo/env configuration
+
+into:
+
+- generated image/video artifacts
+- per-run manifests and logs
+- prompt-level ledgers
+- recovery-capable run metadata
+- organized dataset export bundles
+
+Current focus:
+
+- image and video generation
+- single-machine multi-GPU execution
+- persistent workers for heavy models
+- dataset-oriented export and organization
+
+## Current Capabilities
+
+- Prompt input:
+  - `.txt`
+  - `.csv`
+  - `.jsonl`
+- Rich prompt fields:
+  - `prompt_id`
+  - `prompt`
+  - `negative_prompt`
+  - `parameters`
+  - `metadata`
+- Profile-based runs:
+  - `aigc run --profile ...`
+- Run-time features:
+  - persistent workers
+  - sequential replica warmup
+  - multi-replica scheduling
+  - live throughput / ETA monitoring
+  - prompt-level sample ledger
+  - retry / resume
+  - failure-policy control
+- Export features:
+  - per-run dataset JSONL
+  - organized export bundles
+  - multi-run merged export
+  - split-aware export layout
+  - model-filtered export
+  - `link` / `copy` artifact materialization
+
+## Repository Layout
+
+Key directories:
+
+- [src/aigc](/Users/morinop/coding/whitzardgen/src/aigc): framework source code
+- [configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml): canonical model registry
+- [configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml): machine-local model overrides
+- [configs/local_runtime.yaml](/Users/morinop/coding/whitzardgen/configs/local_runtime.yaml): machine-local runtime/output defaults
+- [configs/run_profiles](/Users/morinop/coding/whitzardgen/configs/run_profiles): reusable run profiles
+- [prompts](/Users/morinop/coding/whitzardgen/prompts): sample and canary prompt files
+- [envs](/Users/morinop/coding/whitzardgen/envs): per-model env specs and validation metadata
+- [docs](/Users/morinop/coding/whitzardgen/docs): architecture and subsystem specs
+- [tests](/Users/morinop/coding/whitzardgen/tests): lightweight regression coverage
 
 ## Install
 
-### Option 1: recommended
+Recommended:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Option 2: editable install
+Editable install:
 
 ```bash
 pip install -e .
 ```
 
-### Option 3: traditional install
+Check the CLI:
 
 ```bash
-python setup.py develop
+aigc version
 ```
 
-If you previously installed an older broken build, reinstall after pulling the latest changes:
+If you previously installed an older build:
 
 ```bash
 pip uninstall -y aigc
 pip install -e .
 ```
 
-If a cluster still reports a console-script import error after reinstall, prefer this clean sequence:
+If the console script still looks stale:
 
 ```bash
 pip uninstall -y aigc
@@ -54,117 +116,92 @@ rm -rf *.egg-info
 pip install --no-build-isolation -e .
 ```
 
-After installation:
+## Environment Model
 
-```bash
-aigc version
-```
+The framework no longer auto-creates Conda envs during `aigc run`.
 
-## Quick Start
+Current policy:
 
-List models:
+- users prepare Conda envs manually
+- the framework resolves which env a model should use
+- the framework checks existence / light readiness
+- subprocesses run under `conda run -n <env_name> ...`
 
-```bash
-aigc models list
-```
-
-Inspect a model:
-
-```bash
-aigc models inspect Z-Image
-```
-
-Run a local mock image job:
-
-```bash
-aigc run --models Z-Image --prompts prompts/example.txt --execution-mode mock
-```
-
-Run a local mock video job:
-
-```bash
-aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/video_example.txt --execution-mode mock
-```
-
-## Canary Prompts
-
-For smoke validation, use:
-
-- `prompts/canary_image.txt`
-- `prompts/canary_image.csv`
-- `prompts/canary_image.jsonl`
-- `prompts/canary_video.txt`
-- `prompts/canary_video.csv`
-- `prompts/canary_video.jsonl`
-
-Examples:
-
-```bash
-aigc run --models Z-Image,FLUX.1-dev --prompts prompts/canary_image.txt --execution-mode mock
-aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/canary_video.csv --execution-mode mock
-```
-
-## Cluster Configuration
-
-Before real execution on a GPU cluster, edit:
-
-- `configs/local_models.yaml`
-- `configs/local_runtime.yaml` if you want all run outputs under a shared root or a global default seed
-
-Example:
-
-```yaml
-Z-Image:
-  local_path: /models/Z-Image
-  hf_cache_dir: /models/hf-cache
-
-FLUX.1-dev:
-  local_path: /models/FLUX.1-dev
-
-LongCat-Video:
-  repo_path: /repos/LongCat-Video
-  weights_path: /models/LongCat-Video
-  script_root: /repos/LongCat-Video
-
-Wan2.2-T2V-A14B-Diffusers:
-  repo_path: /repos/Wan2.2
-  weights_path: /models/Wan2.2-T2V-A14B-Diffusers
-  hf_cache_dir: /models/hf-cache
-
-HunyuanVideo-1.5:
-  local_path: /models/HunyuanVideo-1.5
-  repo_path: /repos/HunyuanVideo-1.5
-  weights_path: /models/HunyuanVideo-1.5
-```
-
-For `Wan2.2-T2V-A14B-Diffusers`, the two path types are intentionally different:
-
-- `repo_path`: local checkout of the `Wan2.2` GitHub repository
-- `weights_path` or `local_path`: local Diffusers weights directory for `Wan-AI/Wan2.2-T2V-A14B-Diffusers`
-
-The Diffusers weights directory should contain files such as `model_index.json`
-and `vae/config.json`. Pointing `weights_path` at the raw non-Diffusers Wan
-checkpoint directory will fail during `from_pretrained(...)`.
-
-Inspect effective config:
-
-```bash
-aigc models inspect Z-Image
-```
-
-Check readiness:
+Use this to inspect readiness:
 
 ```bash
 aigc doctor
 aigc doctor --model Z-Image
 ```
 
-## Global Output Root
+Use this to inspect effective config:
 
-If you do not want runs to be created under the repository's default `runs/`
-directory, edit:
+```bash
+aigc models inspect Z-Image
+```
 
-- `configs/local_runtime.yaml`
+## Configuration Model
+
+There are three main config layers.
+
+### 1. Model Registry
+
+[configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml)
+
+This defines what a model is:
+
+- adapter class
+- modality
+- task type
+- capabilities
+- runtime defaults
+- Hugging Face repo hints
+
+This file should remain mostly machine-independent.
+
+### 2. Local Model Overrides
+
+[configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml)
+
+This defines how the current machine finds and runs a model:
+
+- `conda_env_name`
+- `local_path`
+- `weights_path`
+- `repo_path`
+- `script_root`
+- `hf_cache_dir`
+- `max_gpus`
+
+Recommended rule:
+
+- `models.yaml` defines the model
+- `local_models.yaml` defines machine-local deployment details
+
+Example:
+
+```yaml
+Z-Image:
+  local_path: /models/Z-Image
+
+Wan2.2-T2V-A14B-Diffusers:
+  repo_path: /repos/Wan2.2
+  weights_path: /models/Wan2.2-T2V-A14B-Diffusers
+  max_gpus: 4
+
+CogVideoX-5B:
+  conda_env_name: cogvideo
+  weights_path: /models/CogVideoX-5B
+```
+
+### 3. Local Runtime Defaults
+
+[configs/local_runtime.yaml](/Users/morinop/coding/whitzardgen/configs/local_runtime.yaml)
+
+This controls machine-local runtime defaults such as:
+
+- default run output root
+- optional global default seed
 
 Example:
 
@@ -176,123 +213,432 @@ generation:
   default_seed: 12345
 ```
 
-After that, the default output location for:
+If `generation.default_seed` is omitted, generation stays random by default unless a prompt or profile provides a seed.
 
-- run directories
-- manifests
-- failures summaries
-- task files
-- workdirs
-- artifacts
-- dataset exports
+## Prompt Formats
 
-will all move under `/shared/aigc_runs/<run_id>/...`.
+### TXT
 
-If `generation.default_seed` is set, runs will reuse that seed unless a prompt
-or explicit run parameter overrides it. If it is omitted, the framework does
-not inject a fixed seed, so diffusers-based generation stays random by default.
+Minimal format, one prompt per line:
 
-One-off runs can still override this with:
-
-```bash
-aigc run --models Z-Image --prompts prompts/example.txt --out /tmp/my_run
+```text
+a futuristic city at night
+a cat sitting on a chair
+一只可爱的猫
 ```
 
-## Run Diagnostics
+### CSV
 
-List runs:
+Typical forms:
+
+```csv
+prompt
+a futuristic city at night
+```
+
+or:
+
+```csv
+prompt_id,prompt,language,negative_prompt,parameters
+p001,a futuristic city,en,"blurry","{""width"":1024}"
+```
+
+### JSONL
+
+Recommended rich format for real collection work:
+
+```json
+{"prompt_id":"p001","prompt":"a cinematic cat in warm morning light","negative_prompt":"blurry, low quality","parameters":{"width":1024,"height":1024,"guidance_scale":4.0},"metadata":{"split":"train","topic":"animals"}}
+```
+
+Useful examples:
+
+- [prompts/example_image_rich.jsonl](/Users/morinop/coding/whitzardgen/prompts/example_image_rich.jsonl)
+- [prompts/example_video_rich.jsonl](/Users/morinop/coding/whitzardgen/prompts/example_video_rich.jsonl)
+- [prompts/canary_image.jsonl](/Users/morinop/coding/whitzardgen/prompts/canary_image.jsonl)
+- [prompts/canary_video.jsonl](/Users/morinop/coding/whitzardgen/prompts/canary_video.jsonl)
+
+## Generation Parameter Precedence
+
+Current precedence is:
+
+```text
+model defaults
+< profile generation_defaults
+< prompt-level parameters
+```
+
+That means:
+
+- profile defaults can set a common run-wide baseline
+- each prompt can override per-sample settings
+- prompt-level values always win over profile defaults
+
+Example profile:
+
+```yaml
+generation_defaults:
+  width: 1024
+  height: 1024
+  guidance_scale: 4.0
+  num_inference_steps: 40
+```
+
+Example prompt override:
+
+```json
+{"prompt_id":"p002","prompt":"a cat","parameters":{"width":1280}}
+```
+
+Effective `width` for `p002` becomes `1280`.
+
+## CLI Overview
+
+### Model Discovery
+
+List models:
+
+```bash
+aigc models list
+aigc models list --modality image
+aigc models list --task-type t2v
+```
+
+Inspect one model:
+
+```bash
+aigc models inspect Z-Image
+```
+
+### Environment Diagnostics
+
+```bash
+aigc doctor
+aigc doctor --model Wan2.2-T2V-A14B-Diffusers
+```
+
+### Run Jobs
+
+Single-model:
+
+```bash
+aigc run --models Z-Image --prompts prompts/canary_image.txt --execution-mode mock
+```
+
+Multi-model:
+
+```bash
+aigc run --models Z-Image,FLUX.1-dev --prompts prompts/canary_image.txt --execution-mode mock
+```
+
+Real video example:
+
+```bash
+aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/canary_video.txt --execution-mode real
+```
+
+Failure policy:
+
+```bash
+aigc run \
+  --models Z-Image \
+  --prompts prompts/test_image_100.txt \
+  --execution-mode real \
+  --continue-on-error \
+  --max-failures 20 \
+  --max-failure-rate 0.10
+```
+
+### Run Profiles
+
+Profiles make multi-model collection easier:
+
+```bash
+aigc run --profile configs/run_profiles/image_real.yaml
+aigc run --profile configs/run_profiles/video_real.yaml
+```
+
+Examples:
+
+- [configs/run_profiles/image_real.yaml](/Users/morinop/coding/whitzardgen/configs/run_profiles/image_real.yaml)
+- [configs/run_profiles/video_real.yaml](/Users/morinop/coding/whitzardgen/configs/run_profiles/video_real.yaml)
+
+CLI flags override profile values when both are present.
+
+### Run Inspection
 
 ```bash
 aigc runs list
-```
-
-Inspect one run:
-
-```bash
 aigc runs inspect <run_id>
-```
-
-Show failures:
-
-```bash
 aigc runs failures <run_id>
 ```
 
-Locate or copy exported dataset records:
+### Retry / Resume
+
+Retry failed prompt outputs:
+
+```bash
+aigc runs retry <run_id>
+```
+
+Resume missing prompt outputs from an interrupted run:
+
+```bash
+aigc runs resume <run_id>
+```
+
+### Export Dataset Bundles
+
+Single run:
 
 ```bash
 aigc export dataset <run_id>
-aigc export dataset <run_id> --out /tmp/dataset.jsonl
+aigc export dataset <run_id> --mode link
+aigc export dataset <run_id> --mode copy
 ```
 
-Each run writes:
-
-- `runs/<run_id>/run_manifest.json`
-- `runs/<run_id>/failures.json`
-- `runs/<run_id>/exports/dataset.jsonl`
-
-## Dependency Model
-
-The repository-level install is intentionally lightweight.
-
-Heavy runtime dependencies such as:
-
-- `torch`
-- `diffusers`
-- `transformers`
-- Flash Attention variants
-- model repositories and checkpoints
-
-are expected to be handled through the per-model Conda specs under `envs/` and cluster-local model paths configured in `configs/local_models.yaml`.
-
-Each env spec now follows a simple cluster-friendly pattern:
-
-- `envs/<spec>/python_version.txt`
-- `envs/<spec>/requirements.txt`
-- optional `envs/<spec>/post_install.sh`
-- optional `envs/<spec>/validation.json`
-
-At runtime, `aigc run` / `aigc doctor` will create the environment with:
+Multi-run merged export:
 
 ```bash
-conda create --prefix <env_path> python=<version> pip
+aigc export dataset run_001 run_002 run_003
 ```
 
-and then install the corresponding `requirements.txt`.
-
-If a cluster machine cannot install packages directly from GitHub or the public
-internet, use `configs/local_envs.yaml` to override env-install behavior.
-
-Supported patterns:
-
-- replace a specific pip requirement such as `diffusers`
-- replace an exact requirement line such as `git+https://github.com/huggingface/diffusers`
-- provide extra pip install args such as `--no-index` / `--find-links`
-- replace the entire requirements file for one env spec
-- reuse an already-built Conda prefix and skip environment creation entirely
-
-Example:
-
-```yaml
-envs:
-  zimage:
-    pip_install_args:
-      - --no-index
-      - --find-links
-      - /shared/wheelhouse
-    pip_requirement_overrides:
-      diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
-      git+https://github.com/huggingface/diffusers: /shared/wheelhouse/diffusers-0.35.0-py3-none-any.whl
-  wan_t2v_diffusers:
-    reuse_prefix: /shared/conda_envs/wan_diffusers_ready
-```
-
-## Test
-
-Lightweight tests only:
+Model-filtered export:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+aigc export dataset run_001 run_002 --model Z-Image --model FLUX.1-dev
 ```
 
-These do not require local GPU execution.
+Custom bundle output:
+
+```bash
+aigc export dataset run_001 run_002 --out /data/exports/my_bundle
+```
+
+## Run Outputs
+
+Every run writes structured artifacts under the configured run root.
+
+Typical files:
+
+- `run_manifest.json`
+- `failures.json`
+- `samples.jsonl`
+- `running.log`
+- `runtime_status.json`
+- `exports/dataset.jsonl`
+
+What they mean:
+
+- `run_manifest.json`: authoritative run summary and lineage
+- `failures.json`: task-level failures
+- `samples.jsonl`: append-only prompt-level success/failure ledger
+- `running.log`: detailed timestamped run log
+- `runtime_status.json`: live supervisor-owned telemetry snapshot
+- `exports/dataset.jsonl`: per-run artifact-level export
+
+## Export Bundles
+
+The user-facing dataset export layer now creates organized bundles.
+
+Typical structure:
+
+```text
+dataset_bundle/
+  dataset.jsonl
+  export_manifest.json
+  README.md
+  media/
+    train/
+      Z-Image/
+        image/
+    val/
+      Wan2.2-T2V-A14B-Diffusers/
+        video/
+    unspecified/
+      ...
+```
+
+Current behavior:
+
+- successful records only
+- supports merged multi-run export
+- supports model filtering
+- supports `link` / `copy`
+- preserves source lineage and original artifact path
+
+## Supported Model Patterns
+
+The framework supports several execution patterns:
+
+- in-process image diffusers models
+- in-process video diffusers models
+- repo-based Python pipelines
+- external-process/script-based fallback paths
+
+Examples currently represented in the registry include:
+
+- `Z-Image`
+- `Z-Image-Turbo`
+- `FLUX.1-dev`
+- `stable-diffusion-xl-base-1.0`
+- `Qwen-Image-2512`
+- `HunyuanImage-3.0`
+- `Wan2.2-T2V-A14B-Diffusers`
+- `CogVideoX-5B`
+- `LongCat-Video`
+- `Wan2.2-TI2V-5B`
+- `MOVA-720p`
+- `HunyuanVideo-1.5`
+
+Always use:
+
+```bash
+aigc models list
+```
+
+for the current authoritative set.
+
+## Adding a New Model
+
+The clean path for integrating a new model is:
+
+Before starting, also read:
+
+- [docs/model_integration_checklist.md](/Users/morinop/coding/whitzardgen/docs/model_integration_checklist.md)
+
+### 1. Add a Registry Entry
+
+Edit [configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml):
+
+- name
+- version
+- adapter
+- modality
+- task type
+- capabilities
+- runtime defaults
+- weight hints
+
+### 2. Add Local Deployment Overrides
+
+Edit [configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml) only if needed:
+
+- `conda_env_name`
+- `local_path`
+- `weights_path`
+- `repo_path`
+- `script_root`
+- `hf_cache_dir`
+- `max_gpus`
+
+### 3. Prepare the Conda Environment
+
+Create the Conda env manually before real runs.
+
+Then verify:
+
+```bash
+aigc doctor --model <model_name>
+```
+
+### 4. Implement or Reuse an Adapter
+
+Typical places:
+
+- [src/aigc/adapters/image_family.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/image_family.py)
+- [src/aigc/adapters/video_family.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py)
+
+Choose the appropriate pattern:
+
+- diffusers in-process
+- repo-based Python in-process
+- external-process script runner
+
+### 5. Add Validation and Tests
+
+Recommended targets:
+
+- registry load test
+- adapter unit test
+- mock run-flow smoke test
+- doctor / env readiness expectation
+
+### 6. Smoke Test
+
+Start with mock:
+
+```bash
+aigc run --models <model_name> --prompts prompts/canary_image.txt --execution-mode mock
+```
+
+Then move to real cluster validation.
+
+## Notes for Specific Models
+
+### Wan2.2-T2V-A14B-Diffusers
+
+This model uses two path concepts:
+
+- `repo_path`: local checkout of the `Wan2.2` repository
+- `weights_path`: local Diffusers weights directory for `Wan-AI/Wan2.2-T2V-A14B-Diffusers`
+
+Do not point `weights_path` at a raw non-Diffusers Wan checkpoint directory.
+
+### LongCat-Video
+
+Current integration is Python in-process, intended to support:
+
+- persistent worker reuse
+- batch execution through one loaded pipeline
+
+### CogVideoX-5B
+
+Current integration is in-process and replica-aware. Use doctor + local model overrides to confirm the effective weights path and env name before running real jobs.
+
+## Operational Tips
+
+- Prefer `.jsonl` prompts for real collection jobs.
+- Use profiles for repeatable image/video collection recipes.
+- Use `aigc doctor` before starting a real cluster run.
+- Watch `running.log` and `runtime_status.json` during long runs.
+- Use `samples.jsonl` for prompt-level recovery visibility.
+- Use `aigc runs retry` and `aigc runs resume` rather than manually editing old run directories.
+- Use export bundles, not only per-run `exports/dataset.jsonl`, when preparing downstream datasets.
+
+## Roadmap
+
+Near-term roadmap:
+
+- richer dataset-card style export summaries
+- export-level dedupe and collision reporting
+- stronger train/val/test export workflows
+- improved quality review and filtering hooks
+- better cluster-side real-run validation coverage
+
+Mid-term roadmap:
+
+- annotation / review pipeline integration
+- data curation helpers on top of export bundles
+- stronger artifact-level analytics and reporting
+- broader model coverage and adapter hardening
+
+Longer-term roadmap:
+
+- audio / text generation support
+- larger-scale cluster orchestration
+- downstream evaluation / labeling integration
+- more complete dataset lifecycle tooling
+
+## More Detailed Specs
+
+For architecture and subsystem details, read:
+
+- [docs/spec.md](/Users/morinop/coding/whitzardgen/docs/spec.md)
+- [docs/runtime_spec.md](/Users/morinop/coding/whitzardgen/docs/runtime_spec.md)
+- [docs/cli_spec.md](/Users/morinop/coding/whitzardgen/docs/cli_spec.md)
+- [docs/dataset_schema.md](/Users/morinop/coding/whitzardgen/docs/dataset_schema.md)
+- [docs/model_registry_spec.md](/Users/morinop/coding/whitzardgen/docs/model_registry_spec.md)
+- [docs/model_integration_checklist.md](/Users/morinop/coding/whitzardgen/docs/model_integration_checklist.md)
+- [docs/prompt_spec.md](/Users/morinop/coding/whitzardgen/docs/prompt_spec.md)
+- [docs/codex_tasks.md](/Users/morinop/coding/whitzardgen/docs/codex_tasks.md)

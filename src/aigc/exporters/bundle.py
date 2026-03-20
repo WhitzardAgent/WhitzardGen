@@ -333,6 +333,8 @@ def _build_readme(manifest: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append(f"# Export Bundle: {manifest['export_name']}")
     lines.append("")
+    lines.append("## Overview")
+    lines.append("")
     lines.append(f"- Created: {manifest['created_at']}")
     lines.append(f"- Export mode: {manifest['export_mode']}")
     lines.append(f"- Total records: {manifest['record_count']}")
@@ -348,6 +350,39 @@ def _build_readme(manifest: dict[str, Any]) -> str:
     exported_models = list(manifest.get("exported_models") or [])
     lines.append(f"- Exported models: {', '.join(exported_models) if exported_models else '-'}")
     lines.append("")
+    lines.append("## Dataset Card Summary")
+    lines.append("")
+    lines.append("This bundle contains successful artifact-bearing records exported from one or more WhitzardGen runs.")
+    lines.append("")
+    lines.append("Intended uses:")
+    lines.append("")
+    lines.append("- dataset inspection")
+    lines.append("- downstream curation")
+    lines.append("- model-by-model comparison")
+    lines.append("- train/val style organization")
+    lines.append("")
+    lines.append("Important notes:")
+    lines.append("")
+    lines.append("- `dataset.jsonl` is the artifact-level export index")
+    lines.append("- `export_manifest.json` is the structured source of truth for aggregate stats")
+    lines.append("- `artifact_path` in exported records is bundle-relative")
+    lines.append("- `source_artifact_path` preserves the original run artifact location")
+    lines.append("- `source_run_lineage` preserves retry/resume lineage when available")
+    lines.append("")
+    lines.append("## Source Runs")
+    lines.append("")
+    if manifest.get("source_runs"):
+        for source in manifest["source_runs"]:
+            lines.append(
+                f"- {source.get('run_id')}: "
+                f"exported={source.get('exported_record_count', 0)}, "
+                f"skipped={source.get('skipped_record_count', 0)}, "
+                f"filtered={source.get('filtered_out_count', 0)}, "
+                f"status={source.get('status', '-')}"
+            )
+    else:
+        lines.append("- none")
+    lines.append("")
     lines.append("## Counts By Model")
     lines.extend(_render_count_block(manifest.get("counts_by_model", {})))
     lines.append("")
@@ -356,6 +391,9 @@ def _build_readme(manifest: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Counts By Artifact Type")
     lines.extend(_render_count_block(manifest.get("counts_by_artifact_type", {})))
+    lines.append("")
+    lines.append("## Counts By Run")
+    lines.extend(_render_count_block(manifest.get("counts_by_run_id", {})))
     lines.append("")
     lines.append("## Bundle Layout")
     lines.append("")
@@ -369,6 +407,12 @@ def _build_readme(manifest: dict[str, Any]) -> str:
     lines.append("      <model_name>/")
     lines.append("        <artifact_type>/")
     lines.append("```")
+    lines.append("")
+    lines.append("## Recommended Follow-Up")
+    lines.append("")
+    lines.append("- inspect `dataset.jsonl` for record-level metadata")
+    lines.append("- inspect `export_manifest.json` for aggregate stats and source-run context")
+    lines.append("- use split/model directories under `media/` for downstream organization workflows")
     lines.append("")
     lines.append("This README is a human-oriented summary. `export_manifest.json` is the structured source of truth.")
     return "\n".join(lines) + "\n"

@@ -209,6 +209,7 @@ class DatasetExportTests(unittest.TestCase):
         self.assertEqual(manifest["counts_by_split"], {"train": 1})
         readme_text = Path(result.readme_path).read_text(encoding="utf-8")
         self.assertIn("# Export Bundle: bundle", readme_text)
+        self.assertIn("## Dataset Card Summary", readme_text)
         self.assertIn("## Counts By Split", readme_text)
 
     def test_export_dataset_bundle_copy_mode_copies_artifact(self) -> None:
@@ -464,4 +465,6 @@ class DatasetExportTests(unittest.TestCase):
         self.assertEqual(manifest["filtered_out_count"], 1)
         readme_text = Path(result.readme_path).read_text(encoding="utf-8")
         self.assertIn("Source runs: run_001, run_002", readme_text)
+        self.assertIn("## Source Runs", readme_text)
+        self.assertIn("## Counts By Run", readme_text)
         self.assertIn("## Counts By Model", readme_text)
