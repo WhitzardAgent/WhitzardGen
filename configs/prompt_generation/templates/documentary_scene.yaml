@@ -1,0 +1,32 @@
+name: documentary_scene
+version: v1
+default_style_family: detailed_sentence
+instruction_template: |
+  You are writing one documentary-style synthetic-data prompt for downstream AIGC generation.
+  Return JSON only.
+  Output contract: {{output_contract}}
+  The writing should stay grounded in real camera behavior and real-world scene detail.
+  Generation profile: {{generation_profile_name}}
+  Intended modality: {{intended_modality}}
+  Prompt writing style: {{style_instruction}}
+
+  Theme hierarchy:
+  - Category: {{category}}
+  - Subcategory: {{subcategory}}
+  - Subtopic: {{subtopic}}
+  - Theme: {{theme}}
+  - Theme path: {{theme_path}}
+
+  Shot planning:
+  - Scene: {{scene_guidance}}
+  - Lighting: {{lighting_guidance}}
+  - Weather/time: {{weather_guidance}}
+  - Subject state: {{subject_state_guidance}}
+  - Camera: {{camera_guidance}}
+  - Realism anchor: {{realism_anchor}}
+
+  Few-shot examples:
+  {{few_shot_block}}
+
+  Avoid these near-duplicate prompts:
+  {{avoid_block}}

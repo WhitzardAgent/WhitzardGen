@@ -83,7 +83,12 @@ The best candidates are heavy in-process models where:
 
 ## 3. Add the Registry Entry
 
-Edit [configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml).
+Edit the matching registry fragment under [configs/models](/Users/morinop/coding/whitzardgen/configs/models):
+
+- `t2i.yaml`
+- `t2v.yaml`
+- `t2t.yaml`
+- `t2a.yaml`
 
 Required fields typically include:
 
@@ -125,7 +130,7 @@ Keep registry entries machine-independent whenever possible.
 
 ## 4. Add Machine-Local Deployment Fields
 
-Edit [configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml) only when the current machine needs local deployment overrides.
+Edit the matching local override fragment under [configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models) only when the current machine needs local deployment overrides.
 
 Use this file for:
 
@@ -139,10 +144,10 @@ Use this file for:
 
 Recommended rule:
 
-- `models.yaml` defines what a model is
-- `local_models.yaml` defines how this machine finds and runs it
+- `configs/models/` defines what a model is
+- `configs/local_models/` defines how this machine finds and runs it
 
-Do not repeat registry defaults in `local_models.yaml` unless the machine truly overrides them.
+Do not repeat registry defaults in `configs/local_models/` unless the machine truly overrides them.
 
 ## 5. Prepare and Validate the Conda Environment
 
@@ -179,8 +184,20 @@ Checklist:
 
 Typical adapter locations:
 
-- [src/aigc/adapters/image_family.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/image_family.py)
-- [src/aigc/adapters/video_family.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py)
+- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
+- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
+
+Recommended layout:
+
+- shared image helpers in [src/aigc/adapters/images/base.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/base.py)
+- model-specific image integrations in focused modules such as:
+  - [src/aigc/adapters/images/zimage.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/zimage.py)
+  - [src/aigc/adapters/images/flux.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/flux.py)
+- shared video helpers in [src/aigc/adapters/videos/base.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/base.py) and [src/aigc/adapters/videos/diffusers_base.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/diffusers_base.py)
+- model-specific video integrations in focused modules such as:
+  - [src/aigc/adapters/videos/wan_t2v.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/wan_t2v.py)
+  - [src/aigc/adapters/videos/longcat.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/longcat.py)
+  - [src/aigc/adapters/videos/helios.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/helios.py)
 
 Checklist:
 
@@ -258,17 +275,22 @@ aigc models inspect <model_name>
 aigc doctor --model <model_name>
 ```
 
-### Step 3. Mock smoke test
+### Step 3. Canary validation
+
+Prefer the dedicated canary command:
 
 ```bash
-aigc run --models <model_name> --prompts prompts/canary_image.txt --execution-mode mock
+aigc models canary <model_name>
 ```
 
-or:
+Optional forms:
 
 ```bash
-aigc run --models <model_name> --prompts prompts/canary_video.txt --execution-mode mock
+aigc models canary <model_name> --mock
+aigc models canary <model_name> --prompt-file prompts/canary_video.jsonl
 ```
+
+This command reuses the normal run flow, but constrains it to a one-model validation path with the appropriate canary prompt file by default.
 
 ### Step 4. Real canary
 
@@ -298,6 +320,26 @@ Watch for:
 - repeated model loading despite persistent-worker intent
 - duplicated config values between registry and local overrides
 
+## Capability and Benchmark Tracking
+
+Keep onboarding artifacts in sync with the actual model state.
+
+Generate the current capability matrix from the registry:
+
+```bash
+aigc models matrix --write-docs
+```
+
+This refreshes:
+
+- [docs/model_capability_matrix.md](/Users/morinop/coding/whitzardgen/docs/model_capability_matrix.md)
+- [docs/model_capability_matrix.json](/Users/morinop/coding/whitzardgen/docs/model_capability_matrix.json)
+
+Record real cluster tuning and recommended defaults in:
+
+- [configs/model_benchmarks.yaml](/Users/morinop/coding/whitzardgen/configs/model_benchmarks.yaml)
+- [docs/model_benchmarks.md](/Users/morinop/coding/whitzardgen/docs/model_benchmarks.md)
+
 ## Definition of Done for a Model Integration
 
 A model integration should not be considered complete until all of the following are true:
@@ -306,7 +348,7 @@ A model integration should not be considered complete until all of the following
 - local deployment fields are clearly defined
 - `aigc models inspect` is useful
 - `aigc doctor --model ...` is useful
-- mock mode works
+- canary validation works
 - real mode works on the target cluster
 - outputs are traceable in:
   - `samples.jsonl`

@@ -1,0 +1,32 @@
+name: photorealistic_base
+version: v1
+default_style_family: detailed_sentence
+instruction_template: |
+  You are generating one high-quality synthetic-data prompt.
+  Return JSON only.
+  Output contract: {{output_contract}}
+  Keep the prompt grounded, photorealistic, natural, and specific.
+  Generation profile: {{generation_profile_name}}
+  Intended modality: {{intended_modality}}
+  Prompt writing style: {{style_instruction}}
+
+  Category: {{category}}
+  Subcategory: {{subcategory}}
+  Subtopic: {{subtopic}}
+  Theme: {{theme}}
+  Theme path: {{theme_path}}
+  Scene guidance: {{scene_guidance}}
+  Lighting guidance: {{lighting_guidance}}
+  Weather/time guidance: {{weather_guidance}}
+  Subject-state guidance: {{subject_state_guidance}}
+  Camera guidance: {{camera_guidance}}
+  Realism anchor: {{realism_anchor}}
+
+  Avoid anime, illustration, surrealism, stylized concept art, and generic wording.
+  Make the prompt diverse in scene, subject state, and composition while staying within the theme.
+
+  Few-shot examples:
+  {{few_shot_block}}
+
+  Avoid these near-duplicate prompts:
+  {{avoid_block}}

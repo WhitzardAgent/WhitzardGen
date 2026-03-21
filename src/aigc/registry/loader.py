@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 from aigc.adapters import ADAPTER_REGISTRY
 from aigc.registry.local_overrides import (
@@ -15,8 +16,8 @@ from aigc.registry.local_overrides import (
 from aigc.registry.models import ModelInfo
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_REGISTRY_PATH = REPO_ROOT / "configs" / "models.yaml"
-DEFAULT_LOCAL_MODELS_PATH = REPO_ROOT / "configs" / "local_models.yaml"
+DEFAULT_REGISTRY_PATH = REPO_ROOT / "configs" / "models"
+DEFAULT_LOCAL_MODELS_PATH = REPO_ROOT / "configs" / "local_models"
 
 
 class RegistryError(ValueError):
@@ -69,8 +70,7 @@ def load_registry(
     local_models_path: str | Path | None = None,
 ) -> ModelRegistry:
     registry_path = Path(path)
-    raw = registry_path.read_text(encoding="utf-8")
-    payload = _parse_registry_payload(raw, source_path=registry_path)
+    registry_source, models_payload = _load_registry_models(registry_path)
     resolved_local_models_path = _resolve_local_models_path(local_models_path)
     try:
         local_override_source, local_overrides = load_local_model_overrides(
@@ -78,10 +78,6 @@ def load_registry(
         )
     except LocalOverrideError as exc:
         raise RegistryError(str(exc)) from exc
-
-    models_payload = payload.get("models")
-    if not isinstance(models_payload, dict):
-        raise RegistryError("Registry file must define a top-level 'models' mapping.")
 
     models: dict[str, ModelInfo] = {}
     for name, config in models_payload.items():
@@ -122,7 +118,7 @@ def load_registry(
             weights=weights,
             generation_defaults=generation_defaults,
             local_paths=local_paths,
-            registry_source=str(registry_path),
+            registry_source=str(registry_source),
             local_override_source=str(local_override_source) if local_paths else None,
         )
         _validate_model_info(model)
@@ -130,7 +126,7 @@ def load_registry(
 
     registry = ModelRegistry(
         models,
-        registry_path=registry_path,
+        registry_path=registry_source,
         local_models_path=local_override_source,
     )
     for model_name in models:
@@ -145,6 +141,59 @@ def _resolve_local_models_path(path: str | Path | None) -> Path | None:
     if env_override:
         return Path(env_override)
     return DEFAULT_LOCAL_MODELS_PATH
+
+
+def _load_registry_models(path: Path) -> tuple[Path, dict[str, dict[str, Any]]]:
+    if not path.exists():
+        raise RegistryError(f"Registry path does not exist: {path}")
+    if path.is_dir():
+        return path, _load_registry_directory(path)
+    payload = _parse_registry_payload(path.read_text(encoding="utf-8"), source_path=path)
+    return path, _extract_models_payload(payload, source_label=str(path))
+
+
+def _load_registry_directory(path: Path) -> dict[str, dict[str, Any]]:
+    files = _iter_registry_files(path)
+    if not files:
+        raise RegistryError(f"Registry directory contains no YAML/JSON fragments: {path}")
+    models: dict[str, dict[str, Any]] = {}
+    for file_path in files:
+        payload = _parse_registry_payload(
+            file_path.read_text(encoding="utf-8"),
+            source_path=file_path,
+        )
+        fragment_models = _extract_models_payload(payload, source_label=str(file_path))
+        for model_name, config in fragment_models.items():
+            if model_name in models:
+                raise RegistryError(
+                    f"Duplicate model entry {model_name} found in registry fragment {file_path}."
+                )
+            models[model_name] = config
+    return models
+
+
+def _iter_registry_files(path: Path) -> list[Path]:
+    return sorted(
+        [
+            child
+            for child in path.iterdir()
+            if child.is_file() and child.suffix.lower() in {".yaml", ".yml", ".json"}
+        ],
+        key=lambda candidate: candidate.name.lower(),
+    )
+
+
+def _extract_models_payload(
+    payload: dict[str, Any],
+    *,
+    source_label: str,
+) -> dict[str, dict[str, Any]]:
+    models_payload = payload.get("models")
+    if not isinstance(models_payload, dict):
+        raise RegistryError(
+            f"Registry source must define a top-level 'models' mapping: {source_label}"
+        )
+    return models_payload
 
 
 def _parse_registry_payload(raw: str, *, source_path: Path | None = None) -> dict:

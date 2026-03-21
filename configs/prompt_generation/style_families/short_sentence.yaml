@@ -1,0 +1,26 @@
+name: short_sentence
+version: v1
+description: Write the prompt as one short but complete sentence.
+style_instruction: >
+  Write one short complete sentence that is natural, specific, and photorealistic, without becoming verbose.
+output_contract:
+  format: json
+  required_keys: [prompt, negative_prompt, annotation_hints, tags]
+max_examples_per_request: 2
+supported_modalities: [image, video]
+few_shot_examples:
+  - id: short_sentence_animals_001
+    applicability:
+      modalities: [image, video]
+    input:
+      category: Animals
+      subcategory: Marine Animals
+      subtopic: Tropical Fish
+      theme: Coral reef close-up
+    output:
+      prompt: A tropical fish glides past dense coral in clear shallow water under bright natural sunlight.
+      negative_prompt: anime, illustration, low quality, blur
+      annotation_hints:
+        scene_category: Animals
+        subject_category: Marine Animals
+      tags: [marine, short-sentence, photorealistic]

@@ -72,8 +72,8 @@ Current focus:
 Key directories:
 
 - [src/aigc](/Users/morinop/coding/whitzardgen/src/aigc): framework source code
-- [configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml): canonical model registry
-- [configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml): machine-local model overrides
+- [configs/models](/Users/morinop/coding/whitzardgen/configs/models): canonical model registry split by task type (`t2i` / `t2v` / `t2t` / `t2a`)
+- [configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models): machine-local model overrides split by task type
 - [configs/local_runtime.yaml](/Users/morinop/coding/whitzardgen/configs/local_runtime.yaml): machine-local runtime/output defaults
 - [configs/run_profiles](/Users/morinop/coding/whitzardgen/configs/run_profiles): reusable run profiles
 - [prompts](/Users/morinop/coding/whitzardgen/prompts): sample and canary prompt files
@@ -146,9 +146,16 @@ There are three main config layers.
 
 ### 1. Model Registry
 
-[configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml)
+[configs/models](/Users/morinop/coding/whitzardgen/configs/models)
 
-This defines what a model is:
+This directory defines what a model is. Registry fragments are grouped by task type:
+
+- `configs/models/t2i.yaml`
+- `configs/models/t2v.yaml`
+- `configs/models/t2t.yaml`
+- `configs/models/t2a.yaml`
+
+Each fragment defines:
 
 - adapter class
 - modality
@@ -161,9 +168,16 @@ This file should remain mostly machine-independent.
 
 ### 2. Local Model Overrides
 
-[configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml)
+[configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models)
 
-This defines how the current machine finds and runs a model:
+This directory defines how the current machine finds and runs a model. Overrides are also grouped by task type:
+
+- `configs/local_models/t2i.yaml`
+- `configs/local_models/t2v.yaml`
+- `configs/local_models/t2t.yaml`
+- `configs/local_models/t2a.yaml`
+
+Use these files for:
 
 - `conda_env_name`
 - `local_path`
@@ -175,8 +189,8 @@ This defines how the current machine finds and runs a model:
 
 Recommended rule:
 
-- `models.yaml` defines the model
-- `local_models.yaml` defines machine-local deployment details
+- `configs/models/` defines the model
+- `configs/local_models/` defines machine-local deployment details
 
 Example:
 
@@ -308,6 +322,19 @@ Inspect one model:
 
 ```bash
 aigc models inspect Z-Image
+```
+
+Run a one-model canary:
+
+```bash
+aigc models canary Z-Image --mock
+aigc models canary Wan2.2-T2V-A14B-Diffusers
+```
+
+Generate the capability matrix from the current registry:
+
+```bash
+aigc models matrix --write-docs
 ```
 
 ### Environment Diagnostics
@@ -499,6 +526,26 @@ aigc models list
 
 for the current authoritative set.
 
+## Adapter Layout
+
+Adapters are now organized by modality package instead of growing one giant image/video file.
+
+Current structure:
+
+- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
+- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
+
+Examples:
+
+- [src/aigc/adapters/images/zimage.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/zimage.py)
+- [src/aigc/adapters/images/flux.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/flux.py)
+- [src/aigc/adapters/videos/wan_t2v.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/wan_t2v.py)
+- [src/aigc/adapters/videos/cogvideox.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/cogvideox.py)
+- [src/aigc/adapters/videos/longcat.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/longcat.py)
+- [src/aigc/adapters/videos/helios.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/helios.py)
+
+This keeps shared logic in small base/common modules and makes new-model onboarding much easier to maintain.
+
 ## Adding a New Model
 
 The clean path for integrating a new model is:
@@ -509,7 +556,12 @@ Before starting, also read:
 
 ### 1. Add a Registry Entry
 
-Edit [configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml):
+Edit the matching registry fragment under [configs/models](/Users/morinop/coding/whitzardgen/configs/models):
+
+- `t2i.yaml`
+- `t2v.yaml`
+- `t2t.yaml`
+- `t2a.yaml`
 
 - name
 - version
@@ -522,7 +574,7 @@ Edit [configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml
 
 ### 2. Add Local Deployment Overrides
 
-Edit [configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml) only if needed:
+Edit the matching local override fragment under [configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models) only if needed:
 
 - `conda_env_name`
 - `local_path`
@@ -546,8 +598,8 @@ aigc doctor --model <model_name>
 
 Typical places:
 
-- [src/aigc/adapters/image_family.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/image_family.py)
-- [src/aigc/adapters/video_family.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py)
+- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
+- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
 
 Choose the appropriate pattern:
 
@@ -564,15 +616,27 @@ Recommended targets:
 - mock run-flow smoke test
 - doctor / env readiness expectation
 
-### 6. Smoke Test
+### 6. Canary Validation
 
-Start with mock:
+Start with the dedicated canary command:
 
 ```bash
-aigc run --models <model_name> --prompts prompts/canary_image.txt --execution-mode mock
+aigc models canary <model_name> --mock
 ```
 
-Then move to real cluster validation.
+Then move to real cluster validation:
+
+```bash
+aigc models canary <model_name>
+```
+
+Useful onboarding artifacts:
+
+- [docs/model_integration_checklist.md](/Users/morinop/coding/whitzardgen/docs/model_integration_checklist.md)
+- [docs/model_capability_matrix.md](/Users/morinop/coding/whitzardgen/docs/model_capability_matrix.md)
+- [docs/model_capability_matrix.json](/Users/morinop/coding/whitzardgen/docs/model_capability_matrix.json)
+- [configs/model_benchmarks.yaml](/Users/morinop/coding/whitzardgen/configs/model_benchmarks.yaml)
+- [docs/model_benchmarks.md](/Users/morinop/coding/whitzardgen/docs/model_benchmarks.md)
 
 ## Notes for Specific Models
 
@@ -640,5 +704,7 @@ For architecture and subsystem details, read:
 - [docs/dataset_schema.md](/Users/morinop/coding/whitzardgen/docs/dataset_schema.md)
 - [docs/model_registry_spec.md](/Users/morinop/coding/whitzardgen/docs/model_registry_spec.md)
 - [docs/model_integration_checklist.md](/Users/morinop/coding/whitzardgen/docs/model_integration_checklist.md)
+- [docs/model_capability_matrix.md](/Users/morinop/coding/whitzardgen/docs/model_capability_matrix.md)
+- [docs/model_benchmarks.md](/Users/morinop/coding/whitzardgen/docs/model_benchmarks.md)
 - [docs/prompt_spec.md](/Users/morinop/coding/whitzardgen/docs/prompt_spec.md)
 - [docs/codex_tasks.md](/Users/morinop/coding/whitzardgen/docs/codex_tasks.md)

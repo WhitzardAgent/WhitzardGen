@@ -1,0 +1,37 @@
+version: v1
+name: realistic_video_prompts
+defaults:
+  generation_profile: photorealistic
+  language: en
+  intended_modality: video
+
+categories:
+  - name: Animals
+    count: 6
+    metadata:
+      domain: nature
+    children:
+      - name: Marine Animals
+        count: 3
+        children:
+          - name: Tropical Fish
+            children:
+              - name: Coral reef close-up
+              - name: Open-water school movement
+      - name: Birds
+        children:
+          - name: Shore Birds
+            children:
+              - name: Wetland landing sequence
+              - name: Calm shoreline foraging
+  - name: Urban Life
+    count: 4
+    metadata:
+      domain: city
+    children:
+      - name: Street Scenes
+        children:
+          - name: Commuters
+            children:
+              - name: Crosswalk rush at golden hour
+              - name: Rainy sidewalk umbrella flow

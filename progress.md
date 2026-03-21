@@ -1,9 +1,317 @@
 # Progress
 
 ## Current Phase
-- Phase 25 — Replica-Level Live Batch Progress Board for Long-Running CLI Runs
+- Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-21 00:40:00 CST
+- Completed Phase 28 prompt-template/style-family/few-shot control:
+  - prompt-generation config is now fully directory-based under:
+    - `configs/prompt_generation/profiles.yaml`
+    - `configs/prompt_generation/templates/*.yaml`
+    - `configs/prompt_generation/style_families/*.yaml`
+    - `configs/prompt_generation/target_style_mappings.yaml`
+  - prompt generation now resolves three explicit layers:
+    - generation profile
+    - prompt template
+    - prompt writing style family
+  - added first-class CLI controls:
+    - `aigc prompts generate --template ...`
+    - `aigc prompts generate --style-family ...`
+    - `aigc prompts generate --target-model ...`
+  - implemented precedence:
+    - template:
+      - CLI `--template`
+      - theme-tree `defaults.prompt_template`
+      - system default template
+    - style family:
+      - CLI `--style-family`
+      - theme-tree `defaults.prompt_style_family`
+      - target-model mapping
+      - template default
+  - prompt-generation service now renders LLM instructions through:
+    - template selection
+    - style-family instruction
+    - structured few-shot examples
+    - target-model style-family default mapping
+  - both `mock` and `real` synthesis paths now preserve:
+    - `prompt_template`
+    - `prompt_template_version`
+    - `prompt_style_family`
+    - `prompt_style_family_version`
+    - `target_model_name`
+    - `few_shot_example_ids`
+    - `instruction_render_version`
+    - `resolved_style_source`
+  - prompt bundle manifest / inspect output now surface:
+    - template
+    - style family
+    - target model
+    - few-shot example count
+    - sample few-shot example ids
+  - focused validation completed:
+    - `python3 -m py_compile src/aigc/prompt_generation/config.py src/aigc/prompt_generation/profiles.py src/aigc/prompt_generation/service.py src/aigc/prompt_generation/models.py src/aigc/prompt_generation/bundle.py src/aigc/cli/main.py tests/test_prompt_generation.py tests/test_cli_runs.py`
+    - result: passed
+    - `PYTHONPATH=src python3 -m unittest tests.test_prompt_generation tests.test_cli_runs -v`
+    - result: 18 tests passed
+    - `PYTHONPATH=src python3 -m unittest tests.test_registry tests.test_text_adapter -v`
+    - result: 11 tests passed
+    - `PYTHONPATH=src python3 -m aigc prompts plan --tree prompts/theme_tree_example.yaml --output json`
+    - result: passed
+    - `PYTHONPATH=src python3 -m aigc prompts generate --tree prompts/theme_tree_example.yaml --out /tmp/whitzardgen-prompt-bundle --mock --template photorealistic_base --style-family detailed_sentence --target-model Z-Image --output json`
+    - result: passed
+    - `PYTHONPATH=src python3 -m aigc prompts inspect /tmp/whitzardgen-prompt-bundle --output json`
+    - result: passed
+- 2026-03-21 00:25:00 CST
+- Started Phase 28 to make prompt-generation templates and writing styles first-class:
+  - prompt-generation config is being migrated from one profile file into a structured directory:
+    - `configs/prompt_generation/profiles.yaml`
+    - `configs/prompt_generation/templates/*.yaml`
+    - `configs/prompt_generation/style_families/*.yaml`
+    - `configs/prompt_generation/target_style_mappings.yaml`
+  - the old hard-coded LLM instruction renderer is being replaced by:
+    - explicit prompt templates
+    - prompt writing style families
+    - style-family few-shot examples
+    - target-model-to-style-family default mapping
+- Added the first default template/style-family set:
+  - templates:
+    - `photorealistic_base`
+    - `documentary_scene`
+    - `synthetic_dataset_v1`
+  - style families:
+    - `short_sentence`
+    - `keyword_list`
+    - `detailed_sentence`
+- Prompt-generation service is now being rewired so both `mock` and `real` paths carry:
+  - `prompt_template`
+  - `prompt_style_family`
+  - `target_model_name`
+  - `few_shot_example_ids`
+  - `instruction_render_version`
+- CLI prompt generation is being extended with:
+  - `--template`
+  - `--style-family`
+  - `--target-model`
+- Prompt bundle manifest/inspect output is being extended to surface:
+  - template
+  - style family
+  - target model
+  - few-shot example count
+- 2026-03-20 23:59:00 CST
+- Extended the new T2T foundation to a first concrete large-model integration and split registry config by task type:
+  - default registry path now resolves `configs/models/`
+  - default local-override path now resolves `configs/local_models/`
+  - registry/local-override loaders now support either:
+    - a single YAML/JSON file
+    - or a directory of sorted YAML/JSON fragments
+  - model config is now organized into:
+    - `configs/models/t2i.yaml`
+    - `configs/models/t2v.yaml`
+    - `configs/models/t2t.yaml`
+    - `configs/models/t2a.yaml`
+  - local override config is now organized into:
+    - `configs/local_models/t2i.yaml`
+    - `configs/local_models/t2v.yaml`
+    - `configs/local_models/t2t.yaml`
+    - `configs/local_models/t2a.yaml`
+- Added `Qwen3-32B` as the first concrete T2T model wired into the runtime:
+  - new adapter: `Qwen3TextAdapter`
+  - registry entry now lives in `configs/models/t2t.yaml`
+  - prompt-generation default LLM now resolves to `Qwen3-32B`
+  - `Qwen3TextAdapter` uses:
+    - chat-template prompting
+    - `enable_thinking`
+    - batch tokenization/generation
+    - one-time persistent-worker loading
+    - parsed `thinking_content` plus final `content`
+- Extended prompt/runtime validation for text generation:
+  - `enable_thinking` is now a recognized boolean generation parameter
+- Updated docs to reflect the split config layout:
+  - `README.md`
+  - `README.zh-CN.md`
+  - `docs/model_integration_checklist.md`
+  - `docs/model_registry_spec.md`
+  - `docs/model_benchmarks.md`
+- Refreshed generated capability-matrix docs after adding `Qwen3-32B`:
+  - `docs/model_capability_matrix.md`
+  - `docs/model_capability_matrix.json`
+- Added focused regression for the new slice:
+  - `tests/test_text_adapter.py`
+  - updated `tests/test_registry.py`
+  - updated `tests/test_prompt_generation.py`
+  - updated `tests/test_cli_runs.py`
+- Ran focused validation for the split-config + Qwen3 slice:
+  - `python3 -m py_compile src/aigc/registry/loader.py src/aigc/registry/local_overrides.py src/aigc/adapters/texts/qwen3.py src/aigc/adapters/texts/__init__.py src/aigc/adapters/__init__.py src/aigc/prompt_generation/service.py src/aigc/prompts/loader.py tests/test_registry.py tests/test_text_adapter.py tests/test_prompt_generation.py tests/test_cli_runs.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_text_adapter tests.test_registry tests.test_prompt_generation tests.test_cli_runs -v`
+  - result: 26 tests passed
+  - `PYTHONPATH=src python3 -m aigc models matrix --write-docs --output json`
+  - result: passed
+- 2026-03-20 22:58:00 CST
+- Started Phase 27 to add an upstream prompt-generation pipeline on top of the existing generation kernel:
+  - added a new `aigc prompts` CLI group with:
+    - `aigc prompts generate`
+    - `aigc prompts inspect`
+    - `aigc prompts plan`
+  - prompt generation now accepts an explicit-tree YAML and produces a prompt bundle instead of only a loose JSONL file
+- Added a dedicated prompt-generation subsystem under `src/aigc/prompt_generation/`:
+  - theme-tree loader and validation
+  - hard-quota sampling planner
+  - prompt-generation profile loading
+  - prompt bundle writing / inspection
+  - prompt synthesis service with:
+    - deterministic preview generation in `mock` mode
+    - LLM-kernel-backed synthesis path in `real` mode
+- Prompt bundle output is now structured as:
+  - `prompts.jsonl`
+  - `prompt_manifest.json`
+  - `sampling_plan.json`
+  - `generation_log.jsonl`
+  - `stats.json`
+- Prompt-generation metadata now flows as first-class prompt metadata, including:
+  - `uuid`
+  - `created_at`
+  - `generation_profile`
+  - `realism_target`
+  - `category` / `subcategory` / `subtopic` / `theme`
+  - `theme_path`
+  - `bundle_id`
+  - `bundle_prompt_index`
+  - `resampled`
+  - `dedupe_pass`
+  - `annotation_hints`
+- Added prompt-generation config/assets:
+  - `configs/prompt_generation_profiles.yaml`
+  - `prompts/theme_tree_example.yaml`
+  - default profile is now `photorealistic`
+- Added the first local T2T runtime foundation:
+  - new text adapter package under `src/aigc/adapters/texts/`
+  - `LocalTransformersTextAdapter` added to the adapter registry
+  - default registry now includes `Local-Transformers-T2T`
+  - prompt/value validation now accepts text-generation params such as:
+    - `max_new_tokens`
+    - `temperature`
+    - `top_p`
+    - `repetition_penalty`
+    - `do_sample`
+- Added prompt-run storage defaulting through runtime settings:
+  - `get_prompt_runs_root()` now resolves a dedicated prompt bundle root
+  - default path falls back to `<runs_root>/prompt_runs`
+- Added focused Phase 27 regression coverage:
+  - `tests/test_prompt_generation.py`
+  - updated `tests/test_cli_runs.py`
+  - updated `tests/test_registry.py`
+- Ran focused validation for Phase 27:
+  - `python3 -m py_compile src/aigc/adapters/texts/__init__.py src/aigc/adapters/texts/base.py src/aigc/adapters/texts/local_transformers.py src/aigc/prompt_generation/__init__.py src/aigc/prompt_generation/models.py src/aigc/prompt_generation/loader.py src/aigc/prompt_generation/profiles.py src/aigc/prompt_generation/planner.py src/aigc/prompt_generation/bundle.py src/aigc/prompt_generation/service.py src/aigc/settings.py src/aigc/prompts/loader.py src/aigc/cli/main.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompt_generation tests.test_registry tests.test_cli_runs -v`
+  - result: 23 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompts tests.test_runtime_worker -v`
+  - result: 12 tests passed
+  - `PYTHONPATH=src python3 -m aigc prompts plan --tree prompts/theme_tree_example.yaml --output json`
+  - result: passed
+  - `PYTHONPATH=src python3 -m aigc prompts generate --tree prompts/theme_tree_example.yaml --out <tmp>/prompt_bundle --mock --output json`
+  - result: passed
+- 2026-03-20 23:55:00 CST
+- Started Phase 26 to reduce adapter entropy and make model bring-up more repeatable:
+  - split the oversized adapter implementation into modality packages:
+    - `src/aigc/adapters/images/`
+    - `src/aigc/adapters/videos/`
+  - moved model-specific integrations into focused modules such as:
+    - `images/zimage.py`
+    - `images/flux.py`
+    - `videos/wan_t2v.py`
+    - `videos/cogvideox.py`
+    - `videos/longcat.py`
+    - `videos/helios.py`
+  - retained compatibility wrappers so existing imports from:
+    - `src/aigc/adapters/image_family.py`
+    - `src/aigc/adapters/video_family.py`
+    continue to resolve during the transition
+- Cleaned up adapter base naming so onboarding code no longer uses misleading `MockCapable...` class names:
+  - `MockCapableImageAdapter` -> `BaseImageGenerationAdapter`
+  - `MockCapableVideoAdapter` -> `BaseVideoGenerationAdapter`
+  - updated package exports and focused tests accordingly
+- Added a dedicated model-onboarding utility layer in `src/aigc/model_onboarding.py`:
+  - default canary prompt selection by modality
+  - one-model canary run wrapper on top of existing run flow
+  - capability-matrix row generation from the effective registry
+  - markdown / JSON capability-matrix document generation
+- Added new CLI onboarding commands in `src/aigc/cli/main.py`:
+  - `aigc models canary <model>`
+  - `aigc models matrix [--write-docs]`
+  - `models canary` reuses normal run execution instead of creating a second execution path
+  - `models matrix --write-docs` now refreshes:
+    - `docs/model_capability_matrix.md`
+    - `docs/model_capability_matrix.json`
+- Added benchmark/capability scaffolding for real cluster tuning:
+  - `configs/model_benchmarks.yaml`
+  - `docs/model_benchmarks.md`
+  - seeded with current core models including:
+    - `Z-Image`
+    - `LongCat-Video`
+    - `Helios`
+    - `Wan2.2-T2V-A14B-Diffusers`
+    - `CogVideoX-5B`
+- Updated onboarding/docs to match the new structure:
+  - `README.md`
+  - `README.zh-CN.md`
+  - `docs/model_integration_checklist.md`
+  - `docs/cli_spec.md`
+  - documentation now points users to:
+    - the new adapter package layout
+    - `aigc models canary`
+    - capability matrix generation
+    - benchmark tracking artifacts
+- Ran focused regression for Phase 26:
+  - `python3 -m py_compile src/aigc/adapters/__init__.py src/aigc/adapters/stubs.py src/aigc/adapters/image_family.py src/aigc/adapters/video_family.py src/aigc/adapters/zimage.py src/aigc/adapters/images/__init__.py src/aigc/adapters/images/base.py src/aigc/adapters/images/common.py src/aigc/adapters/images/flux.py src/aigc/adapters/images/hunyuan_image.py src/aigc/adapters/images/qwen_image.py src/aigc/adapters/images/sdxl.py src/aigc/adapters/images/zimage.py src/aigc/adapters/images/zimage_turbo.py src/aigc/adapters/videos/__init__.py src/aigc/adapters/videos/base.py src/aigc/adapters/videos/common.py src/aigc/adapters/videos/diffusers_base.py src/aigc/adapters/videos/wan_t2v.py src/aigc/adapters/videos/hunyuan_video.py src/aigc/adapters/videos/cogvideox.py src/aigc/adapters/videos/helios.py src/aigc/adapters/videos/wan_ti2v.py src/aigc/adapters/videos/longcat.py src/aigc/adapters/videos/mova.py src/aigc/model_onboarding.py src/aigc/cli/main.py tests/test_cli_runs.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
+  - result: 8 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter tests.test_zimage_adapter tests.test_cli_runs -v`
+  - result: 31 tests passed
+  - `PYTHONPATH=src python3 -m aigc models matrix --write-docs --output json`
+  - result: passed and refreshed capability-matrix docs
+- 2026-03-20 22:20:00 CST
+- Added a new in-process diffusers-based `Helios` T2V integration using the same `zimage` environment family:
+  - registered `Helios` in `configs/models.yaml`
+  - added `HeliosPyramidAdapter` in `src/aigc/adapters/video_family.py`
+  - wired adapter exports in:
+    - `src/aigc/adapters/__init__.py`
+    - `src/aigc/adapters/stubs.py`
+- `Helios` integration currently covers text-to-video only, matching the requested scope:
+  - uses `diffusers.HeliosPyramidPipeline`
+  - loads the VAE with `diffusers.AutoModel.from_pretrained(..., subfolder="vae")`
+  - supports persistent-worker reuse and batched prompt execution
+  - supports prompt-level negative prompts and seeds
+  - supports true diffusers step-progress callbacks for the live replica progress board
+- Added configurable default generation settings for `Helios` in `configs/models.yaml`:
+  - width: `640`
+  - height: `384`
+  - fps: `24`
+  - num_frames: `240`
+  - num_inference_steps: `6`
+  - guidance_scale: `1.0`
+  - pyramid_num_inference_steps_list: `[2, 2, 2]`
+  - is_amplify_first_chunk: `true`
+- Added a local override entry stub for `Helios` in `configs/local_models.yaml` so cluster-local weights/cache can be configured without editing core code.
+- Added focused regression coverage for `Helios`:
+  - adapter capability / persistent-worker support
+  - pipeline loading with `AutoModel` VAE injection
+  - batched prompt execution and pyramid-step kwargs
+  - true progress callback emission
+  - mock run batching
+  - registry-driven default generation params
+- Ran focused validation for `Helios`:
+  - `python3 -m py_compile src/aigc/adapters/video_family.py src/aigc/adapters/stubs.py src/aigc/adapters/__init__.py src/aigc/registry/models.py src/aigc/run_flow.py tests/test_video_adapter.py tests/test_run_flow.py tests/test_registry.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry -v`
+  - result: 8 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter -v`
+  - result: 18 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow -v`
+  - result: new `Helios` tests passed; 2 pre-existing non-Helios run-flow expectation failures remain in staged warmup replica-count assertions
 - 2026-03-20 21:45:00 CST
 - Moved model-specific default generation parameters out of hard-coded run-flow logic and into configuration:
   - `configs/models.yaml` now exposes per-model `generation_defaults`
@@ -1546,6 +1854,23 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/configs/prompt_generation/profiles.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_generation/templates/photorealistic_base.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_generation/templates/documentary_scene.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_generation/templates/synthetic_dataset_v1.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_generation/style_families/detailed_sentence.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_generation/style_families/keyword_list.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_generation/style_families/short_sentence.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_generation/target_style_mappings.yaml
+- /Users/morinop/coding/whitzardgen/src/aigc/prompt_generation/config.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompt_generation/models.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompt_generation/profiles.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompt_generation/service.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompt_generation/bundle.py
+- /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
+- /Users/morinop/coding/whitzardgen/tests/test_prompt_generation.py
+- /Users/morinop/coding/whitzardgen/tests/test_cli_runs.py
+- /Users/morinop/coding/whitzardgen/progress.md
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
 - /Users/morinop/coding/whitzardgen/src/aigc/runtime_telemetry.py
 - /Users/morinop/coding/whitzardgen/src/aigc/ui/runtime_ui.py
@@ -1779,10 +2104,57 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
-- Updated at 2026-03-20 21:25:00 CST.
+- Updated at 2026-03-21 00:40:00 CST.
+- Phase 28 is complete locally:
+  - prompt generation now supports explicit template switching
+  - prompt-writing style families are first-class
+  - structured few-shot examples are selected from style families
+  - target-model-to-style-family default mapping is in place
+- The prompt-generation path still reuses the existing T2T runtime foundation:
+  - `mock` path remains deterministic and inspectable
+  - `real` path still executes through the normal text-model kernel
+  - prompt bundle metadata keeps the new template/style/few-shot traceability
+- Focused local regression and CLI smoke are green for the Phase 28 slice.
+- Updated at 2026-03-20 23:59:00 CST.
+- The default registry/local-override layout is now task-scoped and easier to maintain:
+  - `configs/models/` is split into `t2i` / `t2v` / `t2t` / `t2a`
+  - `configs/local_models/` is split the same way
+  - loader compatibility is preserved for explicit single-file registry paths used by tests or ad hoc experiments
+- The first concrete T2T runtime target is now `Qwen3-32B`:
+  - `Qwen3TextAdapter` is registered
+  - batch chat-template generation works
+  - `thinking_content` is parsed and retained in text artifact metadata
+  - prompt-generation now defaults to `Qwen3-32B` when no explicit `--llm-model` is provided
+- Focused local regression is green for the new config split + Qwen3 slice:
+  - `tests.test_text_adapter`
+  - `tests.test_registry`
+  - `tests.test_prompt_generation`
+  - `tests.test_cli_runs`
+- Updated at 2026-03-20 22:58:00 CST.
+- Phase 27 prompt-generation pipeline is now in place locally:
+  - theme-tree YAML planning works
+  - prompt bundles are written and inspectable
+  - preview generation works through `aigc prompts generate --mock`
+  - real prompt synthesis can reuse the normal run kernel through a text model
+- The local T2T foundation is now present in the registry/runtime:
+  - `Qwen3-32B` exists as a text / t2t model
+  - text-generation params are recognized by prompt/runtime validation
+- Phase 26 adapter modularization and onboarding tooling remain in place:
+  - adapter code is split into modality packages instead of growing one giant image/video implementation file
+  - new onboarding commands exist for:
+    - `aigc models canary`
+    - `aigc models matrix`
+  - generated capability-matrix docs and benchmark scaffolding are now part of the repository workflow
+- Focused regression is green for the current Phase 26 slice:
+  - `tests.test_registry`
+  - `tests.test_video_adapter`
+  - `tests.test_zimage_adapter`
+  - `tests.test_cli_runs`
+- `Helios` is now integrated as an in-process diffusers T2V model and can reuse the existing `zimage` environment.
+- The new model follows the config-driven defaults path, so its quality/speed knobs can now be tuned from config instead of code.
 - Config-driven model generation defaults are now exposed through the registry layer:
-  - `configs/models.yaml` carries per-model `generation_defaults`
-  - `configs/local_models.yaml` can apply optional machine-local generation default overrides
+  - `configs/models/` carries per-model `generation_defaults`
+  - `configs/local_models/` can apply optional machine-local generation default overrides
   - `aigc models inspect <model>` now shows effective `Generation Defaults`
 - Focused validation for the new generation-default config path is green:
   - `tests.test_registry`: passed
@@ -1936,6 +2308,24 @@
 - The multi-replica scheduling work from Phase 11 remains in place underneath this improved logging layer.
 
 ## Blockers
+- Local prompt-generation smoke needs an explicit writable `--out` path in this sandbox because the configured default prompt-runs root points to `/inspire/...`, which is not writable here.
+- Real remote validation is still needed for Phase 28:
+  - run `aigc prompts generate --execution-mode real` with `Qwen3-32B`
+  - compare prompt quality across:
+    - `detailed_sentence`
+    - `keyword_list`
+    - `short_sentence`
+  - tune `target_style_mappings.yaml` and few-shot examples based on actual downstream generation quality
+- No local code blockers in the Phase 27 implementation path.
+- Real remote validation is still needed for the new `Qwen3-32B` text-generation backend:
+  - configure `Qwen3-32B` with local weights / cache in `configs/local_models/t2t.yaml`
+  - run `aigc prompts generate ... --execution-mode real --llm-model <model>`
+  - tune text-generation defaults, `enable_thinking`, and prompt-generation profile behavior
+- No local code blockers in the Phase 26 implementation path.
+- Real remote validation is still needed for the new onboarding workflow:
+  - verify `aigc models canary <model>` feels useful on the target cluster
+  - record real tuning results into `configs/model_benchmarks.yaml`
+  - confirm the generated capability matrix remains accurate for cluster-local overrides
 - No local code blockers in the Phase 25 implementation path.
 - Real remote validation is still needed to confirm the new live replica dashboard behaves well on long real cluster jobs, especially:
   - slow video diffusion tasks
@@ -1972,5 +2362,12 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
-- Use the new config-driven defaults path to tune `LongCat-Video` and other slow models on the target cluster without touching core code.
-- Validate Phase 25 on a real long-running multi-replica cluster run and tune the live replica board based on observed readability, smoothness, and `running.log` verbosity.
+- Run remote-cluster validation for the new Phase 28 prompt-generation stack:
+  - configure real local paths/env for `Qwen3-32B`
+  - run `aigc prompts generate --execution-mode real --template ... --style-family ...`
+  - compare bundle outputs across multiple style families for the same tree
+  - adjust few-shot examples and target-model style mappings from real results
+- Configure a real local text model for `Qwen3-32B` and validate:
+  - `aigc prompts generate --tree prompts/theme_tree_example.yaml --execution-mode real --llm-model Qwen3-32B`
+  - inspect the resulting prompt bundle quality, diversity, and metadata flow
+- After that, tune prompt-generation profiles and start planning the downstream annotation/enrichment pipeline on top of these prompt bundles.

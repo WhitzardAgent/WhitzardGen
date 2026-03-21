@@ -1,0 +1,34 @@
+name: synthetic_dataset_v1
+version: v1
+default_style_family: keyword_list
+instruction_template: |
+  Produce one synthetic-data prompt for a downstream AIGC model.
+  Return JSON only.
+  Output contract: {{output_contract}}
+  Match the requested prompt writing style exactly.
+
+  Task metadata:
+  - Generation profile: {{generation_profile_name}}
+  - Intended modality: {{intended_modality}}
+  - Prompt writing style: {{style_instruction}}
+
+  Theme metadata:
+  - Category: {{category}}
+  - Subcategory: {{subcategory}}
+  - Subtopic: {{subtopic}}
+  - Theme: {{theme}}
+  - Theme path: {{theme_path}}
+
+  Guidance:
+  - Scene: {{scene_guidance}}
+  - Lighting: {{lighting_guidance}}
+  - Weather/time: {{weather_guidance}}
+  - Subject state: {{subject_state_guidance}}
+  - Camera: {{camera_guidance}}
+  - Realism anchor: {{realism_anchor}}
+
+  Few-shot examples:
+  {{few_shot_block}}
+
+  Avoid these near-duplicate prompts:
+  {{avoid_block}}

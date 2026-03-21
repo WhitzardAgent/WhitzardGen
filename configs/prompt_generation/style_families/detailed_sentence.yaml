@@ -1,0 +1,45 @@
+name: detailed_sentence
+version: v1
+description: Write the prompt as a detailed natural sentence or compact paragraph.
+style_instruction: >
+  Write one detailed, natural, photorealistic prompt as a complete sentence or compact paragraph with coherent scene detail.
+output_contract:
+  format: json
+  required_keys: [prompt, negative_prompt, annotation_hints, tags]
+max_examples_per_request: 2
+supported_modalities: [image, video]
+few_shot_examples:
+  - id: detailed_sentence_animals_001
+    applicability:
+      modalities: [image, video]
+    input:
+      category: Animals
+      subcategory: Marine Animals
+      subtopic: Tropical Fish
+      theme: Coral reef close-up
+      scene_guidance: a grounded underwater reef scene with strong spatial detail
+      lighting_guidance: clear tropical daylight filtered through shallow water
+    output:
+      prompt: A close observational underwater view of a vibrant tropical fish moving slowly through a dense coral reef, with clear tropical sunlight filtering through shallow turquoise water, visible reef texture, suspended particles, and lifelike marine detail rendered with grounded realism.
+      negative_prompt: anime, illustration, stylized concept art, low quality, blurry, distorted
+      annotation_hints:
+        scene_category: Animals
+        subject_category: Marine Animals
+      tags: [marine, coral-reef, photorealistic]
+  - id: detailed_sentence_urban_001
+    applicability:
+      modalities: [image, video]
+    input:
+      category: Urban Life
+      subcategory: Street Scenes
+      subtopic: Commuters
+      theme: Crosswalk rush at golden hour
+      scene_guidance: a real urban crosswalk with layered pedestrian traffic
+      lighting_guidance: warm late-afternoon sunlight with realistic reflections
+    output:
+      prompt: A busy city crosswalk at golden hour filled with commuters in natural motion, warm late-afternoon sunlight reflecting off glass storefronts and pavement, layered pedestrian spacing, realistic clothing texture, and grounded street-level photographic detail.
+      negative_prompt: anime, illustration, surreal, painterly, low quality
+      annotation_hints:
+        scene_category: Urban Life
+        subject_category: Street Scenes
+      tags: [urban, commuters, golden-hour, photorealistic]

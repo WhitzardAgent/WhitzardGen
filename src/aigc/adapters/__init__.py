@@ -1,21 +1,25 @@
 """Model adapter subsystem."""
 
-from aigc.adapters.zimage import ZImageAdapter
-from aigc.adapters.stubs import (
-    EchoTestAdapter,
+from aigc.adapters.images import (
     FluxImageAdapter,
     HunyuanImageAdapter,
+    QwenImageAdapter,
+    StableDiffusionXLAdapter,
+    ZImageAdapter,
+    ZImageTurboAdapter,
+)
+from aigc.adapters.stubs import (
+    EchoTestAdapter,
+    HeliosPyramidAdapter,
     HunyuanVideo15Adapter,
     LongCatVideoAdapter,
     MOVAAdapter,
     PlaceholderAdapter,
     CogVideoX5BAdapter,
-    QwenImageAdapter,
-    StableDiffusionXLAdapter,
     WanT2VDiffusersAdapter,
     WanTI2VAdapter,
-    ZImageTurboAdapter,
 )
+from aigc.adapters.texts import LocalTransformersTextAdapter, Qwen3TextAdapter
 
 ADAPTER_REGISTRY = {
     "FluxImageAdapter": FluxImageAdapter,
@@ -24,6 +28,7 @@ ADAPTER_REGISTRY = {
     "ZImageTurboAdapter": ZImageTurboAdapter,
     "ZImageAdapter": ZImageAdapter,
     "HunyuanImageAdapter": HunyuanImageAdapter,
+    "HeliosPyramidAdapter": HeliosPyramidAdapter,
     "LongCatVideoAdapter": LongCatVideoAdapter,
     "WanTI2VAdapter": WanTI2VAdapter,
     "WanT2VDiffusersAdapter": WanT2VDiffusersAdapter,
@@ -31,6 +36,8 @@ ADAPTER_REGISTRY = {
     "MOVAAdapter": MOVAAdapter,
     "HunyuanVideo15Adapter": HunyuanVideo15Adapter,
     "EchoTestAdapter": EchoTestAdapter,
+    "LocalTransformersTextAdapter": LocalTransformersTextAdapter,
+    "Qwen3TextAdapter": Qwen3TextAdapter,
 }
 
 __all__ = ["ADAPTER_REGISTRY", "PlaceholderAdapter"]

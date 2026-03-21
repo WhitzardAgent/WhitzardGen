@@ -60,8 +60,8 @@ WhitzardGen 主要解决的是下面这类问题：
 关键目录：
 
 - [src/aigc](/Users/morinop/coding/whitzardgen/src/aigc)：框架源码
-- [configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml)：模型注册表
-- [configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml)：本机/集群本地模型覆盖配置
+- [configs/models](/Users/morinop/coding/whitzardgen/configs/models)：按 `t2i` / `t2v` / `t2t` / `t2a` 拆分的模型注册表
+- [configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models)：按任务类型拆分的本机/集群本地模型覆盖配置
 - [configs/local_runtime.yaml](/Users/morinop/coding/whitzardgen/configs/local_runtime.yaml)：本地运行默认项
 - [configs/run_profiles](/Users/morinop/coding/whitzardgen/configs/run_profiles)：可复用运行配置
 - [prompts](/Users/morinop/coding/whitzardgen/prompts)：示例 prompt 文件
@@ -129,9 +129,16 @@ aigc doctor --model Z-Image
 
 ### 1. 模型定义层
 
-[configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml)
+[configs/models](/Users/morinop/coding/whitzardgen/configs/models)
 
-这个文件定义“模型是什么”：
+这个目录定义“模型是什么”，当前按任务类型拆成：
+
+- `configs/models/t2i.yaml`
+- `configs/models/t2v.yaml`
+- `configs/models/t2t.yaml`
+- `configs/models/t2a.yaml`
+
+每个分片里定义：
 
 - adapter
 - modality
@@ -144,9 +151,16 @@ aigc doctor --model Z-Image
 
 ### 2. 本地覆盖层
 
-[configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml)
+[configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models)
 
-这个文件定义“当前机器如何找到并运行它”：
+这个目录定义“当前机器如何找到并运行它”，同样按任务类型拆成：
+
+- `configs/local_models/t2i.yaml`
+- `configs/local_models/t2v.yaml`
+- `configs/local_models/t2t.yaml`
+- `configs/local_models/t2a.yaml`
+
+这些文件用来写：
 
 - `conda_env_name`
 - `local_path`
@@ -158,8 +172,8 @@ aigc doctor --model Z-Image
 
 推荐理解方式：
 
-- `models.yaml` 负责模型定义
-- `local_models.yaml` 负责机器本地部署覆盖
+- `configs/models/` 负责模型定义
+- `configs/local_models/` 负责机器本地部署覆盖
 
 示例：
 
@@ -293,6 +307,19 @@ aigc models list --task-type t2v
 
 ```bash
 aigc models inspect Z-Image
+```
+
+跑单模型 canary：
+
+```bash
+aigc models canary Z-Image --mock
+aigc models canary Wan2.2-T2V-A14B-Diffusers
+```
+
+从当前 registry 生成 capability matrix：
+
+```bash
+aigc models matrix --write-docs
 ```
 
 ### 环境诊断
@@ -482,6 +509,26 @@ aigc models list
 
 为准。
 
+## Adapter 结构
+
+现在 adapter 已经按 modality 拆成 package，不再继续把所有实现都堆在一个大文件里。
+
+当前结构：
+
+- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
+- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
+
+例如：
+
+- [src/aigc/adapters/images/zimage.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/zimage.py)
+- [src/aigc/adapters/images/flux.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/flux.py)
+- [src/aigc/adapters/videos/wan_t2v.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/wan_t2v.py)
+- [src/aigc/adapters/videos/cogvideox.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/cogvideox.py)
+- [src/aigc/adapters/videos/longcat.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/longcat.py)
+- [src/aigc/adapters/videos/helios.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/helios.py)
+
+这样共享逻辑会留在小的 base/common 模块里，后面接新模型也更容易维护。
+
 ## 如何适配一个新模型
 
 建议按照下面顺序来做。
@@ -492,7 +539,12 @@ aigc models list
 
 ### 1. 在 registry 中增加模型
 
-修改 [configs/models.yaml](/Users/morinop/coding/whitzardgen/configs/models.yaml)，补齐：
+修改 [configs/models](/Users/morinop/coding/whitzardgen/configs/models) 里对应的分片文件，补齐：
+
+- `t2i.yaml`
+- `t2v.yaml`
+- `t2t.yaml`
+- `t2a.yaml`
 
 - `version`
 - `adapter`
@@ -504,7 +556,7 @@ aigc models list
 
 ### 2. 在本地覆盖中补齐机器相关信息
 
-如果需要，修改 [configs/local_models.yaml](/Users/morinop/coding/whitzardgen/configs/local_models.yaml)：
+如果需要，再修改 [configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models) 下对应分片：
 
 - `conda_env_name`
 - `local_path`
@@ -528,8 +580,8 @@ aigc doctor --model <model_name>
 
 通常入口在：
 
-- [src/aigc/adapters/image_family.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/image_family.py)
-- [src/aigc/adapters/video_family.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py)
+- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
+- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
 
 按模型类型选择：
 
@@ -546,15 +598,27 @@ aigc doctor --model <model_name>
 - mock run-flow 测试
 - doctor / env readiness 测试
 
-### 6. 先 smoke test，再 real run
+### 6. 先做 canary，再 real run
 
-先跑 mock：
+先跑 dedicated canary：
 
 ```bash
-aigc run --models <model_name> --prompts prompts/canary_image.txt --execution-mode mock
+aigc models canary <model_name> --mock
 ```
 
-然后再做真实 GPU / cluster 验证。
+然后再做真实 GPU / cluster 验证：
+
+```bash
+aigc models canary <model_name>
+```
+
+建议一起看这些 onboarding 产物：
+
+- [docs/model_integration_checklist.md](/Users/morinop/coding/whitzardgen/docs/model_integration_checklist.md)
+- [docs/model_capability_matrix.md](/Users/morinop/coding/whitzardgen/docs/model_capability_matrix.md)
+- [docs/model_capability_matrix.json](/Users/morinop/coding/whitzardgen/docs/model_capability_matrix.json)
+- [configs/model_benchmarks.yaml](/Users/morinop/coding/whitzardgen/configs/model_benchmarks.yaml)
+- [docs/model_benchmarks.md](/Users/morinop/coding/whitzardgen/docs/model_benchmarks.md)
 
 ## 一些模型的特别说明
 
@@ -630,5 +694,7 @@ aigc run --models <model_name> --prompts prompts/canary_image.txt --execution-mo
 - [docs/dataset_schema.md](/Users/morinop/coding/whitzardgen/docs/dataset_schema.md)
 - [docs/model_registry_spec.md](/Users/morinop/coding/whitzardgen/docs/model_registry_spec.md)
 - [docs/model_integration_checklist.md](/Users/morinop/coding/whitzardgen/docs/model_integration_checklist.md)
+- [docs/model_capability_matrix.md](/Users/morinop/coding/whitzardgen/docs/model_capability_matrix.md)
+- [docs/model_benchmarks.md](/Users/morinop/coding/whitzardgen/docs/model_benchmarks.md)
 - [docs/prompt_spec.md](/Users/morinop/coding/whitzardgen/docs/prompt_spec.md)
 - [docs/codex_tasks.md](/Users/morinop/coding/whitzardgen/docs/codex_tasks.md)

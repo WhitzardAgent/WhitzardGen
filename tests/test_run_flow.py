@@ -248,6 +248,32 @@ class RunFlowTests(unittest.TestCase):
             "persistent_worker",
         )
 
+    def test_selected_helios_video_model_uses_persistent_worker_strategy_in_mock_mode(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "helios_video.txt"
+        prompts_path.write_text("a tropical fish swims through coral reefs\n", encoding="utf-8")
+
+        summary = run_single_model(
+            model_name="Helios",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "persistent_helios_video_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "helios"
+        task_file = next(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        payload = json.loads(task_file.read_text(encoding="utf-8"))
+        self.assertEqual(payload["worker_strategy"], "persistent_worker")
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["per_model_summary"]["Helios"]["worker_strategy"],
+            "persistent_worker",
+        )
+
     def test_wan_mock_run_batches_two_prompts_into_one_task(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "wan_batch.txt"
@@ -322,6 +348,32 @@ class RunFlowTests(unittest.TestCase):
         self.assertEqual(len(payload["prompts"]), 2)
         self.assertEqual(payload["params"]["guidance_scale"], 4.0)
 
+    def test_helios_mock_run_batches_two_prompts_into_one_task(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "helios_batch.txt"
+        prompts_path.write_text(
+            "a tropical fish glides through coral\na yellow sports car races along a mountain road\n",
+            encoding="utf-8",
+        )
+
+        summary = run_single_model(
+            model_name="Helios",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "helios_batch_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "helios"
+        task_files = sorted(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        self.assertEqual(len(task_files), 1)
+        payload = json.loads(task_files[0].read_text(encoding="utf-8"))
+        self.assertEqual(len(payload["prompts"]), 2)
+        self.assertEqual(payload["params"]["num_frames"], 240)
+        self.assertEqual(payload["params"]["pyramid_num_inference_steps_list"], [2, 2, 2])
+
     def test_default_generation_params_omit_seed_without_global_default(self) -> None:
         registry = load_registry()
         model = registry.get_model("Z-Image")
@@ -371,6 +423,26 @@ class RunFlowTests(unittest.TestCase):
         self.assertEqual(params["num_inference_steps"], 50)
         self.assertEqual(params["guidance_scale"], 4.0)
         self.assertIn("checkpoint_dir", params)
+
+    def test_helios_generation_defaults_come_from_registry_config(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("Helios")
+        prompt = type(
+            "PromptStub",
+            (),
+            {"prompt": "a city at night", "language": "en", "negative_prompt": None, "parameters": {}, "metadata": {}},
+        )()
+
+        params = _default_generation_params(model, [prompt])  # type: ignore[list-item]
+
+        self.assertEqual(params["width"], 640)
+        self.assertEqual(params["height"], 384)
+        self.assertEqual(params["fps"], 24)
+        self.assertEqual(params["num_frames"], 240)
+        self.assertEqual(params["num_inference_steps"], 6)
+        self.assertEqual(params["guidance_scale"], 1.0)
+        self.assertEqual(params["pyramid_num_inference_steps_list"], [2, 2, 2])
+        self.assertEqual(params["is_amplify_first_chunk"], True)
 
     def test_generation_params_apply_profile_defaults_then_prompt_overrides(self) -> None:
         registry = load_registry()

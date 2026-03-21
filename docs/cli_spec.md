@@ -238,6 +238,73 @@ HF Repo: Tongyi-MAI/Z-Image
 
 ---
 
+## 5.3 models canary
+
+Run a small one-model validation job using the normal run flow.
+
+### Syntax
+
+```bash
+aigc models canary <model_name>
+```
+
+### Optional Flags
+
+```text
+--prompt-file <path>
+--out <path>
+--mock
+--execution-mode [mock|real]
+--output [text|json]
+```
+
+### Examples
+
+```bash
+aigc models canary Z-Image --mock
+aigc models canary Wan2.2-T2V-A14B-Diffusers
+```
+
+Behavior notes:
+
+- resolves the model from the registry
+- chooses a default canary prompt file by modality when `--prompt-file` is omitted
+- reuses the standard run flow instead of introducing a separate execution path
+
+---
+
+## 5.4 models matrix
+
+Render a capability summary for all registered models.
+
+### Syntax
+
+```bash
+aigc models matrix
+```
+
+### Optional Flags
+
+```text
+--write-docs
+--docs-dir <path>
+--output [text|json]
+```
+
+### Examples
+
+```bash
+aigc models matrix
+aigc models matrix --write-docs
+```
+
+When `--write-docs` is provided, the CLI refreshes:
+
+- `docs/model_capability_matrix.md`
+- `docs/model_capability_matrix.json`
+
+---
+
 # 6. run Command
 
 The `run` command starts a generation run.

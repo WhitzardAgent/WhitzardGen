@@ -1,0 +1,35 @@
+profiles:
+  photorealistic:
+    realism_target: photorealistic
+    scene_pool:
+      - a grounded real-world setting with concrete environmental detail
+      - a plausible real-world moment captured with documentary realism
+      - a specific everyday or field-shot situation with authentic spatial context
+    lighting_pool:
+      - soft early-morning natural light
+      - bright mid-day light with realistic contrast
+      - diffused overcast light with subtle shadows
+      - warm late-afternoon sunlight with natural highlights
+      - practical indoor lighting with realistic falloff
+    weather_pool:
+      - clear weather and stable atmosphere
+      - light coastal humidity and moving air
+      - slightly overcast weather with gentle ambient diffusion
+      - warm dry air with visible environmental texture
+      - calm weather with grounded seasonal cues
+    subject_state_pool:
+      - natural motion and believable body language
+      - authentic interaction with the surrounding environment
+      - subtle movement that suggests an ongoing real-world action
+      - detailed posture and expression consistent with the scene
+      - realistic dynamic motion without theatrical exaggeration
+    camera_pool:
+      - a close observational angle with realistic framing
+      - a medium shot with grounded perspective and depth
+      - a slightly elevated angle that preserves spatial realism
+      - a low-angle shot with natural lens behavior
+      - a handheld documentary-style perspective with controlled composition
+    realism_anchors:
+      - lifelike textures, natural materials, and believable lighting physics
+      - photorealistic detail with grounded scale and authentic environmental cues
+      - realistic color response, natural contrast, and plausible motion

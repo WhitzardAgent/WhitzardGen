@@ -327,7 +327,7 @@ The registry should expose a minimal interface.
 Loads model definitions.
 
 ```python
-registry = load_registry("models.yaml")
+registry = load_registry("configs/models")
 ```
 
 ---

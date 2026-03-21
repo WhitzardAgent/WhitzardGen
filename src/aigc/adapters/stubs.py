@@ -12,15 +12,16 @@ from aigc.adapters.base import (
     ExecutionResult,
     ModelResult,
 )
-from aigc.adapters.image_family import (
+from aigc.adapters.images import (
     FluxImageAdapter,
     HunyuanImageAdapter,
     QwenImageAdapter,
     StableDiffusionXLAdapter,
     ZImageTurboAdapter,
 )
-from aigc.adapters.video_family import (
+from aigc.adapters.videos import (
     CogVideoX5BAdapter,
+    HeliosPyramidAdapter,
     HunyuanVideo15Adapter,
     LongCatVideoAdapter,
     MOVAVideoAdapter,

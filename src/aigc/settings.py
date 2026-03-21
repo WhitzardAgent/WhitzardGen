@@ -19,6 +19,7 @@ class RuntimeSettingsError(ValueError):
 @dataclass(slots=True)
 class RuntimeSettings:
     runs_root: Path
+    prompt_runs_root: Path
     default_seed: int | None = None
     config_path: Path | None = None
 
@@ -29,6 +30,7 @@ def load_runtime_settings(path: str | Path | None = None) -> RuntimeSettings:
     if config_path is None or not config_path.exists():
         return RuntimeSettings(
             runs_root=default_runs_root,
+            prompt_runs_root=default_runs_root / "prompt_runs",
             default_seed=None,
             config_path=config_path,
         )
@@ -50,15 +52,23 @@ def load_runtime_settings(path: str | Path | None = None) -> RuntimeSettings:
         parsed_seed = int(default_seed)
 
     configured_root = paths_payload.get("runs_root") or paths_payload.get("output_root")
+    configured_prompt_root = paths_payload.get("prompt_runs_root")
     if configured_root in (None, ""):
         return RuntimeSettings(
             runs_root=default_runs_root,
+            prompt_runs_root=Path(str(configured_prompt_root)).expanduser()
+            if configured_prompt_root not in (None, "")
+            else default_runs_root / "prompt_runs",
             default_seed=parsed_seed,
             config_path=config_path,
         )
 
+    resolved_runs_root = Path(str(configured_root)).expanduser()
     return RuntimeSettings(
-        runs_root=Path(str(configured_root)).expanduser(),
+        runs_root=resolved_runs_root,
+        prompt_runs_root=Path(str(configured_prompt_root)).expanduser()
+        if configured_prompt_root not in (None, "")
+        else resolved_runs_root / "prompt_runs",
         default_seed=parsed_seed,
         config_path=config_path,
     )
@@ -70,6 +80,10 @@ def get_runs_root(path: str | Path | None = None) -> Path:
 
 def get_default_seed(path: str | Path | None = None) -> int | None:
     return load_runtime_settings(path).default_seed
+
+
+def get_prompt_runs_root(path: str | Path | None = None) -> Path:
+    return load_runtime_settings(path).prompt_runs_root
 
 
 def _resolve_runtime_settings_path(path: str | Path | None) -> Path | None:

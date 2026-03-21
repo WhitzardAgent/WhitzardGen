@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from aigc.adapters.video_family import (
     CogVideoX5BAdapter,
+    HeliosPyramidAdapter,
     HunyuanVideo15Adapter,
     LongCatVideoAdapter,
     WanT2VDiffusersAdapter,
@@ -444,6 +445,177 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertEqual(pipe.calls[0]["prompt"], ["prompt one", "prompt two"])
         self.assertEqual(pipe.calls[0]["num_videos_per_prompt"], 1)
         self.assertEqual(len(pipe.calls[0]["generator"]), 2)
+
+    def test_helios_capabilities_enable_persistent_worker_and_batching(self) -> None:
+        registry = load_registry()
+        adapter = HeliosPyramidAdapter(model_config=registry.get_model("Helios"))
+
+        self.assertTrue(adapter.capabilities.supports_batch_prompts)
+        self.assertEqual(adapter.capabilities.preferred_batch_size, 2)
+        self.assertTrue(adapter.capabilities.supports_negative_prompt)
+        self.assertTrue(adapter.capabilities.supports_persistent_worker)
+        self.assertEqual(adapter.real_execution_mode, "in_process")
+
+    def test_helios_load_pipeline_uses_auto_model_vae(self) -> None:
+        registry = load_registry()
+        tmpdir = Path(tempfile.mkdtemp())
+        weights_dir = tmpdir / "Helios-Distilled"
+        (weights_dir / "vae").mkdir(parents=True)
+        (weights_dir / "model_index.json").write_text("{}", encoding="utf-8")
+        (weights_dir / "vae" / "config.json").write_text("{}", encoding="utf-8")
+        model = replace(
+            registry.get_model("Helios"),
+            weights={
+                **registry.get_model("Helios").weights,
+                "local_path": str(weights_dir),
+            },
+        )
+        adapter = HeliosPyramidAdapter(model_config=model)
+        captured: dict[str, object] = {}
+
+        class _FakeAutoModel:
+            @classmethod
+            def from_pretrained(cls, model_ref: str, **kwargs):
+                captured["vae_model_ref"] = model_ref
+                captured["vae_kwargs"] = kwargs
+                return object()
+
+        class _FakePipe:
+            def __init__(self) -> None:
+                self.vae = None
+                self.device = None
+
+            def to(self, device: str):
+                self.device = device
+                return self
+
+        class _FakePipelineClass:
+            @classmethod
+            def from_pretrained(cls, model_ref: str, **kwargs):
+                captured["pipe_model_ref"] = model_ref
+                captured["pipe_kwargs"] = kwargs
+                return _FakePipe()
+
+        class _FakeTorch:
+            float32 = "float32"
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "diffusers": type(
+                    "_FakeDiffusersModule",
+                    (),
+                    {"AutoModel": _FakeAutoModel},
+                )(),
+            },
+        ):
+            pipe = adapter.load_pipeline(
+                pipeline_class=_FakePipelineClass,
+                torch=_FakeTorch(),
+                device="cuda",
+                dtype="bfloat16",
+            )
+
+        self.assertIsInstance(pipe, _FakePipe)
+        self.assertEqual(captured["pipe_model_ref"], str(weights_dir))
+        self.assertEqual(captured["vae_model_ref"], str(weights_dir))
+        self.assertEqual(captured["pipe_kwargs"]["torch_dtype"], "bfloat16")
+
+    def test_helios_generate_frames_passes_pyramid_settings_and_true_progress(self) -> None:
+        registry = load_registry()
+        adapter = HeliosPyramidAdapter(model_config=registry.get_model("Helios"))
+        plan = adapter.prepare(
+            prompts=["prompt one", "prompt two"],
+            prompt_ids=["h001", "h002"],
+            params={
+                "_runtime_config": {"execution_mode": "real"},
+                "seed": 5,
+                "pyramid_num_inference_steps_list": [2, 2, 2],
+                "is_amplify_first_chunk": True,
+            },
+            workdir=tempfile.mkdtemp(),
+        )
+        events: list[dict[str, object]] = []
+
+        class _FakeGenerator:
+            def __init__(self, device: str) -> None:
+                self.device = device
+                self.seed = None
+
+            def manual_seed(self, seed: int):
+                self.seed = seed
+                return self
+
+        class _FakeTorch:
+            float32 = "float32"
+
+            class Generator(_FakeGenerator):
+                pass
+
+        class _FakePipe:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def __call__(
+                self,
+                *,
+                prompt,
+                negative_prompt,
+                num_frames,
+                pyramid_num_inference_steps_list,
+                guidance_scale,
+                is_amplify_first_chunk,
+                generator=None,
+                callback_on_step_end=None,
+                callback_on_step_end_tensor_inputs=None,
+                width=None,
+                height=None,
+            ):
+                del callback_on_step_end_tensor_inputs
+                self.calls.append(
+                    {
+                        "prompt": prompt,
+                        "negative_prompt": negative_prompt,
+                        "num_frames": num_frames,
+                        "pyramid_num_inference_steps_list": pyramid_num_inference_steps_list,
+                        "guidance_scale": guidance_scale,
+                        "is_amplify_first_chunk": is_amplify_first_chunk,
+                        "generator": generator,
+                        "width": width,
+                        "height": height,
+                    }
+                )
+                for step_index in range(sum(pyramid_num_inference_steps_list)):
+                    if callback_on_step_end is not None:
+                        callback_on_step_end(self, step_index, 0, {})
+                return type("Output", (), {"frames": [[b"a"], [b"b"]]})()
+
+        pipe = _FakePipe()
+        frames = adapter.generate_frames_batch(
+            pipe=pipe,
+            plan=plan,
+            prompts=["prompt one", "prompt two"],
+            negative_prompts=["neg one", "neg two"],
+            width=640,
+            height=384,
+            num_frames=240,
+            num_inference_steps=6,
+            guidance_scale=1.0,
+            seed=5,
+            torch=_FakeTorch,
+            device="cuda",
+            progress_callback=events.append,
+        )
+
+        self.assertEqual(frames, [[b"a"], [b"b"]])
+        self.assertEqual(pipe.calls[0]["prompt"], ["prompt one", "prompt two"])
+        self.assertEqual(pipe.calls[0]["negative_prompt"], ["neg one", "neg two"])
+        self.assertEqual(pipe.calls[0]["pyramid_num_inference_steps_list"], [2, 2, 2])
+        self.assertEqual(pipe.calls[0]["width"], 640)
+        self.assertEqual(pipe.calls[0]["height"], 384)
+        self.assertEqual(len(pipe.calls[0]["generator"]), 2)
+        self.assertEqual([event["current_step"] for event in events], [1, 2, 3, 4, 5, 6])
+        self.assertTrue(all(event["supports_true_progress"] for event in events))
 
     def test_hunyuan_video_batch_capability_enabled(self) -> None:
         registry = load_registry()

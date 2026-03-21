@@ -1,0 +1,7 @@
+# Optional local model overrides for t2i models.
+
+Z-Image:
+  local_path: /inspire/qb-ilm/project/control-technology/public/models/Z-Image
+
+Z-Image-Turbo:
+  local_path: /inspire/qb-ilm/project/control-technology/public/models/Z-Image-Turbo

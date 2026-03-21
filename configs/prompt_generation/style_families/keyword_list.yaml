@@ -1,0 +1,26 @@
+name: keyword_list
+version: v1
+description: Write the prompt as a compact keyword-oriented list instead of a full sentence.
+style_instruction: >
+  Write one concise prompt as a comma-separated keyword list with strong real-world specificity and no unnecessary filler.
+output_contract:
+  format: json
+  required_keys: [prompt, negative_prompt, annotation_hints, tags]
+max_examples_per_request: 2
+supported_modalities: [image, video]
+few_shot_examples:
+  - id: keyword_list_animals_001
+    applicability:
+      modalities: [image, video]
+    input:
+      category: Animals
+      subcategory: Marine Animals
+      subtopic: Tropical Fish
+      theme: Open-water school movement
+    output:
+      prompt: tropical fish school, open water, realistic underwater visibility, natural sunlight shafts, fluid group motion, marine depth, photorealistic texture
+      negative_prompt: anime, illustration, low quality, blur
+      annotation_hints:
+        scene_category: Animals
+        subject_category: Marine Animals
+      tags: [marine, school-of-fish, keyword-list]

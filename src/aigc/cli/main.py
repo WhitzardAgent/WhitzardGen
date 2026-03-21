@@ -9,11 +9,23 @@ if str(SRC_ROOT) not in sys.path:
 
 from aigc import __version__
 from aigc.env import EnvManager, EnvManagerError
+from aigc.prompt_generation import (
+    PromptGenerationSummary,
+    generate_prompt_bundle,
+    inspect_prompt_bundle,
+    plan_theme_tree,
+)
 from aigc.recovery import (
     RecoveryError,
     build_resume_plan,
     build_retry_plan,
     recovery_plan_to_dict,
+)
+from aigc.model_onboarding import (
+    build_model_capability_rows,
+    render_model_capability_matrix_markdown,
+    run_model_canary,
+    write_model_capability_docs,
 )
 from aigc.run_profiles import (
     RunProfileError,
@@ -55,10 +67,66 @@ def build_parser() -> argparse.ArgumentParser:
     models_inspect_parser.add_argument("--output", choices=["text", "json"], default="text")
     models_inspect_parser.set_defaults(handler=handle_models_inspect)
 
+    models_canary_parser = models_subparsers.add_parser(
+        "canary", help="Run a minimal one-model canary generation."
+    )
+    models_canary_parser.add_argument("model_name")
+    models_canary_parser.add_argument("--prompt-file")
+    models_canary_parser.add_argument("--out")
+    models_canary_parser.add_argument("--mock", action="store_true")
+    models_canary_parser.add_argument("--execution-mode", choices=["mock", "real"])
+    models_canary_parser.add_argument("--output", choices=["text", "json"], default="text")
+    models_canary_parser.set_defaults(handler=handle_models_canary)
+
+    models_matrix_parser = models_subparsers.add_parser(
+        "matrix", help="Show or write the model capability matrix."
+    )
+    models_matrix_parser.add_argument("--output", choices=["text", "json"], default="text")
+    models_matrix_parser.add_argument("--write-docs", action="store_true")
+    models_matrix_parser.add_argument("--docs-dir")
+    models_matrix_parser.set_defaults(handler=handle_models_matrix)
+
     doctor_parser = subparsers.add_parser("doctor", help="Check environment readiness.")
     doctor_parser.add_argument("--model")
     doctor_parser.add_argument("--output", choices=["text", "json"], default="text")
     doctor_parser.set_defaults(handler=handle_doctor)
+
+    prompts_parser = subparsers.add_parser("prompts", help="Build or inspect prompt bundles.")
+    prompts_subparsers = prompts_parser.add_subparsers(dest="prompts_command")
+
+    prompts_generate_parser = prompts_subparsers.add_parser(
+        "generate", help="Generate a prompt bundle from a theme-tree YAML."
+    )
+    prompts_generate_parser.add_argument("--tree", required=True)
+    prompts_generate_parser.add_argument("--out")
+    prompts_generate_parser.add_argument("--count-config")
+    prompts_generate_parser.add_argument("--llm-model")
+    prompts_generate_parser.add_argument("--mock", action="store_true")
+    prompts_generate_parser.add_argument("--execution-mode", choices=["mock", "real"])
+    prompts_generate_parser.add_argument("--seed", type=int, default=42)
+    prompts_generate_parser.add_argument("--profile")
+    prompts_generate_parser.add_argument("--template")
+    prompts_generate_parser.add_argument("--style-family")
+    prompts_generate_parser.add_argument("--target-model")
+    prompts_generate_parser.add_argument("--intended-modality")
+    prompts_generate_parser.add_argument("--output", choices=["text", "json"], default="text")
+    prompts_generate_parser.set_defaults(handler=handle_prompts_generate)
+
+    prompts_inspect_parser = prompts_subparsers.add_parser(
+        "inspect", help="Inspect a generated prompt bundle or prompts JSONL file."
+    )
+    prompts_inspect_parser.add_argument("path")
+    prompts_inspect_parser.add_argument("--output", choices=["text", "json"], default="text")
+    prompts_inspect_parser.set_defaults(handler=handle_prompts_inspect)
+
+    prompts_plan_parser = prompts_subparsers.add_parser(
+        "plan", help="Plan sampling for a theme-tree YAML without generating prompts."
+    )
+    prompts_plan_parser.add_argument("--tree", required=True)
+    prompts_plan_parser.add_argument("--count-config")
+    prompts_plan_parser.add_argument("--seed", type=int, default=42)
+    prompts_plan_parser.add_argument("--output", choices=["text", "json"], default="text")
+    prompts_plan_parser.set_defaults(handler=handle_prompts_plan)
 
     runs_parser = subparsers.add_parser("runs", help="Inspect generation runs.")
     runs_subparsers = runs_parser.add_subparsers(dest="runs_command")
@@ -191,6 +259,57 @@ def handle_models_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_models_canary(args: argparse.Namespace) -> int:
+    execution_mode = "mock" if args.mock else (args.execution_mode or "real")
+    progress = build_run_progress(output_mode=args.output)
+    summary = run_model_canary(
+        model_name=args.model_name,
+        prompt_file=args.prompt_file,
+        out_dir=args.out,
+        execution_mode=execution_mode,
+        progress=progress,
+    )
+    if args.output == "json":
+        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        print(f"Canary model: {args.model_name}")
+        print(f"Canary status: {summary.status}")
+        print(f"Run ID: {summary.run_id}")
+        print(f"Prompt Source: {summary.prompt_file}")
+        print(f"Output Dir: {summary.output_dir}")
+    return 0
+
+
+def handle_models_matrix(args: argparse.Namespace) -> int:
+    rows = build_model_capability_rows()
+    write_result = None
+    if args.write_docs:
+        docs_dir = Path(args.docs_dir) if args.docs_dir else None
+        markdown_path = docs_dir / "model_capability_matrix.md" if docs_dir else None
+        json_path = docs_dir / "model_capability_matrix.json" if docs_dir else None
+        write_result = write_model_capability_docs(
+            **(
+                {"markdown_path": markdown_path, "json_path": json_path}
+                if docs_dir is not None
+                else {}
+            )
+        )
+
+    if args.output == "json":
+        payload: dict[str, object] = {"rows": rows}
+        if write_result is not None:
+            payload["written"] = write_result
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+
+    print(render_model_capability_matrix_markdown(rows).rstrip())
+    if write_result is not None:
+        print("")
+        print(f"Wrote: {write_result['markdown_path']}")
+        print(f"Wrote: {write_result['json_path']}")
+    return 0
+
+
 def handle_doctor(args: argparse.Namespace) -> int:
     manager = EnvManager()
     records = manager.doctor(model_name=args.model)
@@ -226,6 +345,79 @@ def handle_doctor(args: argparse.Namespace) -> int:
                 print(f"  {field}_exists: {'yes' if info['exists'] else 'no'}")
         else:
             print("  local_paths: none configured")
+    return 0
+
+
+def handle_prompts_generate(args: argparse.Namespace) -> int:
+    execution_mode = "mock" if args.mock else (args.execution_mode or "real")
+    progress = build_run_progress(output_mode=args.output)
+    summary = generate_prompt_bundle(
+        tree_path=args.tree,
+        out_dir=args.out,
+        llm_model=args.llm_model,
+        execution_mode=execution_mode,
+        seed=args.seed,
+        count_config_path=args.count_config,
+        profile_path=args.profile,
+        template_name=args.template,
+        style_family_name=args.style_family,
+        target_model_name=args.target_model,
+        intended_modality=args.intended_modality,
+        progress=progress,
+    )
+    if args.output == "json":
+        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
+        return 0
+
+    print(f"Prompt Bundle: {summary.bundle_id}")
+    print(f"Prompt Count: {summary.prompt_count}")
+    print(f"Execution Mode: {summary.execution_mode}")
+    print(f"LLM Model: {summary.llm_model or '-'}")
+    print(f"Template: {summary.prompt_template or '-'}")
+    print(f"Style Family: {summary.prompt_style_family or '-'}")
+    print(f"Target Model: {summary.target_model_name or '-'}")
+    print(f"Few-shot Examples: {summary.few_shot_example_count}")
+    print(f"Bundle Dir: {summary.bundle_dir}")
+    print(f"Prompts: {summary.prompts_path}")
+    print(f"Manifest: {summary.manifest_path}")
+    return 0
+
+
+def handle_prompts_inspect(args: argparse.Namespace) -> int:
+    payload = inspect_prompt_bundle(args.path)
+    if args.output == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    print(f"Prompt Count: {payload['prompt_count']}")
+    if payload.get("bundle_dir"):
+        print(f"Bundle Dir: {payload['bundle_dir']}")
+    manifest = payload.get("manifest") or {}
+    if manifest:
+        print(f"Bundle ID: {manifest.get('bundle_id', '-')}")
+        print(f"Tree Name: {manifest.get('tree_name', '-')}")
+        print(f"Generation Profile: {manifest.get('generation_profile', '-')}")
+        print(f"LLM Model: {manifest.get('llm_model', '-')}")
+        print(f"Template: {manifest.get('prompt_template', '-')}")
+        print(f"Style Family: {manifest.get('prompt_style_family', '-')}")
+        print(f"Target Model: {manifest.get('target_model_name', '-')}")
+        print(f"Few-shot Example Count: {manifest.get('few_shot_example_count', 0)}")
+    print(f"Counts By Category: {payload.get('counts_by_category', {})}")
+    return 0
+
+
+def handle_prompts_plan(args: argparse.Namespace) -> int:
+    payload = plan_theme_tree(
+        tree_path=args.tree,
+        seed=args.seed,
+        count_config_path=args.count_config,
+    )
+    if args.output == "json":
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    print(f"Tree: {payload['tree']['name']}")
+    print(f"Planned Samples: {payload['sample_count']}")
+    print(f"Resampled: {payload['resampled_count']}")
+    print(f"Counts By Category: {payload['counts_by_category']}")
     return 0
 
 

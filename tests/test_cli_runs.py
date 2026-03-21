@@ -62,6 +62,176 @@ class FakeDoctorRecord:
 
 
 class RunsCliTests(unittest.TestCase):
+    def test_handle_prompts_generate_returns_bundle_summary(self) -> None:
+        from aigc.cli.main import handle_prompts_generate
+
+        summary = type(
+            "Summary",
+            (),
+            {
+                "bundle_id": "prompt_bundle_001",
+                "prompt_count": 12,
+                "execution_mode": "mock",
+                "llm_model": None,
+                "prompt_template": "photorealistic_base",
+                "prompt_style_family": "detailed_sentence",
+                "target_model_name": None,
+                "few_shot_example_count": 2,
+                "bundle_dir": "/tmp/prompt_bundle_001",
+                "prompts_path": "/tmp/prompt_bundle_001/prompts.jsonl",
+                "manifest_path": "/tmp/prompt_bundle_001/prompt_manifest.json",
+                "to_dict": lambda self: {
+                    "bundle_id": "prompt_bundle_001",
+                    "prompt_count": 12,
+                    "execution_mode": "mock",
+                    "llm_model": None,
+                    "prompt_template": "photorealistic_base",
+                    "prompt_style_family": "detailed_sentence",
+                    "target_model_name": None,
+                    "few_shot_example_count": 2,
+                },
+            },
+        )()
+        args = type(
+            "Args",
+            (),
+            {
+                "tree": "prompts/theme_tree_example.yaml",
+                "out": None,
+                "count_config": None,
+                "llm_model": None,
+                "mock": True,
+                "execution_mode": None,
+                "seed": 42,
+                "profile": None,
+                "template": "photorealistic_base",
+                "style_family": "detailed_sentence",
+                "target_model": None,
+                "intended_modality": None,
+                "output": "json",
+            },
+        )()
+
+        with patch("aigc.cli.main.generate_prompt_bundle", return_value=summary):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_prompts_generate(args), 0)
+            payload = json.loads(stream.getvalue())
+
+        self.assertEqual(payload["bundle_id"], "prompt_bundle_001")
+        self.assertEqual(payload["prompt_count"], 12)
+
+    def test_handle_prompts_inspect_prints_bundle_summary(self) -> None:
+        from aigc.cli.main import handle_prompts_inspect
+
+        args = type(
+            "Args",
+            (),
+            {
+                "path": "/tmp/prompt_bundle_001",
+                "output": "text",
+            },
+        )()
+        inspect_payload = {
+            "bundle_dir": "/tmp/prompt_bundle_001",
+            "manifest": {
+                "bundle_id": "prompt_bundle_001",
+                "tree_name": "realistic_video_prompts",
+                "generation_profile": "photorealistic",
+                "llm_model": "Qwen3-32B",
+                "prompt_template": "photorealistic_base",
+                "prompt_style_family": "detailed_sentence",
+                "target_model_name": "Z-Image",
+                "few_shot_example_count": 2,
+            },
+            "prompt_count": 8,
+            "counts_by_category": {"Animals": 8},
+        }
+
+        with patch("aigc.cli.main.inspect_prompt_bundle", return_value=inspect_payload):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_prompts_inspect(args), 0)
+
+        output = stream.getvalue()
+        self.assertIn("Prompt Count: 8", output)
+        self.assertIn("Tree Name: realistic_video_prompts", output)
+        self.assertIn("Template: photorealistic_base", output)
+        self.assertIn("Style Family: detailed_sentence", output)
+
+    def test_handle_models_canary_runs_one_model_with_requested_mode(self) -> None:
+        from aigc.cli.main import handle_models_canary
+
+        summary = type(
+            "Summary",
+            (),
+            {
+                "status": "completed",
+                "run_id": "canary-helios",
+                "prompt_file": "prompts/canary_video.jsonl",
+                "output_dir": "/tmp/canary-helios",
+                "to_dict": lambda self: {
+                    "status": "completed",
+                    "run_id": "canary-helios",
+                    "prompt_file": "prompts/canary_video.jsonl",
+                    "output_dir": "/tmp/canary-helios",
+                },
+            },
+        )()
+        args = type(
+            "Args",
+            (),
+            {
+                "model_name": "Helios",
+                "prompt_file": None,
+                "out": None,
+                "mock": True,
+                "execution_mode": None,
+                "output": "json",
+            },
+        )()
+
+        def fake_run_model_canary(**kwargs):
+            self.assertEqual(kwargs["model_name"], "Helios")
+            self.assertEqual(kwargs["execution_mode"], "mock")
+            self.assertIsNone(kwargs["prompt_file"])
+            return summary
+
+        with patch("aigc.cli.main.run_model_canary", side_effect=fake_run_model_canary):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_models_canary(args), 0)
+            payload = json.loads(stream.getvalue())
+
+        self.assertEqual(payload["run_id"], "canary-helios")
+        self.assertEqual(payload["status"], "completed")
+
+    def test_handle_models_matrix_can_write_docs(self) -> None:
+        from aigc.cli.main import handle_models_matrix
+
+        tmpdir = Path(tempfile.mkdtemp())
+        args = type(
+            "Args",
+            (),
+            {
+                "output": "json",
+                "write_docs": True,
+                "docs_dir": str(tmpdir),
+            },
+        )()
+
+        with redirect_stdout(StringIO()) as stream:
+            self.assertEqual(handle_models_matrix(args), 0)
+            payload = json.loads(stream.getvalue())
+
+        self.assertIn("rows", payload)
+        self.assertTrue((tmpdir / "model_capability_matrix.md").exists())
+        self.assertTrue((tmpdir / "model_capability_matrix.json").exists())
+        self.assertTrue(any(row["name"] == "Helios" for row in payload["rows"]))
+        self.assertTrue(
+            any(
+                row["name"] == "Z-Image" and row["supports_persistent_worker"]
+                for row in payload["rows"]
+            )
+        )
+
     def test_handle_run_uses_profile_and_cli_overrides(self) -> None:
         from aigc.cli.main import handle_run
 

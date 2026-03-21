@@ -1,0 +1,11 @@
+# Optional local model overrides for t2t models.
+
+Qwen3-32B:
+  weights_path:
+  hf_cache_dir:
+  # Example:
+  # conda_env_name: zimage_cluster
+  # max_gpus: 8
+  # generation_defaults:
+  #   max_new_tokens: 2048
+  #   enable_thinking: false

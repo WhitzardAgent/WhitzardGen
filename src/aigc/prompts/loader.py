@@ -24,12 +24,16 @@ _INT_PARAMETER_KEYS = {
     "cp_size",
     "context_parallel_size",
     "timeout_sec",
+    "max_new_tokens",
 }
 _FLOAT_PARAMETER_KEYS = {
     "guidance_scale",
     "guidance_scale_2",
+    "temperature",
+    "top_p",
+    "repetition_penalty",
 }
-_BOOL_PARAMETER_KEYS = {"stream"}
+_BOOL_PARAMETER_KEYS = {"stream", "do_sample", "enable_thinking"}
 _STRING_PARAMETER_KEYS = {
     "attn_implementation",
     "moe_impl",
