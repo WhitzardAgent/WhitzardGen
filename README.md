@@ -244,6 +244,7 @@ Prompt generation now has its own explicit config layer:
 
 - [profiles.yaml](/Users/morinop/coding/whitzardgen/configs/prompt_generation/profiles.yaml)
   - controls content-distribution pools such as scene, lighting, weather, camera, realism anchors
+  - can also set the default text model for prompt synthesis via `default_llm_model`
 - [templates](/Users/morinop/coding/whitzardgen/configs/prompt_generation/templates)
   - controls how the LLM is instructed to perform prompt synthesis
 - [style_families](/Users/morinop/coding/whitzardgen/configs/prompt_generation/style_families)
@@ -262,6 +263,7 @@ Current default template and style:
 - template: `photorealistic_base`
 - style family: `detailed_sentence`
 - generation profile: `photorealistic`
+- default prompt-synthesis LLM in the stock profile: `Qwen3-32B`
 
 Theme-tree defaults may also set:
 
@@ -283,6 +285,10 @@ Resolution precedence is:
   - `tree.defaults.prompt_style_family`
   - `target_style_mappings[target_model]`
   - template default
+- LLM model:
+  - CLI `--llm-model`
+  - `profiles.yaml -> profiles.<generation_profile>.default_llm_model`
+  - built-in fallback
 
 ## Prompt Formats
 

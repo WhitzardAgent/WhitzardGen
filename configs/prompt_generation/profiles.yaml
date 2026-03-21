@@ -1,5 +1,6 @@
 profiles:
   photorealistic:
+    default_llm_model: Qwen3-32B
     realism_target: photorealistic
     scene_pool:
       - a grounded real-world setting with concrete environmental detail

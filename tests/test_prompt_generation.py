@@ -199,6 +199,87 @@ class PromptGenerationTests(unittest.TestCase):
         self.assertTrue(all(prompt["metadata"]["llm_model"] == "Qwen3-32B" for prompt in prompts))
         self.assertTrue(all(prompt["negative_prompt"] for prompt in prompts))
 
+    def test_generate_prompt_bundle_uses_profile_default_llm_model_when_cli_omitted(self) -> None:
+        tree_path = self._write_file(
+            "theme_tree.yaml",
+            """
+            version: v1
+            name: realistic_image_prompts
+            defaults:
+              generation_profile: photorealistic
+              language: en
+              intended_modality: image
+            categories:
+              - name: Urban Life
+                count: 1
+                children:
+                  - name: Street Scenes
+                    children:
+                      - name: Commuters
+                        children:
+                          - name: Crosswalk rush at golden hour
+            """,
+        )
+        out_dir = Path(tempfile.mkdtemp()) / "prompt_bundle"
+
+        summary = generate_prompt_bundle(
+            tree_path=tree_path,
+            out_dir=out_dir,
+            execution_mode="mock",
+            seed=9,
+        )
+
+        manifest = json.loads(Path(summary.manifest_path).read_text(encoding="utf-8"))
+        prompts = [
+            json.loads(line)
+            for line in Path(summary.prompts_path).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(summary.llm_model, "Qwen3-32B")
+        self.assertEqual(manifest["llm_model"], "Qwen3-32B")
+        self.assertEqual(prompts[0]["metadata"]["llm_model"], "Qwen3-32B")
+
+    def test_generate_prompt_bundle_cli_llm_model_overrides_profile_default(self) -> None:
+        tree_path = self._write_file(
+            "theme_tree.yaml",
+            """
+            version: v1
+            name: realistic_image_prompts
+            defaults:
+              generation_profile: photorealistic
+              language: en
+              intended_modality: image
+            categories:
+              - name: Urban Life
+                count: 1
+                children:
+                  - name: Street Scenes
+                    children:
+                      - name: Commuters
+                        children:
+                          - name: Crosswalk rush at golden hour
+            """,
+        )
+        out_dir = Path(tempfile.mkdtemp()) / "prompt_bundle"
+
+        summary = generate_prompt_bundle(
+            tree_path=tree_path,
+            out_dir=out_dir,
+            execution_mode="mock",
+            llm_model="Local-Transformers-T2T",
+            seed=9,
+        )
+
+        manifest = json.loads(Path(summary.manifest_path).read_text(encoding="utf-8"))
+        prompts = [
+            json.loads(line)
+            for line in Path(summary.prompts_path).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(summary.llm_model, "Local-Transformers-T2T")
+        self.assertEqual(manifest["llm_model"], "Local-Transformers-T2T")
+        self.assertEqual(prompts[0]["metadata"]["llm_model"], "Local-Transformers-T2T")
+
     def test_generate_prompt_bundle_honors_template_and_style_precedence(self) -> None:
         tree_path = self._write_file(
             "theme_tree.yaml",

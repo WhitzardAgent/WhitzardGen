@@ -139,7 +139,11 @@ def generate_prompt_bundle(
         },
     ]
 
-    resolved_llm_model = llm_model or "Qwen3-32B"
+    resolved_llm_model = (
+        llm_model
+        or str(generation_profile.get("default_llm_model") or "").strip()
+        or "Qwen3-32B"
+    )
     prompts = _synthesize_prompts(
         samples=samples,
         tree=tree,

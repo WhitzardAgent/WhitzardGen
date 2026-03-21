@@ -227,6 +227,7 @@ generation:
 
 - [profiles.yaml](/Users/morinop/coding/whitzardgen/configs/prompt_generation/profiles.yaml)
   - 控制 scene / lighting / weather / camera / realism anchor 等内容采样倾向
+  - 也可以通过 `default_llm_model` 指定该 profile 默认使用的 prompt synthesis 文本模型
 - [templates](/Users/morinop/coding/whitzardgen/configs/prompt_generation/templates)
   - 控制“怎么给 LLM 下达 prompt synthesis 任务”
 - [style_families](/Users/morinop/coding/whitzardgen/configs/prompt_generation/style_families)
@@ -245,6 +246,7 @@ generation:
 - template: `photorealistic_base`
 - style family: `detailed_sentence`
 - generation profile: `photorealistic`
+- 默认 prompt synthesis LLM: `Qwen3-32B`
 
 主题树里也可以直接写默认项：
 
@@ -266,6 +268,10 @@ defaults:
   - `tree.defaults.prompt_style_family`
   - `target_style_mappings[target_model]`
   - template 默认 style family
+- LLM model：
+  - CLI `--llm-model`
+  - `profiles.yaml -> profiles.<generation_profile>.default_llm_model`
+  - 内建 fallback
 
 ## Prompt 格式
 

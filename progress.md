@@ -4,6 +4,23 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-21 01:00:00 CST
+- Moved the default prompt-synthesis LLM from service hard-coding into prompt-generation profile config:
+  - `configs/prompt_generation/profiles.yaml` now carries `default_llm_model`
+  - current stock `photorealistic` profile defaults to `Qwen3-32B`
+  - prompt-generation LLM resolution is now:
+    - CLI `--llm-model`
+    - `profiles.<generation_profile>.default_llm_model`
+    - built-in fallback
+- Added focused regression coverage for:
+  - profile default LLM selection
+  - CLI override precedence over the profile default
+- Updated README / README.zh-CN to document that the prompt-generation default LLM is configured in `configs/prompt_generation/profiles.yaml`
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/prompt_generation/service.py tests/test_prompt_generation.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompt_generation -v`
+  - result: 8 tests passed
 - 2026-03-21 00:50:00 CST
 - Updated user-facing prompt-generation documentation in:
   - `README.md`
