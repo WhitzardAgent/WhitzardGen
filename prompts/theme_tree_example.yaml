@@ -7,12 +7,10 @@ defaults:
 
 categories:
   - name: Animals
-    count: 6
     metadata:
       domain: nature
     children:
       - name: Marine Animals
-        count: 3
         children:
           - name: Tropical Fish
             children:
@@ -25,7 +23,6 @@ categories:
               - name: Wetland landing sequence
               - name: Calm shoreline foraging
   - name: Urban Life
-    count: 4
     metadata:
       domain: city
     children:

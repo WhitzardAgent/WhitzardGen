@@ -20,7 +20,7 @@ def build_sampling_plan(
     count_config_path: str | Path | None = None,
 ) -> list[SampledTheme]:
     rng = random.Random(seed)
-    count_overrides = _load_count_overrides(count_config_path)
+    count_overrides, level_defaults = _load_count_overrides(count_config_path)
     allocations: list[tuple[tuple[str, ...], int, list[_ThemeLeaf], bool]] = []
 
     for category in tree.categories:
@@ -29,10 +29,15 @@ def build_sampling_plan(
                 node=category,
                 path=(category.name,),
                 count_overrides=count_overrides,
+                level_defaults=level_defaults,
             )
         )
 
     sampled: list[SampledTheme] = []
+    if not any(count > 0 for _quota_path, count, _leaves, _forced_resample in allocations):
+        raise ThemePlanningError(
+            "No prompt quotas were resolved. Add inline `count` fields or pass a count-config file."
+        )
     next_index = 1
     for quota_path, count, leaves, forced_resample in allocations:
         if count <= 0:
@@ -103,21 +108,27 @@ def _plan_node(
     node: ThemeNode,
     path: tuple[str, ...],
     count_overrides: dict[str, int],
+    level_defaults: dict[str, int],
 ) -> list[tuple[tuple[str, ...], int, list[_ThemeLeaf], bool]]:
     child_allocations: list[tuple[tuple[str, ...], int, list[_ThemeLeaf], bool]] = []
     explicit_descendant_paths: set[tuple[str, ...]] = set()
     for child in node.children:
         child_path = (*path, child.name)
         child_allocations.extend(
-            _plan_node(node=child, path=child_path, count_overrides=count_overrides)
+            _plan_node(
+                node=child,
+                path=child_path,
+                count_overrides=count_overrides,
+                level_defaults=level_defaults,
+            )
         )
-        if _resolve_node_count(child_path, child.count, count_overrides) is not None:
+        if _resolve_node_count(child_path, child.count, count_overrides, level_defaults) is not None:
             explicit_descendant_paths.add(child_path)
         explicit_descendant_paths.update(
             allocation_path for allocation_path, _count, _leaves, _forced in child_allocations
         )
 
-    node_count = _resolve_node_count(path, node.count, count_overrides)
+    node_count = _resolve_node_count(path, node.count, count_overrides, level_defaults)
     if node_count is None:
         return child_allocations
 
@@ -203,16 +214,22 @@ def _resolve_node_count(
     path: tuple[str, ...],
     inline_count: int | None,
     count_overrides: dict[str, int],
+    level_defaults: dict[str, int],
 ) -> int | None:
     path_key = "/".join(path)
     if path_key in count_overrides:
         return count_overrides[path_key]
-    return inline_count
+    if inline_count is not None:
+        return inline_count
+    level_name = _level_name_for_depth(len(path))
+    if level_name and level_name in level_defaults:
+        return level_defaults[level_name]
+    return None
 
 
-def _load_count_overrides(path: str | Path | None) -> dict[str, int]:
+def _load_count_overrides(path: str | Path | None) -> tuple[dict[str, int], dict[str, int]]:
     if path is None:
-        return {}
+        return {}, {}
     count_path = Path(path)
     if not count_path.exists():
         raise ThemePlanningError(f"Count-config file does not exist: {count_path}")
@@ -223,16 +240,34 @@ def _load_count_overrides(path: str | Path | None) -> dict[str, int]:
         raise ThemePlanningError("PyYAML is required to load count-config files.") from exc
     payload = yaml.safe_load(raw)
     if payload is None:
-        return {}
+        return {}, {}
     if not isinstance(payload, dict):
         raise ThemePlanningError("Count-config file must contain an object.")
-    counts_payload = payload.get("counts", payload)
+    counts_payload = (
+        payload["counts"]
+        if "counts" in payload
+        else {key: value for key, value in payload.items() if key != "defaults"}
+    )
     if not isinstance(counts_payload, dict):
         raise ThemePlanningError("Count-config counts payload must be an object.")
     normalized: dict[str, int] = {}
     for key, value in counts_payload.items():
         normalized[str(key)] = int(value)
-    return normalized
+    defaults_payload = payload.get("defaults", {})
+    if defaults_payload in (None, ""):
+        defaults_payload = {}
+    if not isinstance(defaults_payload, dict):
+        raise ThemePlanningError("Count-config defaults payload must be an object.")
+    normalized_defaults: dict[str, int] = {}
+    for key, value in defaults_payload.items():
+        normalized_key = _normalize_level_default_key(str(key))
+        if normalized_key is None:
+            raise ThemePlanningError(
+                f"Unsupported count-config default key: {key}. "
+                "Use category, subcategory, subtopic, or theme."
+            )
+        normalized_defaults[normalized_key] = int(value)
+    return normalized, normalized_defaults
 
 
 def _expand_theme_path(path: tuple[str, ...]) -> tuple[str, str, str, str]:
@@ -241,3 +276,31 @@ def _expand_theme_path(path: tuple[str, ...]) -> tuple[str, str, str, str]:
     subtopic = path[-2] if len(path) > 2 else subcategory
     theme = path[-1]
     return category, subcategory, subtopic, theme
+
+
+def _level_name_for_depth(depth: int) -> str | None:
+    return {
+        1: "category",
+        2: "subcategory",
+        3: "subtopic",
+        4: "theme",
+    }.get(depth)
+
+
+def _normalize_level_default_key(raw_key: str) -> str | None:
+    key = raw_key.strip().lower()
+    aliases = {
+        "category": "category",
+        "categories": "category",
+        "per_category": "category",
+        "subcategory": "subcategory",
+        "subcategories": "subcategory",
+        "per_subcategory": "subcategory",
+        "subtopic": "subtopic",
+        "subtopics": "subtopic",
+        "per_subtopic": "subtopic",
+        "theme": "theme",
+        "themes": "theme",
+        "per_theme": "theme",
+    }
+    return aliases.get(key)

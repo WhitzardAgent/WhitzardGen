@@ -1,9 +1,9 @@
 mappings:
   Z-Image: detailed_sentence
-  Z-Image-Turbo: keyword_list
+  Z-Image-Turbo: detailed_sentence
   FLUX.1-dev: detailed_sentence
   Qwen-Image-2512: detailed_sentence
   LongCat-Video: detailed_sentence
   Helios: detailed_sentence
   Wan2.2-T2V-A14B-Diffusers: detailed_sentence
-  CogVideoX-5B: keyword_list
+  CogVideoX-5B: detailed_sentence

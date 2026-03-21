@@ -290,6 +290,29 @@ Resolution precedence is:
   - `profiles.yaml -> profiles.<generation_profile>.default_llm_model`
   - built-in fallback
 
+Recommended maintenance pattern:
+
+- keep the theme tree focused on taxonomy and metadata
+- keep prompt quotas in a separate count-config file passed via `--count-config`
+- use inline `count` only when you really want quota and taxonomy tightly coupled
+
+Friendly `count-config` patterns:
+
+```yaml
+counts:
+  Animals: 200
+  Animals/Marine Animals: 80
+```
+
+or, if you want a quick default for every subcategory:
+
+```yaml
+defaults:
+  subcategory: 20
+```
+
+Mixed usage is supported, and explicit path counts win over level defaults.
+
 ## Prompt Formats
 
 ### TXT
@@ -458,7 +481,10 @@ CLI flags override profile values when both are present.
 Theme-tree planning:
 
 ```bash
-aigc prompts plan --tree prompts/theme_tree_example.yaml --output json
+aigc prompts plan \
+  --tree prompts/theme_tree_example.yaml \
+  --count-config prompts/theme_tree_example.counts.yaml \
+  --output json
 ```
 
 Generate a prompt bundle with the default template/style-family stack:
@@ -466,6 +492,7 @@ Generate a prompt bundle with the default template/style-family stack:
 ```bash
 aigc prompts generate \
   --tree prompts/theme_tree_example.yaml \
+  --count-config prompts/theme_tree_example.counts.yaml \
   --execution-mode mock
 ```
 
@@ -528,6 +555,8 @@ Useful flags on `aigc prompts generate`:
 Recommended flow:
 
 - use `aigc prompts plan` to verify quota allocation and resampling first
+- keep quotas in a separate `--count-config` file for large trees
+- if you just want “every subcategory gets N samples”, use `defaults.subcategory` in the count-config
 - use `--template` to change top-level synthesis instructions
 - use `--style-family` to control final prompt writing style
 - use `--target-model` only when you want automatic style-family defaults for a downstream generator

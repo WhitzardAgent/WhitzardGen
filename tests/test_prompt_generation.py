@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aigc.prompt_generation import generate_prompt_bundle, inspect_prompt_bundle, plan_theme_tree
+from aigc.prompt_generation.planner import ThemePlanningError
 
 
 class PromptGenerationTests(unittest.TestCase):
@@ -49,6 +50,112 @@ class PromptGenerationTests(unittest.TestCase):
 
         payload_again = plan_theme_tree(tree_path=tree_path, seed=7)
         self.assertEqual(payload["items"], payload_again["items"])
+
+    def test_plan_theme_tree_can_use_external_count_config_without_inline_counts(self) -> None:
+        tree_path = self._write_file(
+            "theme_tree.yaml",
+            """
+            version: v1
+            name: test_tree
+            defaults:
+              generation_profile: photorealistic
+              language: en
+            categories:
+              - name: Animals
+                children:
+                  - name: Marine
+                    children:
+                      - name: Fish
+                        children:
+                          - name: Coral reef
+                          - name: Open water
+            """,
+        )
+        count_config_path = self._write_file(
+            "theme_tree.counts.yaml",
+            """
+            counts:
+              Animals: 4
+              Animals/Marine: 2
+            """,
+        )
+
+        payload = plan_theme_tree(
+            tree_path=tree_path,
+            seed=7,
+            count_config_path=count_config_path,
+        )
+
+        self.assertEqual(payload["sample_count"], 4)
+        self.assertEqual(payload["counts_by_category"]["Animals"], 4)
+        self.assertEqual(payload["counts_by_subcategory"]["Animals / Marine"], 4)
+
+    def test_plan_theme_tree_requires_some_quota_source(self) -> None:
+        tree_path = self._write_file(
+            "theme_tree.yaml",
+            """
+            version: v1
+            name: test_tree
+            defaults:
+              generation_profile: photorealistic
+              language: en
+            categories:
+              - name: Animals
+                children:
+                  - name: Marine
+                    children:
+                      - name: Fish
+                        children:
+                          - name: Coral reef
+            """,
+        )
+
+        with self.assertRaises(ThemePlanningError):
+            plan_theme_tree(tree_path=tree_path, seed=7)
+
+    def test_plan_theme_tree_can_use_subcategory_default_count_config(self) -> None:
+        tree_path = self._write_file(
+            "theme_tree.yaml",
+            """
+            version: v1
+            name: test_tree
+            defaults:
+              generation_profile: photorealistic
+              language: en
+            categories:
+              - name: Animals
+                children:
+                  - name: Marine
+                    children:
+                      - name: Fish
+                        children:
+                          - name: Coral reef
+                          - name: Open water
+                  - name: Birds
+                    children:
+                      - name: Shore birds
+                        children:
+                          - name: Wetland landing
+                          - name: Shoreline foraging
+            """,
+        )
+        count_config_path = self._write_file(
+            "theme_tree.counts.yaml",
+            """
+            defaults:
+              subcategory: 2
+            """,
+        )
+
+        payload = plan_theme_tree(
+            tree_path=tree_path,
+            seed=7,
+            count_config_path=count_config_path,
+        )
+
+        self.assertEqual(payload["sample_count"], 4)
+        self.assertEqual(payload["counts_by_subcategory"]["Animals / Birds"], 2)
+        self.assertEqual(payload["counts_by_subcategory"]["Animals / Marine"], 2)
 
     def test_generate_prompt_bundle_writes_bundle_in_preview_mode(self) -> None:
         tree_path = self._write_file(

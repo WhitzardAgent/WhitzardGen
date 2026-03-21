@@ -273,6 +273,29 @@ defaults:
   - `profiles.yaml -> profiles.<generation_profile>.default_llm_model`
   - 内建 fallback
 
+推荐维护方式：
+
+- 主题树尽量只表达 taxonomy 和 metadata
+- prompt 数量要求尽量放到单独的 count-config 文件里，通过 `--count-config` 传入
+- 只有在你明确希望“树结构和配额强绑定”时，才在树里直接写 `count`
+
+友好的 `count-config` 写法示例：
+
+```yaml
+counts:
+  Animals: 200
+  Animals/Marine Animals: 80
+```
+
+如果你只是想快速表达“每个子类都采 N 个”，也可以直接写：
+
+```yaml
+defaults:
+  subcategory: 20
+```
+
+这两种写法可以混用，显式路径配额优先级更高。
+
 ## Prompt 格式
 
 ### TXT
@@ -443,7 +466,10 @@ aigc run --profile configs/run_profiles/video_real.yaml
 先看主题树 planning：
 
 ```bash
-aigc prompts plan --tree prompts/theme_tree_example.yaml --output json
+aigc prompts plan \
+  --tree prompts/theme_tree_example.yaml \
+  --count-config prompts/theme_tree_example.counts.yaml \
+  --output json
 ```
 
 按默认 template/style-family 生成 prompt bundle：
@@ -451,6 +477,7 @@ aigc prompts plan --tree prompts/theme_tree_example.yaml --output json
 ```bash
 aigc prompts generate \
   --tree prompts/theme_tree_example.yaml \
+  --count-config prompts/theme_tree_example.counts.yaml \
   --execution-mode mock
 ```
 
@@ -513,6 +540,8 @@ aigc prompts inspect <prompt_bundle_dir> --output json
 推荐使用方式：
 
 - 先用 `aigc prompts plan` 看 quota 和 resample 是否符合预期
+- 对大主题树，尽量把 quota 放到独立的 `--count-config` 文件
+- 如果你只是想快速表达“每个子类采多少”，直接用 `defaults.subcategory`
 - 用 `--template` 切换顶层任务说明
 - 用 `--style-family` 控制最终 prompt 写法
 - 只有希望按下游模型自动选写法时，才用 `--target-model`

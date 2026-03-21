@@ -73,24 +73,14 @@ def _parse_theme_node(payload: Any, *, label: str) -> ThemeNode:
 
 
 def _validate_tree(tree: ThemeTree) -> None:
-    has_count = False
-
     def walk(node: ThemeNode, *, path: tuple[str, ...], seen: set[tuple[str, ...]]) -> None:
-        nonlocal has_count
         node_path = (*path, node.name)
         if node_path in seen:
             raise ThemeTreeError(f"Duplicate node path detected: {'/'.join(node_path)}")
         seen.add(node_path)
-        if node.count is not None:
-            has_count = True
         for child in node.children:
             walk(child, path=node_path, seen=seen)
 
     seen: set[tuple[str, ...]] = set()
     for category in tree.categories:
         walk(category, path=(), seen=seen)
-
-    if not has_count:
-        raise ThemeTreeError(
-            "Theme tree must define at least one hard quota count at category or subcategory level."
-        )

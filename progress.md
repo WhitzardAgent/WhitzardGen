@@ -4,6 +4,71 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-21 01:35:00 CST
+- Added a lightweight legacy-prompt CSV import path for older synthesized prompt datasets:
+  - reusable converter module:
+    - `src/aigc/utils/prompt_import.py`
+  - direct runnable script:
+    - `utils/import_legacy_prompt_csv.py`
+- The converter now accepts legacy CSV rows shaped like:
+  - `idx,uuid,prompt,keyword,class_level_0,class_level_1,model_type,lang`
+- It writes `aigc run`-compatible JSONL prompt records with:
+  - `prompt_id` from `uuid` when available
+  - `language` normalized from `lang`
+  - prompt metadata mapped as:
+    - `category = "aigc_safety"` by default
+    - `subcategory = class_level_1`
+    - `subtopic = class_level_0`
+    - `theme = keyword`
+    - `theme_path = [category, class_level_1, class_level_0, keyword]`
+  - extra source traceability fields such as:
+    - `source_idx`
+    - `source_uuid`
+    - `model_type`
+- Added focused regression coverage in:
+  - `tests/test_prompt_import.py`
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/utils/prompt_import.py utils/import_legacy_prompt_csv.py tests/test_prompt_import.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompt_import -v`
+  - result: 2 tests passed
+  - direct script smoke run:
+    - `python3 utils/import_legacy_prompt_csv.py --input <legacy.csv> --output <converted.jsonl>`
+    - result: passed
+- 2026-03-21 01:20:00 CST
+- Improved prompt-generation count-config ergonomics so large generic theme trees are easier to use:
+  - count-free trees are now a first-class path
+  - count-config files now support both:
+    - explicit path counts under `counts:`
+    - level defaults such as `defaults.subcategory`
+  - users can now express “every subcategory gets N samples” without enumerating every path
+  - explicit path quotas still override level defaults
+- Updated the stock example count-config:
+  - `prompts/theme_tree_example.counts.yaml` now demonstrates mixed usage of:
+    - top-level path quotas
+    - `defaults.subcategory`
+- Updated README / README.zh-CN to recommend the new generic-tree + external-quota workflow.
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/prompt_generation/planner.py tests/test_prompt_generation.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompt_generation -v`
+  - result: 11 tests passed
+- 2026-03-21 01:10:00 CST
+- Simplified the prompt-generation example tree so taxonomy and quotas are no longer coupled by default:
+  - `prompts/theme_tree_example.yaml` now focuses on structure and metadata only
+  - added `prompts/theme_tree_example.counts.yaml` as the paired quota file
+  - planner/loader behavior now supports count-free trees when a `--count-config` file is provided
+  - planning now fails with a clear error if neither inline counts nor a count-config file provide any quota
+- Updated README / README.zh-CN to recommend:
+  - keep large trees count-free
+  - manage quotas through separate count-config files
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/prompt_generation/loader.py src/aigc/prompt_generation/planner.py tests/test_prompt_generation.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompt_generation -v`
+  - result: 10 tests passed
+  - `PYTHONPATH=src python3 -m aigc prompts plan --tree prompts/theme_tree_example.yaml --count-config prompts/theme_tree_example.counts.yaml --output json`
+  - result: passed
 - 2026-03-21 01:00:00 CST
 - Moved the default prompt-synthesis LLM from service hard-coding into prompt-generation profile config:
   - `configs/prompt_generation/profiles.yaml` now carries `default_llm_model`
