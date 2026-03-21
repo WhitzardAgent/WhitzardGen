@@ -75,3 +75,33 @@ class PromptImportTests(unittest.TestCase):
         self.assertEqual(rows[0]["prompt_id"], "legacy_csv_7")
         self.assertEqual(rows[0]["language"], "en")
         self.assertEqual(rows[0]["metadata"]["category"], "custom_root")
+
+    def test_convert_legacy_prompt_csv_to_jsonl_can_force_language(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        csv_path = tmpdir / "legacy.csv"
+        jsonl_path = tmpdir / "converted.jsonl"
+        csv_path.write_text(
+            textwrap.dedent(
+                """\
+                idx,uuid,prompt,keyword,class_level_0,class_level_1,model_type,lang
+                1,uuid-001,a realistic city street at dusk,city street,urban scene,street life,t2i,garbled-lang
+                2,uuid-002,一只猫坐在窗边,cat by window,animals,domestic pet,t2i,???
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        summary = convert_legacy_prompt_csv_to_jsonl(
+            csv_path=csv_path,
+            jsonl_path=jsonl_path,
+            forced_language="zh",
+        )
+
+        self.assertEqual(summary["forced_language"], "zh")
+        rows = [
+            json.loads(line)
+            for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(rows[0]["language"], "zh")
+        self.assertEqual(rows[1]["language"], "zh")

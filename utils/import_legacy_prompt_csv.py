@@ -29,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="aigc_safety",
         help="Top-level category to store in metadata. Default: aigc_safety",
     )
+    parser.add_argument(
+        "--language",
+        choices=["zh", "en"],
+        help="Force all imported prompts to use one normalized language value.",
+    )
     return parser
 
 
@@ -38,6 +43,7 @@ def main() -> int:
         csv_path=args.input,
         jsonl_path=args.output,
         category=args.category,
+        forced_language=args.language,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0

@@ -14,10 +14,14 @@ def convert_legacy_prompt_csv_to_jsonl(
     csv_path: str | Path,
     jsonl_path: str | Path,
     category: str = DEFAULT_IMPORT_CATEGORY,
+    forced_language: str | None = None,
 ) -> dict[str, Any]:
     source_path = Path(csv_path)
     output_path = Path(jsonl_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    normalized_forced_language = (
+        _normalize_language(forced_language) if forced_language not in (None, "") else None
+    )
 
     records: list[dict[str, Any]] = []
     with source_path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -32,7 +36,7 @@ def convert_legacy_prompt_csv_to_jsonl(
             small_class = str(row.get("class_level_0", "")).strip()
             subcategory = str(row.get("class_level_1", "")).strip()
             theme = str(row.get("keyword", "")).strip() or prompt[:80]
-            language = _normalize_language(str(row.get("lang", "")).strip())
+            language = normalized_forced_language or _normalize_language(str(row.get("lang", "")).strip())
             model_type = str(row.get("model_type", "")).strip()
 
             prompt_id = source_uuid or (
@@ -75,6 +79,7 @@ def convert_legacy_prompt_csv_to_jsonl(
         "jsonl_path": str(output_path),
         "record_count": len(records),
         "category": category,
+        "forced_language": normalized_forced_language,
     }
 
 

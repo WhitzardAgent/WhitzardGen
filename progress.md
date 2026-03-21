@@ -4,6 +4,21 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-21 01:45:00 CST
+- Hardened the legacy prompt CSV import script for noisy source-language fields:
+  - `utils/import_legacy_prompt_csv.py` now supports:
+    - `--language zh`
+    - `--language en`
+  - this forces all converted prompt records to use a single normalized `language` value
+  - avoids `aigc run` failures caused by unexpected legacy `lang` column contents
+- Extended converter/test coverage for forced language override.
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/utils/prompt_import.py utils/import_legacy_prompt_csv.py tests/test_prompt_import.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompt_import -v`
+  - result: 3 tests passed
+  - direct script smoke run with `--language zh`
+  - result: passed
 - 2026-03-21 01:35:00 CST
 - Added a lightweight legacy-prompt CSV import path for older synthesized prompt datasets:
   - reusable converter module:
