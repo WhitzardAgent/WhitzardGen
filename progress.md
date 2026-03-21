@@ -4,6 +4,17 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-21 00:50:00 CST
+- Updated user-facing prompt-generation documentation in:
+  - `README.md`
+  - `README.zh-CN.md`
+- README now reflects the real Phase 28 behavior for:
+  - `aigc prompts plan`
+  - `aigc prompts generate`
+  - `aigc prompts inspect`
+  - `configs/prompt_generation/` layout
+  - template/style-family/target-model precedence
+  - prompt bundle structure and tracked metadata fields
 - 2026-03-21 00:40:00 CST
 - Completed Phase 28 prompt-template/style-family/few-shot control:
   - prompt-generation config is now fully directory-based under:

@@ -19,6 +19,7 @@ WhitzardGen 主要解决的是下面这类问题：
 当前重点是：
 
 - 图像和视频生成
+- 基于本地 T2T 后端的 prompt generation
 - persistent worker
 - 多 replica 调度
 - prompt 级别 ledger
@@ -37,6 +38,12 @@ WhitzardGen 主要解决的是下面这类问题：
   - `negative_prompt`
   - `parameters`
   - `metadata`
+- Prompt generation 工作流：
+  - 主题树 planning
+  - prompt bundle 生成
+  - prompt template 切换
+  - prompt 写作 style family
+  - style-family few-shot examples
 - Profile 运行：
   - `aigc run --profile ...`
 - 运行期能力：
@@ -212,6 +219,54 @@ generation:
 
 如果不设置 `generation.default_seed`，则默认保持随机生成，不会偷偷固定 seed。
 
+### 4. Prompt Generation 配置
+
+[configs/prompt_generation](/Users/morinop/coding/whitzardgen/configs/prompt_generation)
+
+现在 prompt generation 有自己独立的一层配置：
+
+- [profiles.yaml](/Users/morinop/coding/whitzardgen/configs/prompt_generation/profiles.yaml)
+  - 控制 scene / lighting / weather / camera / realism anchor 等内容采样倾向
+- [templates](/Users/morinop/coding/whitzardgen/configs/prompt_generation/templates)
+  - 控制“怎么给 LLM 下达 prompt synthesis 任务”
+- [style_families](/Users/morinop/coding/whitzardgen/configs/prompt_generation/style_families)
+  - 控制“最终 prompt 怎么写”以及 few-shot examples
+- [target_style_mappings.yaml](/Users/morinop/coding/whitzardgen/configs/prompt_generation/target_style_mappings.yaml)
+  - 把下游 AIGC 模型名映射到默认 prompt 写作 style family
+
+当前一等 style family：
+
+- `detailed_sentence`
+- `keyword_list`
+- `short_sentence`
+
+当前默认值：
+
+- template: `photorealistic_base`
+- style family: `detailed_sentence`
+- generation profile: `photorealistic`
+
+主题树里也可以直接写默认项：
+
+```yaml
+defaults:
+  generation_profile: photorealistic
+  prompt_template: photorealistic_base
+  prompt_style_family: detailed_sentence
+```
+
+解析优先级：
+
+- template：
+  - CLI `--template`
+  - `tree.defaults.prompt_template`
+  - 系统默认 template
+- style family：
+  - CLI `--style-family`
+  - `tree.defaults.prompt_style_family`
+  - `target_style_mappings[target_model]`
+  - template 默认 style family
+
 ## Prompt 格式
 
 ### TXT
@@ -377,6 +432,86 @@ aigc run --profile configs/run_profiles/video_real.yaml
 
 如果 CLI 参数和 profile 同时提供，CLI 参数优先。
 
+### Prompt Generation
+
+先看主题树 planning：
+
+```bash
+aigc prompts plan --tree prompts/theme_tree_example.yaml --output json
+```
+
+按默认 template/style-family 生成 prompt bundle：
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --execution-mode mock
+```
+
+显式切换 template：
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --template documentary_scene
+```
+
+显式切换 prompt 写作 style family：
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --style-family keyword_list
+```
+
+让系统根据下游目标模型自动选择默认 style family：
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --target-model Z-Image
+```
+
+使用真实 T2T 模型做 prompt synthesis：
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --execution-mode real \
+  --llm-model Qwen3-32B \
+  --template photorealistic_base \
+  --style-family detailed_sentence
+```
+
+查看 prompt bundle：
+
+```bash
+aigc prompts inspect <prompt_bundle_dir>
+aigc prompts inspect <prompt_bundle_dir> --output json
+```
+
+`aigc prompts generate` 当前常用参数：
+
+- `--tree`
+- `--out`
+- `--count-config`
+- `--llm-model`
+- `--execution-mode [mock|real]`
+- `--seed`
+- `--profile`
+- `--template`
+- `--style-family`
+- `--target-model`
+- `--output [text|json]`
+
+推荐使用方式：
+
+- 先用 `aigc prompts plan` 看 quota 和 resample 是否符合预期
+- 用 `--template` 切换顶层任务说明
+- 用 `--style-family` 控制最终 prompt 写法
+- 只有希望按下游模型自动选写法时，才用 `--target-model`
+- 如果当前机器默认 prompt-runs root 不方便，显式传 `--out`
+
 ### Run 查看
 
 ```bash
@@ -446,6 +581,40 @@ aigc export dataset run_001 run_002 --out /data/exports/my_bundle
 - `running.log`：详细时间戳日志
 - `runtime_status.json`：运行中实时状态快照
 - `exports/dataset.jsonl`：该 run 的 artifact-level JSONL 导出
+
+## Prompt Bundle 说明
+
+`aigc prompts generate` 输出的是一个 prompt bundle，而不是单独一份 JSONL。
+
+典型结构：
+
+```text
+prompt_bundle/
+  prompts.jsonl
+  prompt_manifest.json
+  sampling_plan.json
+  generation_log.jsonl
+  stats.json
+```
+
+各文件含义：
+
+- `prompts.jsonl`：最终可流入后续 run 的 prompt records
+- `prompt_manifest.json`：bundle 级元数据，包括 template/style-family/target-model 的最终解析结果
+- `sampling_plan.json`：quota 驱动的主题采样结果
+- `generation_log.jsonl`：生成阶段的决策日志，包括 few-shot selection
+- `stats.json`：按 category/subcategory/theme 汇总的统计
+
+当前 prompt records 和 bundle metadata 会保留这些 prompt-generation 追踪字段：
+
+- `prompt_template`
+- `prompt_template_version`
+- `prompt_style_family`
+- `prompt_style_family_version`
+- `target_model_name`
+- `few_shot_example_ids`
+- `instruction_render_version`
+- `resolved_style_source`
 
 ## Export Bundle 说明
 

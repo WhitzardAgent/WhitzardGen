@@ -33,6 +33,7 @@ into:
 Current focus:
 
 - image and video generation
+- prompt generation on top of a local T2T backend
 - single-machine multi-GPU execution
 - persistent workers for heavy models
 - dataset-oriented export and organization
@@ -51,6 +52,12 @@ Current focus:
   - `metadata`
 - Profile-based runs:
   - `aigc run --profile ...`
+- Prompt-generation workflow:
+  - theme-tree planning
+  - prompt bundle generation
+  - prompt template switching
+  - prompt writing style families
+  - style-family few-shot examples
 - Run-time features:
   - persistent workers
   - sequential replica warmup
@@ -229,6 +236,54 @@ generation:
 
 If `generation.default_seed` is omitted, generation stays random by default unless a prompt or profile provides a seed.
 
+### 4. Prompt Generation Config
+
+[configs/prompt_generation](/Users/morinop/coding/whitzardgen/configs/prompt_generation)
+
+Prompt generation now has its own explicit config layer:
+
+- [profiles.yaml](/Users/morinop/coding/whitzardgen/configs/prompt_generation/profiles.yaml)
+  - controls content-distribution pools such as scene, lighting, weather, camera, realism anchors
+- [templates](/Users/morinop/coding/whitzardgen/configs/prompt_generation/templates)
+  - controls how the LLM is instructed to perform prompt synthesis
+- [style_families](/Users/morinop/coding/whitzardgen/configs/prompt_generation/style_families)
+  - controls the final prompt writing style and few-shot examples
+- [target_style_mappings.yaml](/Users/morinop/coding/whitzardgen/configs/prompt_generation/target_style_mappings.yaml)
+  - maps downstream AIGC model names to a default prompt writing style family
+
+Current first-class prompt writing style families:
+
+- `detailed_sentence`
+- `keyword_list`
+- `short_sentence`
+
+Current default template and style:
+
+- template: `photorealistic_base`
+- style family: `detailed_sentence`
+- generation profile: `photorealistic`
+
+Theme-tree defaults may also set:
+
+```yaml
+defaults:
+  generation_profile: photorealistic
+  prompt_template: photorealistic_base
+  prompt_style_family: detailed_sentence
+```
+
+Resolution precedence is:
+
+- template:
+  - CLI `--template`
+  - `tree.defaults.prompt_template`
+  - system default template
+- style family:
+  - CLI `--style-family`
+  - `tree.defaults.prompt_style_family`
+  - `target_style_mappings[target_model]`
+  - template default
+
 ## Prompt Formats
 
 ### TXT
@@ -392,6 +447,86 @@ Examples:
 
 CLI flags override profile values when both are present.
 
+### Prompt Generation
+
+Theme-tree planning:
+
+```bash
+aigc prompts plan --tree prompts/theme_tree_example.yaml --output json
+```
+
+Generate a prompt bundle with the default template/style-family stack:
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --execution-mode mock
+```
+
+Switch prompt template explicitly:
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --template documentary_scene
+```
+
+Switch prompt writing style family explicitly:
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --style-family keyword_list
+```
+
+Resolve the default style family from a downstream target model:
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --target-model Z-Image
+```
+
+Use real T2T synthesis with the current text backend:
+
+```bash
+aigc prompts generate \
+  --tree prompts/theme_tree_example.yaml \
+  --execution-mode real \
+  --llm-model Qwen3-32B \
+  --template photorealistic_base \
+  --style-family detailed_sentence
+```
+
+Inspect a prompt bundle:
+
+```bash
+aigc prompts inspect <prompt_bundle_dir>
+aigc prompts inspect <prompt_bundle_dir> --output json
+```
+
+Useful flags on `aigc prompts generate`:
+
+- `--tree`
+- `--out`
+- `--count-config`
+- `--llm-model`
+- `--execution-mode [mock|real]`
+- `--seed`
+- `--profile`
+- `--template`
+- `--style-family`
+- `--target-model`
+- `--output [text|json]`
+
+Recommended flow:
+
+- use `aigc prompts plan` to verify quota allocation and resampling first
+- use `--template` to change top-level synthesis instructions
+- use `--style-family` to control final prompt writing style
+- use `--target-model` only when you want automatic style-family defaults for a downstream generator
+- use `--out` when you want the bundle written to an explicit local path
+
 ### Run Inspection
 
 ```bash
@@ -463,6 +598,40 @@ What they mean:
 - `running.log`: detailed timestamped run log
 - `runtime_status.json`: live supervisor-owned telemetry snapshot
 - `exports/dataset.jsonl`: per-run artifact-level export
+
+## Prompt Bundles
+
+`aigc prompts generate` writes a prompt bundle instead of a loose JSONL file.
+
+Typical structure:
+
+```text
+prompt_bundle/
+  prompts.jsonl
+  prompt_manifest.json
+  sampling_plan.json
+  generation_log.jsonl
+  stats.json
+```
+
+What they mean:
+
+- `prompts.jsonl`: final prompt records used by downstream runs
+- `prompt_manifest.json`: bundle-level metadata, including template/style-family/target-model resolution
+- `sampling_plan.json`: quota-driven theme sampling result
+- `generation_log.jsonl`: synthesis-time decision log, including few-shot selection
+- `stats.json`: counts by category/subcategory/theme
+
+Prompt records and bundle metadata now preserve prompt-generation traceability such as:
+
+- `prompt_template`
+- `prompt_template_version`
+- `prompt_style_family`
+- `prompt_style_family_version`
+- `target_model_name`
+- `few_shot_example_ids`
+- `instruction_render_version`
+- `resolved_style_source`
 
 ## Export Bundles
 
