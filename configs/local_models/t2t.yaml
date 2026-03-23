@@ -1,8 +1,8 @@
 # Optional local model overrides for t2t models.
 
 Qwen3-32B:
-  weights_path:
-  hf_cache_dir:
+  weights_path: /inspire/hdd/global_public/model/Qwen3-32B
+  hf_cache_dir: /inspire/hdd/global_public/model/Qwen3-32B
   # Example:
   # conda_env_name: zimage_cluster
   # max_gpus: 8

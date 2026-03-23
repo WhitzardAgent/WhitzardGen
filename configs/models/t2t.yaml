@@ -6,7 +6,7 @@ models:
     task_type: t2t
     capabilities:
       supports_batch_prompts: true
-      max_batch_size: 8
+      max_batch_size: 32
       preferred_batch_size: 4
       supports_negative_prompt: false
       supports_seed: false
@@ -19,7 +19,7 @@ models:
       recommended_vram_gb: 80
       env_spec: zimage
       worker_strategy: persistent_worker
-      gpus_per_replica: 4
+      gpus_per_replica: 1
       supports_multi_replica: true
     generation_defaults:
       max_new_tokens: 4096
