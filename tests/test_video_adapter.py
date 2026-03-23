@@ -1,6 +1,7 @@
 import tempfile
 import types
 import unittest
+import contextlib
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -679,6 +680,52 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertNotIn("guidance_scale", pipe.calls[0])
         self.assertEqual(pipe.calls[0]["negative_prompt"], ["neg one", "neg two"])
         self.assertEqual(len(pipe.calls[0]["generator"]), 2)
+
+    def test_hunyuan_video_generate_frames_uses_attention_backend_when_configured(self) -> None:
+        registry = load_registry()
+        adapter = HunyuanVideo15Adapter(model_config=registry.get_model("HunyuanVideo-1.5"))
+        captured: dict[str, object] = {}
+
+        class _FakeTorch:
+            class Generator:
+                def __init__(self, device: str) -> None:
+                    self.device = device
+
+                def manual_seed(self, seed: int):
+                    captured.setdefault("seeds", []).append(seed)
+                    return self
+
+        class _FakePipe:
+            def __call__(self, **kwargs):
+                captured["pipe_kwargs"] = kwargs
+                return type("Output", (), {"frames": [[b"a"]]})()
+
+        @contextlib.contextmanager
+        def _fake_backend(name: str):
+            captured["backend_name"] = name
+            yield
+            captured["backend_exited"] = True
+
+        with patch.object(adapter, "_attention_backend_context", side_effect=_fake_backend):
+            frames = adapter.generate_frames_batch(
+                pipe=_FakePipe(),
+                plan=type("Plan", (), {"inputs": {"attn_implementation": "_flash_3_hub"}})(),
+                prompts=["prompt one"],
+                negative_prompts=["neg one"],
+                width=1280,
+                height=720,
+                num_frames=121,
+                num_inference_steps=50,
+                guidance_scale=4.0,
+                seed=7,
+                torch=_FakeTorch,
+                device="cuda",
+            )
+
+        self.assertEqual(frames, [[b"a"]])
+        self.assertEqual(captured["backend_name"], "_flash_3_hub")
+        self.assertTrue(captured["backend_exited"])
+        self.assertNotIn("guidance_scale", captured["pipe_kwargs"])
 
     def test_mova_capabilities_enable_persistent_worker_and_negative_prompt(self) -> None:
         registry = load_registry()

@@ -4,6 +4,26 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-23 01:10:00 CST
+- Aligned the HunyuanVideo 1.5 diffusers adapter with the requested flash-attention usage pattern:
+  - `HunyuanVideo15Adapter` now wraps pipeline execution in:
+    - `diffusers.attention_backend(...)`
+    - when `attn_implementation` is configured
+  - both Hunyuan registry entries now default to:
+    - `attn_implementation: _flash_3_hub`
+  - this keeps the runtime config-driven and lets local overrides switch to:
+    - `flash_hub`
+    - on non-H100/H800 hardware
+  - preserved the earlier Hunyuan fix that omits unsupported:
+    - `guidance_scale`
+- Added focused regression coverage to confirm:
+  - Hunyuan uses the configured attention backend context
+  - Hunyuan still does not forward `guidance_scale`
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/adapters/videos/hunyuan_video.py tests/test_video_adapter.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry tests.test_video_adapter -v`
+  - result: 33 tests passed
 - 2026-03-23 00:40:00 CST
 - Corrected the HunyuanVideo 1.5 diffusers integration to match real pipeline behavior:
   - `HunyuanVideo15Adapter` now omits `guidance_scale` entirely when calling `HunyuanVideo15Pipeline.__call__`
@@ -2036,6 +2056,9 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/hunyuan_video.py
+- /Users/morinop/coding/whitzardgen/configs/models/t2v.yaml
+- /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
 - /Users/morinop/coding/whitzardgen/configs/prompt_generation/profiles.yaml
 - /Users/morinop/coding/whitzardgen/configs/prompt_generation/templates/photorealistic_base.yaml
 - /Users/morinop/coding/whitzardgen/configs/prompt_generation/templates/documentary_scene.yaml
@@ -2286,6 +2309,14 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
+- Updated at 2026-03-23 01:10:00 CST.
+- HunyuanVideo now supports a configurable diffusers attention backend in-process:
+  - registry default is `_flash_3_hub`
+  - local overrides can switch to `flash_hub` on non-H100/H800 hardware
+  - unsupported `guidance_scale` is still omitted
+- Focused local regression is green for the Hunyuan attention-backend follow-up:
+  - `tests.test_registry`
+  - `tests.test_video_adapter`
 - Updated at 2026-03-21 00:40:00 CST.
 - Phase 28 is complete locally:
   - prompt generation now supports explicit template switching
@@ -2544,6 +2575,9 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
+- Validate HunyuanVideo on remote hardware and, if needed, override:
+  - `attn_implementation: flash_hub`
+  - in local model config for non-H100/H800 environments
 - Run remote-cluster validation for the new Phase 28 prompt-generation stack:
   - configure real local paths/env for `Qwen3-32B`
   - run `aigc prompts generate --execution-mode real --template ... --style-family ...`

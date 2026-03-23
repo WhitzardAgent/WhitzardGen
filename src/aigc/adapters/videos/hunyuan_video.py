@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from aigc.adapters.base import AdapterCapabilities, ProgressCallback
@@ -98,6 +99,20 @@ class HunyuanVideo15Adapter(DiffusersVideoAdapterBase):
             kwargs["negative_prompt"] = (
                 negative_prompts[0] if len(negative_prompts) == 1 else negative_prompts
             )
-        output = pipe(**kwargs)
+        attention_backend_name = str(plan.inputs.get("attn_implementation") or "").strip() or None
+        with self._attention_backend_context(attention_backend_name):
+            output = pipe(**kwargs)
         frames = getattr(output, "frames", None)
         return normalize_frame_batches(self.model_config.name, frames)
+
+    def _attention_backend_context(self, backend_name: str | None):
+        if not backend_name:
+            return contextlib.nullcontext()
+        try:
+            from diffusers import attention_backend
+        except ImportError as exc:
+            raise RuntimeError(
+                "diffusers.attention_backend is required when attn_implementation is set for "
+                f"{self.model_config.name}."
+            ) from exc
+        return attention_backend(backend_name)

@@ -225,6 +225,7 @@ models:
       fps: 24
       num_frames: 121
       num_inference_steps: 50
+      attn_implementation: _flash_3_hub
     weights:
       hf_repo: tencent/HunyuanVideo-1.5
       diffusers_repo: hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_t2v
@@ -257,6 +258,7 @@ models:
       fps: 24
       num_frames: 121
       num_inference_steps: 50
+      attn_implementation: _flash_3_hub
     weights:
       hf_repo: tencent/HunyuanVideo-1.5
       diffusers_repo: hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_t2v
