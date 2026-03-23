@@ -3,13 +3,22 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from aigc.adapters.base import AdapterCapabilities, ExecutionPlan, ProgressCallback
 from aigc.adapters.videos.base import BaseVideoGenerationAdapter
-from aigc.adapters.videos.common import (
-    compute_duration_sec,
-    resolve_video_repo_dir,
-    temporary_repo_import_path,
-)
+from aigc.adapters.videos.common import compute_duration_sec, resolve_video_repo_dir
+
+try:
+    from mova.datasets.transforms.custom import crop_and_resize
+    from mova.diffusion.pipelines.pipeline_mova import MOVA
+    from mova.utils.data import save_video_with_audio
+    _MOVA_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - depends on optional model env
+    crop_and_resize = None  # type: ignore[assignment]
+    MOVA = None  # type: ignore[assignment]
+    save_video_with_audio = None  # type: ignore[assignment]
+    _MOVA_IMPORT_ERROR = exc
 
 
 _DEFAULT_NEGATIVE_PROMPT = (
@@ -101,7 +110,9 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
             "cp_size": int(params.get("cp_size", 1)),
             "attn_type": str(params.get("attn_type", "fa")),
             "sigma_shift": float(params.get("sigma_shift", 5.0)),
-            "cfg_scale": float(params.get("cfg_scale", params.get("guidance_scale", self.default_guidance_scale))),
+            "cfg_scale": float(
+                params.get("cfg_scale", params.get("guidance_scale", self.default_guidance_scale))
+            ),
             "remove_video_dit": bool(params.get("remove_video_dit", False)),
         }
 
@@ -120,7 +131,9 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
         seed = int(plan.inputs["seed"]) if plan.inputs.get("seed") not in (None, "") else None
         num_inference_steps = int(plan.inputs["num_inference_steps"])
         sigma_shift = float(plan.inputs.get("sigma_shift", 5.0))
-        cfg_scale = float(plan.inputs.get("cfg_scale", plan.inputs.get("guidance_scale", self.default_guidance_scale)))
+        cfg_scale = float(
+            plan.inputs.get("cfg_scale", plan.inputs.get("guidance_scale", self.default_guidance_scale))
+        )
         negative_prompts = [str(value) for value in plan.inputs.get("negative_prompts", [""])]
         prompt_ids = [str(value) for value in plan.inputs["prompt_ids"]]
         ref_path = Path(str(plan.inputs["ref_path"]))
@@ -130,9 +143,11 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
         if progress_callback is not None:
             progress_callback({"phase": "preparing_batch", "supports_true_progress": False})
 
-        pipe, torch, _device, image_module, crop_and_resize, save_video_with_audio = self._get_or_load_pipeline(plan.inputs)
+        pipe, torch, _device, image_module, crop_resize_fn, save_video_fn = self._get_or_load_pipeline(
+            plan.inputs
+        )
         image = image_module.open(ref_path).convert("RGB")
-        reference_image = crop_and_resize(image, height=height, width=width)
+        reference_image = crop_resize_fn(image, height=height, width=width)
 
         if progress_callback is not None:
             progress_callback({"phase": "generating", "supports_true_progress": False})
@@ -165,7 +180,7 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
             audio_sample = audio_sample.cpu()
         if hasattr(audio_sample, "squeeze"):
             audio_sample = audio_sample.squeeze()
-        save_video_with_audio(
+        save_video_fn(
             video[0],
             audio_sample,
             str(output_path),
@@ -215,6 +230,13 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
                 self._loaded_save_video_with_audio,
             )
 
+        if MOVA is None or crop_and_resize is None or save_video_with_audio is None:
+            raise RuntimeError(
+                "MOVA-720p requires the `mova` Python package to be installed in the target "
+                "environment and importable directly. repo_path is no longer used to inject the "
+                "package dynamically."
+            ) from _MOVA_IMPORT_ERROR
+
         import torch
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -224,22 +246,16 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
             params.update(load_params)
 
         checkpoint_dir = self._resolve_checkpoint_dir(params)
+        print(checkpoint_dir)
         repo_dir = resolve_video_repo_dir(self.model_config)
         if repo_dir and not Path(repo_dir).exists():
             raise RuntimeError(f"MOVA-720p configured repo_path does not exist: {repo_dir}")
 
-        with temporary_repo_import_path(repo_dir):
-            from PIL import Image
-
-            from mova.datasets.transforms.custom import crop_and_resize
-            from mova.diffusion.pipelines.pipeline_mova import MOVA
-            from mova.utils.data import save_video_with_audio
-
-            pipe = MOVA.from_pretrained(
-                checkpoint_dir,
-                torch_dtype=dtype,
-                local_files_only=True,
-            )
+        pipe = MOVA.from_pretrained(
+            checkpoint_dir,
+            torch_dtype=dtype,
+        )
+        print(pipe)
 
         offload = str(params.get("offload", "cpu"))
         if offload == "none":

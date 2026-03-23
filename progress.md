@@ -4,6 +4,30 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-23 02:15:00 CST
+- Renamed the MOVA adapter module from:
+  - `src/aigc/adapters/videos/mova.py`
+  - to:
+    - `src/aigc/adapters/videos/mova_adapter.py`
+  - to avoid naming confusion with the external `mova` Python package
+- Reworked MOVA loading to match the requested direct-import pattern:
+  - the adapter now imports:
+    - `PIL.Image`
+    - `mova.datasets.transforms.custom.crop_and_resize`
+    - `mova.diffusion.pipelines.pipeline_mova.MOVA`
+    - `mova.utils.data.save_video_with_audio`
+  - pipeline loading now calls:
+    - `MOVA.from_pretrained(checkpoint_dir, torch_dtype=dtype)`
+  - the adapter keeps the strict local checkpoint resolution logic and now expects the `mova` package to be installed in the runtime environment rather than injected through `repo_path`
+  - retained the requested debug prints for:
+    - `checkpoint_dir`
+    - loaded `pipe`
+- Updated adapter exports/tests to follow the new module name and direct-import behavior.
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/adapters/videos/mova_adapter.py src/aigc/adapters/videos/__init__.py src/aigc/adapters/stubs.py src/aigc/adapters/video_family.py tests/test_video_adapter.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter tests.test_registry -v`
+  - result: 35 tests passed
 - 2026-03-23 01:50:00 CST
 - Removed the remaining Hugging Face hub fallback path from MOVA pipeline loading:
   - `MOVA.from_pretrained(...)` now always uses:
@@ -2088,6 +2112,11 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/mova_adapter.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/__init__.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/stubs.py
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/video_family.py
+- /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/mova.py
 - /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
 - /Users/morinop/coding/whitzardgen/tests/test_video_adapter.py
@@ -2344,11 +2373,12 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
+- Updated at 2026-03-23 02:15:00 CST.
+- `MOVA-720p` now uses the renamed `mova_adapter.py` module and a direct `mova` package import path.
+- This means the target runtime environment must provide an importable `mova` package; `repo_path` is no longer used to inject the package into `sys.path` during adapter load.
 - Updated at 2026-03-23 01:50:00 CST.
-- `MOVA-720p` now has both guardrails in place:
-  - local checkpoint directory is mandatory
-  - `MOVA.from_pretrained(...)` is forced to `local_files_only=True`
-- If MOVA still stalls remotely, the next likely cause is the structure or size of the local checkpoint itself rather than an unintended hub fallback.
+- The earlier local-files-only MOVA experiment has been superseded by the newer direct-import adapter implementation above.
+- The remaining active guardrail is that MOVA still requires an explicit local checkpoint directory.
 - Updated at 2026-03-23 01:35:00 CST.
 - `MOVA-720p` now fails fast unless a real local checkpoint directory is configured, which should prevent the previous “seems to ignore local model and hangs loading” behavior.
 - If remote config is loaded correctly, MOVA should now resolve only from:
@@ -2621,6 +2651,7 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
+- Sync this MOVA adapter rename/direct-import slice to the remote cluster and confirm the `mova` package is installed in the `mova` env before the next real run.
 - Re-run one real remote MOVA startup after syncing this slice; if it still stalls, inspect the exact contents/layout of the configured checkpoint root.
 - Verify on the remote cluster that `aigc models inspect MOVA-720p` shows the expected effective local paths before the next real MOVA run.
 - Validate HunyuanVideo on remote hardware and, if needed, override:

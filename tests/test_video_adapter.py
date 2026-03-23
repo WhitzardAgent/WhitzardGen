@@ -2,11 +2,11 @@ import tempfile
 import types
 import unittest
 import contextlib
-import sys
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+import aigc.adapters.videos.mova_adapter as mova_adapter_module
 from aigc.adapters.video_family import (
     CogVideoX5BAdapter,
     HeliosPyramidAdapter,
@@ -863,7 +863,7 @@ class VideoAdapterTests(unittest.TestCase):
                 workdir=str(tmpdir),
             )
 
-    def test_mova_load_pipeline_forces_local_files_only(self) -> None:
+    def test_mova_load_pipeline_uses_direct_mova_imports(self) -> None:
         registry = load_registry()
         tmpdir = Path(tempfile.mkdtemp())
         repo_dir = tmpdir / "MOVA"
@@ -892,32 +892,23 @@ class VideoAdapterTests(unittest.TestCase):
                 captured["load_kwargs"] = kwargs
                 return _FakePipe()
 
-        fake_pipeline_module = types.ModuleType("mova.diffusion.pipelines.pipeline_mova")
-        fake_pipeline_module.MOVA = _FakeMOVA
-        fake_transforms_module = types.ModuleType("mova.datasets.transforms.custom")
-        fake_transforms_module.crop_and_resize = lambda image, **kwargs: image
-        fake_data_module = types.ModuleType("mova.utils.data")
-        fake_data_module.save_video_with_audio = lambda *args, **kwargs: None
-
-        with patch.dict(
-            sys.modules,
-            {
-                "mova": types.ModuleType("mova"),
-                "mova.diffusion": types.ModuleType("mova.diffusion"),
-                "mova.diffusion.pipelines": types.ModuleType("mova.diffusion.pipelines"),
-                "mova.diffusion.pipelines.pipeline_mova": fake_pipeline_module,
-                "mova.datasets": types.ModuleType("mova.datasets"),
-                "mova.datasets.transforms": types.ModuleType("mova.datasets.transforms"),
-                "mova.datasets.transforms.custom": fake_transforms_module,
-                "mova.utils": types.ModuleType("mova.utils"),
-                "mova.utils.data": fake_data_module,
-            },
-            clear=False,
+        with patch.object(mova_adapter_module, "MOVA", _FakeMOVA), patch.object(
+            mova_adapter_module,
+            "crop_and_resize",
+            lambda image, **kwargs: image,
+        ), patch.object(
+            mova_adapter_module,
+            "save_video_with_audio",
+            lambda *args, **kwargs: None,
+        ), patch.object(
+            mova_adapter_module,
+            "_MOVA_IMPORT_ERROR",
+            None,
         ):
             adapter._get_or_load_pipeline({"checkpoint_dir": str(weights_dir), "offload": "cpu"})
 
         self.assertEqual(captured["checkpoint_dir"], str(weights_dir))
-        self.assertEqual(captured["load_kwargs"]["local_files_only"], True)
+        self.assertIn("torch_dtype", captured["load_kwargs"])
 
     def test_longcat_capabilities_enable_persistent_worker_and_batching(self) -> None:
         registry = load_registry()

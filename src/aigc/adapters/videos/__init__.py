@@ -25,7 +25,7 @@ from aigc.adapters.videos.diffusers_base import DiffusersVideoAdapterBase
 from aigc.adapters.videos.helios import HeliosPyramidAdapter
 from aigc.adapters.videos.hunyuan_video import HunyuanVideo15Adapter
 from aigc.adapters.videos.longcat import LongCatVideoAdapter
-from aigc.adapters.videos.mova import MOVAVideoAdapter
+from aigc.adapters.videos.mova_adapter import MOVAVideoAdapter
 from aigc.adapters.videos.wan_t2v import WanT2VDiffusersAdapter
 from aigc.adapters.videos.wan_ti2v import WanTI2VAdapter
 
