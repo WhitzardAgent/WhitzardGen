@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aigc.adapters.base import AdapterCapabilities
+from aigc.adapters.base import AdapterCapabilities, ProgressCallback
 from aigc.adapters.videos.common import resolve_video_cache_dir
 from aigc.adapters.videos.diffusers_base import DiffusersVideoAdapterBase
 
@@ -24,7 +24,6 @@ class HunyuanVideo15Adapter(DiffusersVideoAdapterBase):
     default_fps = 24
     default_num_frames = 121
     default_num_inference_steps = 50
-    default_guidance_scale = 4.0
 
     def load_pipeline(
         self,
@@ -50,3 +49,55 @@ class HunyuanVideo15Adapter(DiffusersVideoAdapterBase):
         if getattr(pipe, "vae", None) is not None and hasattr(pipe.vae, "enable_tiling"):
             pipe.vae.enable_tiling()
         return pipe
+
+    def generate_frames_batch(
+        self,
+        *,
+        pipe: Any,
+        plan: Any,
+        prompts: list[str],
+        negative_prompts: list[str],
+        width: int,
+        height: int,
+        num_frames: int,
+        num_inference_steps: int,
+        guidance_scale: float,
+        seed: int | None,
+        torch: Any,
+        device: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> list[list[Any]]:
+        del guidance_scale
+        from aigc.adapters.videos.common import build_diffusers_progress_kwargs, normalize_frame_batches
+
+        generator_device = "cuda" if device == "cuda" else "cpu"
+        generator = None
+        if seed is not None:
+            generators = [
+                torch.Generator(generator_device).manual_seed(seed + batch_index)
+                for batch_index in range(len(prompts))
+            ]
+            generator = generators[0] if len(generators) == 1 else generators
+        kwargs: dict[str, Any] = {
+            "prompt": prompts[0] if len(prompts) == 1 else prompts,
+            "width": width,
+            "height": height,
+            "num_frames": num_frames,
+            "num_inference_steps": num_inference_steps,
+        }
+        kwargs.update(
+            build_diffusers_progress_kwargs(
+                pipe=pipe,
+                total_steps=num_inference_steps,
+                progress_callback=progress_callback,
+            )
+        )
+        if generator is not None:
+            kwargs["generator"] = generator
+        if self.capabilities.supports_negative_prompt:
+            kwargs["negative_prompt"] = (
+                negative_prompts[0] if len(negative_prompts) == 1 else negative_prompts
+            )
+        output = pipe(**kwargs)
+        frames = getattr(output, "frames", None)
+        return normalize_frame_batches(self.model_config.name, frames)

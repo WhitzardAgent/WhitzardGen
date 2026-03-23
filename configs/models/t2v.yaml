@@ -169,25 +169,31 @@ models:
       supports_batch_prompts: false
       max_batch_size: 1
       preferred_batch_size: 1
-      supports_negative_prompt: false
+      supports_negative_prompt: true
       supports_seed: true
-      output_types: [video, audio]
+      output_types: [video]
       supported_languages: [en, zh]
     runtime:
-      execution_mode: external_process
+      execution_mode: in_process
       gpu_required: true
       min_vram_gb: 48
       recommended_vram_gb: 80
       env_spec: mova_720p
+      worker_strategy: persistent_worker
+      gpus_per_replica: 1
+      supports_multi_replica: true
     generation_defaults:
       width: 1280
       height: 720
       fps: 24
       num_frames: 193
-      num_inference_steps: 25
+      num_inference_steps: 50
       guidance_scale: 5.0
+      sigma_shift: 5.0
       offload: cpu
       cp_size: 1
+      attn_type: fa
+      remove_video_dit: false
     weights:
       hf_repo: OpenMOSS-Team/MOVA-720p
 
@@ -209,7 +215,7 @@ models:
       gpu_required: true
       min_vram_gb: 14
       recommended_vram_gb: 24
-      env_spec: hunyuan_video_15
+      env_spec: wan22
       worker_strategy: persistent_worker
       gpus_per_replica: 1
       supports_multi_replica: false
@@ -219,7 +225,6 @@ models:
       fps: 24
       num_frames: 121
       num_inference_steps: 50
-      guidance_scale: 4.0
     weights:
       hf_repo: tencent/HunyuanVideo-1.5
       diffusers_repo: hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_t2v
@@ -242,7 +247,7 @@ models:
       gpu_required: true
       min_vram_gb: 14
       recommended_vram_gb: 24
-      env_spec: hunyuan_video_15
+      env_spec: wan22
       worker_strategy: persistent_worker
       gpus_per_replica: 1
       supports_multi_replica: false
@@ -252,7 +257,6 @@ models:
       fps: 24
       num_frames: 121
       num_inference_steps: 50
-      guidance_scale: 4.0
     weights:
       hf_repo: tencent/HunyuanVideo-1.5
       diffusers_repo: hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_t2v

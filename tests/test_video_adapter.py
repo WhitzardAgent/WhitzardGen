@@ -10,6 +10,7 @@ from aigc.adapters.video_family import (
     HeliosPyramidAdapter,
     HunyuanVideo15Adapter,
     LongCatVideoAdapter,
+    MOVAVideoAdapter,
     WanT2VDiffusersAdapter,
     extract_video_metadata,
     metadata_sidecar_path,
@@ -635,6 +636,163 @@ class VideoAdapterTests(unittest.TestCase):
             "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_t2v",
         )
         self.assertTrue(adapter.capabilities.supports_persistent_worker)
+
+    def test_hunyuan_video_generate_frames_omits_guidance_scale(self) -> None:
+        registry = load_registry()
+        adapter = HunyuanVideo15Adapter(model_config=registry.get_model("HunyuanVideo-1.5"))
+
+        class _FakeTorch:
+            class Generator:
+                def __init__(self, device: str) -> None:
+                    self.device = device
+                    self.seed = None
+
+                def manual_seed(self, seed: int):
+                    self.seed = seed
+                    return self
+
+        class _FakePipe:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(kwargs)
+                return type("Output", (), {"frames": [[b"a"], [b"b"]]})()
+
+        pipe = _FakePipe()
+        frames = adapter.generate_frames_batch(
+            pipe=pipe,
+            plan=type("Plan", (), {"inputs": {}})(),
+            prompts=["prompt one", "prompt two"],
+            negative_prompts=["neg one", "neg two"],
+            width=1280,
+            height=720,
+            num_frames=121,
+            num_inference_steps=50,
+            guidance_scale=4.0,
+            seed=7,
+            torch=_FakeTorch,
+            device="cuda",
+        )
+
+        self.assertEqual(frames, [[b"a"], [b"b"]])
+        self.assertNotIn("guidance_scale", pipe.calls[0])
+        self.assertEqual(pipe.calls[0]["negative_prompt"], ["neg one", "neg two"])
+        self.assertEqual(len(pipe.calls[0]["generator"]), 2)
+
+    def test_mova_capabilities_enable_persistent_worker_and_negative_prompt(self) -> None:
+        registry = load_registry()
+        adapter = MOVAVideoAdapter(model_config=registry.get_model("MOVA-720p"))
+
+        self.assertTrue(adapter.capabilities.supports_persistent_worker)
+        self.assertEqual(adapter.capabilities.preferred_worker_strategy, "persistent_worker")
+        self.assertTrue(adapter.capabilities.supports_negative_prompt)
+        self.assertEqual(adapter.real_execution_mode, "in_process")
+
+    def test_mova_execute_real_uses_reference_image_and_saves_video(self) -> None:
+        registry = load_registry()
+        adapter = MOVAVideoAdapter(model_config=registry.get_model("MOVA-720p"))
+        tmpdir = Path(tempfile.mkdtemp())
+        ref_path = tmpdir / "reference.png"
+        ref_path.write_text("stub", encoding="utf-8")
+        plan = adapter.prepare(
+            prompts=["a violinist performs on a rainy city rooftop"],
+            prompt_ids=["p001"],
+            params={
+                "width": 1280,
+                "height": 720,
+                "fps": 24,
+                "num_frames": 193,
+                "num_inference_steps": 50,
+                "guidance_scale": 5.0,
+                "negative_prompts": [""],
+                "seed": 11,
+                "ref_path": str(ref_path),
+                "_runtime_config": {"execution_mode": "real"},
+            },
+            workdir=str(tmpdir),
+        )
+        plan.inputs["batch_id"] = "batch_001"
+        events: list[dict[str, object]] = []
+        captured: dict[str, object] = {}
+
+        class _FakeImage:
+            def convert(self, mode: str):
+                captured["convert_mode"] = mode
+                return "rgb-image"
+
+        class _FakeImageModule:
+            @staticmethod
+            def open(path: Path):
+                captured["opened_path"] = str(path)
+                return _FakeImage()
+
+        class _FakeAudio:
+            def cpu(self):
+                captured["audio_cpu"] = True
+                return self
+
+            def squeeze(self):
+                captured["audio_squeeze"] = True
+                return self
+
+        class _FakePipe:
+            audio_sample_rate = 48000
+
+            def __call__(self, **kwargs):
+                captured["pipe_kwargs"] = kwargs
+                return [[["frame-1", "frame-2"]], [_FakeAudio()]]
+
+        def _fake_crop_and_resize(image, *, height: int, width: int):
+            captured["crop_args"] = {"image": image, "height": height, "width": width}
+            return "cropped-image"
+
+        def _fake_save_video_with_audio(video, audio, output_path: str, **kwargs):
+            captured["saved"] = {
+                "video": video,
+                "audio": audio,
+                "output_path": output_path,
+                "kwargs": kwargs,
+            }
+            Path(output_path).write_text("video", encoding="utf-8")
+
+        class _FakeTorch:
+            @staticmethod
+            def cuda():
+                return None
+
+        with patch.object(
+            adapter,
+            "_get_or_load_pipeline",
+            return_value=(
+                _FakePipe(),
+                _FakeTorch,
+                "cuda",
+                _FakeImageModule,
+                _fake_crop_and_resize,
+                _fake_save_video_with_audio,
+            ),
+        ):
+            result = adapter.execute(
+                plan=plan,
+                prompts=["a violinist performs on a rainy city rooftop"],
+                params={},
+                workdir=str(tmpdir),
+                progress_callback=events.append,
+            )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(captured["opened_path"], str(ref_path))
+        self.assertEqual(captured["convert_mode"], "RGB")
+        self.assertEqual(captured["crop_args"]["height"], 720)
+        self.assertEqual(captured["crop_args"]["width"], 1280)
+        self.assertEqual(captured["pipe_kwargs"]["prompt"], "a violinist performs on a rainy city rooftop")
+        self.assertEqual(captured["pipe_kwargs"]["negative_prompt"], "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指")
+        self.assertEqual(captured["pipe_kwargs"]["cfg_scale"], 5.0)
+        self.assertEqual(captured["pipe_kwargs"]["sigma_shift"], 5.0)
+        self.assertEqual(captured["saved"]["kwargs"]["sample_rate"], 48000)
+        self.assertTrue(Path(result.outputs["p001"]["path"]).exists())
+        self.assertEqual([event["phase"] for event in events], ["preparing_batch", "generating", "exporting", "completed"])
 
     def test_longcat_capabilities_enable_persistent_worker_and_batching(self) -> None:
         registry = load_registry()

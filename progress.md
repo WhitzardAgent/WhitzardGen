@@ -4,6 +4,62 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-23 00:40:00 CST
+- Corrected the HunyuanVideo 1.5 diffusers integration to match real pipeline behavior:
+  - `HunyuanVideo15Adapter` now omits `guidance_scale` entirely when calling `HunyuanVideo15Pipeline.__call__`
+  - this matches the actual pipeline signature and fixes the real worker failure:
+    - `unexpected keyword argument 'guidance_scale'`
+  - both Hunyuan registry entries now use:
+    - `env_spec: wan22`
+  - removed misleading `guidance_scale` defaults from Hunyuan generation config
+- Added focused regression coverage to lock in that Hunyuan no longer forwards `guidance_scale`.
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/adapters/videos/hunyuan_video.py tests/test_video_adapter.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry tests.test_video_adapter -v`
+  - result: 32 tests passed
+- 2026-03-23 00:25:00 CST
+- Converted `MOVA-720p` from external-process execution to an in-process video adapter path:
+  - `src/aigc/adapters/videos/mova.py` now uses `BaseVideoGenerationAdapter`
+  - MOVA now supports:
+    - in-process execution
+    - persistent-worker reuse
+    - negative prompts
+    - repo-based Python imports through `repo_path`
+    - reference-image input via `ref_path` / `image_path`
+    - offload settings such as `none` / `cpu` / `group`
+  - the current in-process MOVA integration is intentionally constrained to `cp_size=1`
+    - this keeps the new path aligned with the current single-process runtime kernel
+    - multi-GPU scaling should currently happen through multi-replica scheduling, not in-process CP
+- Updated MOVA registry/runtime defaults in `configs/models/t2v.yaml`:
+  - execution mode is now `in_process`
+  - worker strategy is now `persistent_worker`
+  - generation defaults now match the reference more closely, including:
+    - `num_inference_steps: 50`
+    - `sigma_shift: 5.0`
+    - `offload: cpu`
+    - `cp_size: 1`
+    - `attn_type: fa`
+    - `remove_video_dit: false`
+- Added a local override stub for MOVA in `configs/local_models/t2v.yaml`.
+- Removed MOVA-specific hard-coded `offload` / `cp_size` overrides from `run_flow` so those values now remain config-driven.
+- Extended prompt-parameter validation for MOVA-related keys:
+  - `cfg_scale`
+  - `sigma_shift`
+  - `remove_video_dit`
+  - `offload_to_disk_path`
+  - `attn_type`
+- Added focused regression coverage for:
+  - MOVA adapter capabilities
+  - MOVA in-process real execution flow with reference image and audio/video save hook
+  - MOVA mock-mode persistent-worker strategy in run flow
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/adapters/videos/mova.py src/aigc/prompts/loader.py src/aigc/run_flow.py tests/test_video_adapter.py tests/test_run_flow.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry tests.test_video_adapter -v`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_selected_mova_video_model_uses_persistent_worker_strategy_in_mock_mode -v`
+  - result: passed when rerun outside the local sandbox socket-bind restriction
 - 2026-03-23 00:10:00 CST
 - Aligned HunyuanVideo 1.5 diffusers integration with the exact requested T2V model variant name:
   - existing `HunyuanVideo-1.5` integration was already present through `HunyuanVideo15Adapter`

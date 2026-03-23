@@ -29,11 +29,13 @@ _INT_PARAMETER_KEYS = {
 _FLOAT_PARAMETER_KEYS = {
     "guidance_scale",
     "guidance_scale_2",
+    "cfg_scale",
+    "sigma_shift",
     "temperature",
     "top_p",
     "repetition_penalty",
 }
-_BOOL_PARAMETER_KEYS = {"stream", "do_sample", "enable_thinking"}
+_BOOL_PARAMETER_KEYS = {"stream", "do_sample", "enable_thinking", "remove_video_dit"}
 _STRING_PARAMETER_KEYS = {
     "attn_implementation",
     "moe_impl",
@@ -41,6 +43,8 @@ _STRING_PARAMETER_KEYS = {
     "checkpoint_dir",
     "repo_dir",
     "offload",
+    "offload_to_disk_path",
+    "attn_type",
     "image_path",
     "ref_path",
     "resolution",

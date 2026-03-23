@@ -2860,8 +2860,6 @@ def _model_default_generation_params(model: ModelInfo) -> dict[str, object]:
                     or model.weights.get("local_path")
                     or "/path/to/MOVA-720p"
                 ),
-                "offload": "cpu",
-                "cp_size": 1,
             }
         )
 

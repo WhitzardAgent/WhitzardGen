@@ -274,6 +274,32 @@ class RunFlowTests(unittest.TestCase):
             "persistent_worker",
         )
 
+    def test_selected_mova_video_model_uses_persistent_worker_strategy_in_mock_mode(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "mova_video.txt"
+        prompts_path.write_text("a lantern glows beside a stormy mountain path\n", encoding="utf-8")
+
+        summary = run_single_model(
+            model_name="MOVA-720p",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "persistent_mova_video_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+        )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "mova-720p"
+        task_file = next(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        payload = json.loads(task_file.read_text(encoding="utf-8"))
+        self.assertEqual(payload["worker_strategy"], "persistent_worker")
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["per_model_summary"]["MOVA-720p"]["worker_strategy"],
+            "persistent_worker",
+        )
+
     def test_wan_mock_run_batches_two_prompts_into_one_task(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "wan_batch.txt"
