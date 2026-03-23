@@ -624,6 +624,18 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertEqual(adapter.capabilities.preferred_batch_size, 2)
         self.assertTrue(adapter.capabilities.supports_persistent_worker)
 
+    def test_hunyuan_video_diffusers_variant_uses_same_adapter_and_repo(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("HunyuanVideo-1.5-Diffusers-720p_t2v")
+        adapter = HunyuanVideo15Adapter(model_config=model)
+
+        self.assertEqual(model.adapter, "HunyuanVideo15Adapter")
+        self.assertEqual(
+            model.weights["diffusers_repo"],
+            "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_t2v",
+        )
+        self.assertTrue(adapter.capabilities.supports_persistent_worker)
+
     def test_longcat_capabilities_enable_persistent_worker_and_batching(self) -> None:
         registry = load_registry()
         adapter = LongCatVideoAdapter(model_config=registry.get_model("LongCat-Video"))

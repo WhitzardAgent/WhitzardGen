@@ -3,14 +3,13 @@
 Wan2.2-T2V-A14B-Diffusers:
   repo_path: /inspire/qb-ilm/project/control-technology/25015/deps/Wan2.2
   weights_path: /inspire/qb-ilm/project/control-technology/public/models/Wan2.2-T2V-A14B-Diffusers
-  max_gpus:
 
 CogVideoX-5B:
   weights_path: /inspire/qb-ilm/project/control-technology/public/models/CogVideoX-5B
 
 LongCat-Video:
-  repo_path:
-  weights_path:
+  repo_path: /inspire/qb-ilm/project/control-technology/25015/deps/Wan2.2
+  weights_path: 
   hf_cache_dir:
   # Example:
   # generation_defaults:
@@ -19,5 +18,9 @@ LongCat-Video:
   #   guidance_scale: 3.5
 
 Helios:
+  local_path:
+  hf_cache_dir:
+
+HunyuanVideo-1.5-Diffusers-720p_t2v:
   local_path:
   hf_cache_dir:

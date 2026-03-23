@@ -4,6 +4,24 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-23 00:10:00 CST
+- Aligned HunyuanVideo 1.5 diffusers integration with the exact requested T2V model variant name:
+  - existing `HunyuanVideo-1.5` integration was already present through `HunyuanVideo15Adapter`
+  - added an explicit registry entry for:
+    - `HunyuanVideo-1.5-Diffusers-720p_t2v`
+  - this new entry reuses the same:
+    - adapter
+    - runtime policy
+    - env spec
+    - generation defaults
+    - diffusers repo
+  - added a matching local-override stub in `configs/local_models/t2v.yaml`
+- Added focused regression coverage to confirm the exact diffusers variant name resolves correctly and uses the same adapter path.
+- Focused validation completed:
+  - `python3 -m py_compile tests/test_registry.py tests/test_video_adapter.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_registry tests.test_video_adapter -v`
+  - result: 29 tests passed
 - 2026-03-21 01:45:00 CST
 - Hardened the legacy prompt CSV import script for noisy source-language fields:
   - `utils/import_legacy_prompt_csv.py` now supports:
