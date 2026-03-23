@@ -4,6 +4,20 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-23 01:50:00 CST
+- Removed the remaining Hugging Face hub fallback path from MOVA pipeline loading:
+  - `MOVA.from_pretrained(...)` now always uses:
+    - `local_files_only=True`
+  - combined with the earlier checkpoint-dir tightening, MOVA now loads strictly from the configured local directory
+  - this should prevent the previous behavior where an incomplete or misresolved local path could still drift into hub-style loading logic
+- Added focused regression coverage to confirm MOVA forwards:
+  - `local_files_only=True`
+  - into `MOVA.from_pretrained(...)`
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/adapters/videos/mova.py tests/test_video_adapter.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter tests.test_registry -v`
+  - result: 35 tests passed
 - 2026-03-23 01:35:00 CST
 - Tightened the `MOVA-720p` local-checkpoint loading path to avoid accidental remote/Hugging Face fallback:
   - real MOVA execution now requires an explicit local checkpoint source via:
@@ -2330,6 +2344,11 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
+- Updated at 2026-03-23 01:50:00 CST.
+- `MOVA-720p` now has both guardrails in place:
+  - local checkpoint directory is mandatory
+  - `MOVA.from_pretrained(...)` is forced to `local_files_only=True`
+- If MOVA still stalls remotely, the next likely cause is the structure or size of the local checkpoint itself rather than an unintended hub fallback.
 - Updated at 2026-03-23 01:35:00 CST.
 - `MOVA-720p` now fails fast unless a real local checkpoint directory is configured, which should prevent the previous “seems to ignore local model and hangs loading” behavior.
 - If remote config is loaded correctly, MOVA should now resolve only from:
@@ -2602,6 +2621,7 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
+- Re-run one real remote MOVA startup after syncing this slice; if it still stalls, inspect the exact contents/layout of the configured checkpoint root.
 - Verify on the remote cluster that `aigc models inspect MOVA-720p` shows the expected effective local paths before the next real MOVA run.
 - Validate HunyuanVideo on remote hardware and, if needed, override:
   - `attn_implementation: flash_hub`

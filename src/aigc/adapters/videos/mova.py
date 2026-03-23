@@ -235,7 +235,11 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
             from mova.diffusion.pipelines.pipeline_mova import MOVA
             from mova.utils.data import save_video_with_audio
 
-            pipe = MOVA.from_pretrained(checkpoint_dir, torch_dtype=dtype)
+            pipe = MOVA.from_pretrained(
+                checkpoint_dir,
+                torch_dtype=dtype,
+                local_files_only=True,
+            )
 
         offload = str(params.get("offload", "cpu"))
         if offload == "none":
