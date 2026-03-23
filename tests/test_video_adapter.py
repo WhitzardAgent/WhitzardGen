@@ -742,6 +742,8 @@ class VideoAdapterTests(unittest.TestCase):
         tmpdir = Path(tempfile.mkdtemp())
         ref_path = tmpdir / "reference.png"
         ref_path.write_text("stub", encoding="utf-8")
+        checkpoint_dir = tmpdir / "MOVA-720p"
+        checkpoint_dir.mkdir()
         plan = adapter.prepare(
             prompts=["a violinist performs on a rainy city rooftop"],
             prompt_ids=["p001"],
@@ -755,6 +757,7 @@ class VideoAdapterTests(unittest.TestCase):
                 "negative_prompts": [""],
                 "seed": 11,
                 "ref_path": str(ref_path),
+                "checkpoint_dir": str(checkpoint_dir),
                 "_runtime_config": {"execution_mode": "real"},
             },
             workdir=str(tmpdir),
@@ -840,6 +843,24 @@ class VideoAdapterTests(unittest.TestCase):
         self.assertEqual(captured["saved"]["kwargs"]["sample_rate"], 48000)
         self.assertTrue(Path(result.outputs["p001"]["path"]).exists())
         self.assertEqual([event["phase"] for event in events], ["preparing_batch", "generating", "exporting", "completed"])
+
+    def test_mova_requires_local_checkpoint_dir_in_real_mode(self) -> None:
+        registry = load_registry()
+        adapter = MOVAVideoAdapter(model_config=registry.get_model("MOVA-720p"))
+        tmpdir = Path(tempfile.mkdtemp())
+        ref_path = tmpdir / "reference.png"
+        ref_path.write_text("stub", encoding="utf-8")
+
+        with self.assertRaisesRegex(RuntimeError, "requires a local checkpoint directory"):
+            adapter.prepare(
+                prompts=["a violinist performs on a rainy city rooftop"],
+                prompt_ids=["p001"],
+                params={
+                    "ref_path": str(ref_path),
+                    "_runtime_config": {"execution_mode": "real"},
+                },
+                workdir=str(tmpdir),
+            )
 
     def test_longcat_capabilities_enable_persistent_worker_and_batching(self) -> None:
         registry = load_registry()

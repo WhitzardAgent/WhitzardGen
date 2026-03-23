@@ -7,7 +7,6 @@ from aigc.adapters.base import AdapterCapabilities, ExecutionPlan, ProgressCallb
 from aigc.adapters.videos.base import BaseVideoGenerationAdapter
 from aigc.adapters.videos.common import (
     compute_duration_sec,
-    resolve_video_model_reference,
     resolve_video_repo_dir,
     temporary_repo_import_path,
 )
@@ -79,6 +78,7 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
                 raise RuntimeError(
                     "MOVA-720p requires `ref_path` (or `image_path`) for in-process inference."
                 )
+            self._resolve_checkpoint_dir(plan.inputs)
             cp_size = int(plan.inputs.get("cp_size", 1))
             if cp_size != 1:
                 raise RuntimeError(
@@ -223,12 +223,7 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
         if load_params:
             params.update(load_params)
 
-        checkpoint_dir = str(
-            params.get("checkpoint_dir")
-            or resolve_video_model_reference(self.model_config)
-        )
-        if Path(checkpoint_dir).exists() is False and str(checkpoint_dir).startswith("/"):
-            raise RuntimeError(f"MOVA-720p checkpoint directory does not exist: {checkpoint_dir}")
+        checkpoint_dir = self._resolve_checkpoint_dir(params)
         repo_dir = resolve_video_repo_dir(self.model_config)
         if repo_dir and not Path(repo_dir).exists():
             raise RuntimeError(f"MOVA-720p configured repo_path does not exist: {repo_dir}")
@@ -275,3 +270,24 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
         self._loaded_crop_and_resize = crop_and_resize
         self._loaded_save_video_with_audio = save_video_with_audio
         return pipe, torch, device, Image, crop_and_resize, save_video_with_audio
+
+    def _resolve_checkpoint_dir(self, params: dict[str, Any]) -> str:
+        checkpoint_dir = params.get("checkpoint_dir")
+        if checkpoint_dir not in (None, ""):
+            resolved = str(checkpoint_dir).strip()
+        else:
+            resolved = str(
+                self.model_config.weights.get("weights_path")
+                or self.model_config.weights.get("local_path")
+                or ""
+            ).strip()
+        if not resolved:
+            raise RuntimeError(
+                "MOVA-720p requires a local checkpoint directory via weights_path/local_path "
+                "or an explicit checkpoint_dir. hf_repo fallback is intentionally disabled for "
+                "this model to avoid accidental remote loading."
+            )
+        checkpoint_path = Path(resolved)
+        if not checkpoint_path.exists():
+            raise RuntimeError(f"MOVA-720p checkpoint directory does not exist: {checkpoint_path}")
+        return str(checkpoint_path)

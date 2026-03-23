@@ -2853,13 +2853,10 @@ def _model_default_generation_params(model: ModelInfo) -> dict[str, object]:
             }
         )
     elif model.name == "MOVA-720p":
+        checkpoint_dir = model.weights.get("weights_path") or model.weights.get("local_path")
         params.update(
             {
-                "checkpoint_dir": str(
-                    model.weights.get("weights_path")
-                    or model.weights.get("local_path")
-                    or "/path/to/MOVA-720p"
-                ),
+                "checkpoint_dir": str(checkpoint_dir) if checkpoint_dir else None,
             }
         )
 
