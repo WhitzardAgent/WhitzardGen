@@ -1,0 +1,29 @@
+name: detailed_sentence
+version: v1
+description: Detailed sentence or compact paragraph rewrite style.
+style_instruction: >
+  Rewrite as one natural, detailed, model-friendly sentence or compact paragraph while preserving core semantic intent.
+output_contract:
+  format: json
+  required_keys: [prompt]
+max_examples_per_request: 3
+few_shot_examples:
+  - id: detailed_zimage_001
+    applicability:
+      target_models: [Z-Image, FLUX.1-dev]
+    input:
+      prompt: a cat sitting on a chair
+    output:
+      prompt: A realistic domestic short-haired cat resting naturally on a wooden chair in a softly lit living room, with clear fur texture and grounded photographic detail.
+  - id: detailed_video_001
+    applicability:
+      target_models: [LongCat-Video, Wan2.2-T2V-A14B-Diffusers, CogVideoX-5B, HunyuanVideo-1.5, MOVA-720p]
+    input:
+      prompt: a train moving through snow
+    output:
+      prompt: A cinematic winter scene of a passenger train moving steadily through a snow-covered mountain pass, with drifting snow, crisp atmosphere, and natural motion continuity.
+  - id: detailed_generic_001
+    input:
+      prompt: city street at night
+    output:
+      prompt: A realistic nighttime city street with wet pavement reflections, active pedestrian motion, layered storefront lighting, and grounded urban detail.

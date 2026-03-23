@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +41,25 @@ class Qwen3TextAdapter(BaseTextGenerationAdapter):
         progress_callback: ProgressCallback | None = None,
     ) -> ExecutionResult:
         del workdir
-        tokenizer, model, torch = self._get_or_load_model()
         prompt_ids = list(plan.inputs.get("prompt_ids", []))
+        runtime = dict(plan.inputs.get("runtime", {}))
+        if runtime.get("execution_mode") == "mock":
+            mock_outputs: dict[str, dict[str, str]] = {}
+            for prompt_id, prompt_text in zip(prompt_ids, prompts, strict=True):
+                original_prompt = self._extract_original_prompt(prompt_text)
+                rewritten_prompt = f"{original_prompt} [rewritten]"
+                mock_outputs[prompt_id] = {
+                    "content": json.dumps({"prompt": rewritten_prompt}, ensure_ascii=False),
+                    "thinking_content": "",
+                    "raw_text": rewritten_prompt,
+                }
+            return ExecutionResult(
+                exit_code=0,
+                logs="qwen3 mock rewrite generation",
+                outputs=mock_outputs,
+            )
+
+        tokenizer, model, torch = self._get_or_load_model()
         enable_thinking = bool(
             params.get(
                 "enable_thinking",
@@ -268,3 +286,13 @@ class Qwen3TextAdapter(BaseTextGenerationAdapter):
         if not content:
             content = tokenizer.decode(output_ids, skip_special_tokens=True).strip("\n ")
         return thinking_content, content
+
+    def _extract_original_prompt(self, instruction: str) -> str:
+        marker = "Original prompt:"
+        if marker not in instruction:
+            return instruction.strip()
+        tail = instruction.split(marker, 1)[1]
+        terminator = "\n\nFew-shot examples:"
+        if terminator in tail:
+            tail = tail.split(terminator, 1)[0]
+        return tail.strip() or instruction.strip()

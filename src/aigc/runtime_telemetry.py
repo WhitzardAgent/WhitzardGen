@@ -97,21 +97,41 @@ class RunTelemetry:
         self._successful_prompts = 0
         self._failed_prompts = 0
         self._models: dict[str, ModelTelemetry] = {}
+        self._conditioning_summary: dict[str, object] | None = None
+        self._prompt_rewrite_summary: dict[str, object] | None = None
         self._task_started_at: dict[str, float] = {}
         self._write_status_snapshot(status="starting")
 
-    def set_plan(self, *, prepared_tasks_by_model: dict[str, list[object]]) -> None:
-        self._total_prompts = 0
-        self._total_tasks = 0
+    def set_plan(self, *, prepared_tasks_by_model: dict[str, list[object]], append: bool = False) -> None:
+        if not append:
+            self._total_prompts = 0
+            self._total_tasks = 0
+            for model_metrics in self._models.values():
+                model_metrics.total_tasks = 0
+                model_metrics.total_prompts = 0
         for model_name, prepared_tasks in prepared_tasks_by_model.items():
             model_metrics = self._models.setdefault(model_name, ModelTelemetry(model_name=model_name))
-            model_metrics.total_tasks = len(prepared_tasks)
-            model_metrics.total_prompts = sum(
+            task_count = len(prepared_tasks)
+            prompt_count = sum(
                 len(getattr(prepared_task.payload, "prompts", [])) for prepared_task in prepared_tasks
             )
-            self._total_tasks += model_metrics.total_tasks
-            self._total_prompts += model_metrics.total_prompts
+            if append:
+                model_metrics.total_tasks += task_count
+                model_metrics.total_prompts += prompt_count
+            else:
+                model_metrics.total_tasks = task_count
+                model_metrics.total_prompts = prompt_count
+            self._total_tasks += task_count
+            self._total_prompts += prompt_count
         self._write_status_snapshot(status="planned")
+
+    def set_conditioning_summary(self, summary: dict[str, object] | None) -> None:
+        self._conditioning_summary = dict(summary) if summary else None
+        self._write_status_snapshot(status="running")
+
+    def set_prompt_rewrite_summary(self, summary: dict[str, object] | None) -> None:
+        self._prompt_rewrite_summary = dict(summary) if summary else None
+        self._write_status_snapshot(status="running")
 
     def register_replica_assignments(
         self,
@@ -414,6 +434,8 @@ class RunTelemetry:
             "eta_sec": eta_sec,
             "models": models_payload,
             "replicas": replicas_payload,
+            "conditioning": dict(self._conditioning_summary) if self._conditioning_summary else None,
+            "prompt_rewrite": dict(self._prompt_rewrite_summary) if self._prompt_rewrite_summary else None,
         }
 
     @property

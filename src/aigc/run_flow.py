@@ -24,6 +24,16 @@ from aigc.prompts import PromptRecord, load_prompts
 from aigc.recovery import RecoveryItem, RecoveryPlan
 from aigc.registry.models import ModelInfo
 from aigc.registry import load_registry
+from aigc.prompt_rewrite import (
+    PromptRewriteConfigError,
+    load_prompt_rewrite_catalog,
+    render_few_shot_block as render_prompt_rewrite_few_shot_block,
+    render_output_contract as render_prompt_rewrite_output_contract,
+    render_rewrite_instruction,
+    resolve_prompt_rewrite_config,
+    select_few_shot_examples as select_prompt_rewrite_few_shot_examples,
+)
+from aigc.run_profiles import ConditioningSpec, PromptRewriteSpec
 from aigc.run_ledger import RunLedgerWriter, build_sample_ledger_records
 from aigc.run_store import write_failures_summary, write_run_manifest
 from aigc.runtime.persistent_ipc import (
@@ -150,6 +160,94 @@ class FailureBudget:
 
 
 @dataclass(slots=True)
+class ConditioningRequirement:
+    conditioning_type: str
+    target_param: str
+    prompt_param_aliases: tuple[str, ...]
+    required: bool = True
+
+
+@dataclass(slots=True)
+class ConditioningArtifact:
+    artifact_id: str
+    artifact_type: str
+    source_stage: str
+    source_model: str | None
+    source_prompt_id: str
+    target_model_name: str
+    path: str
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ConditioningRequest:
+    target_model_name: str
+    source_model_name: str
+    conditioning_type: str
+    target_param: str
+    source_prompt: PromptRecord
+    generation_defaults: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class PromptRewriteRequest:
+    artifact_id: str
+    stage_order: str
+    target_model_name: str
+    source_model_name: str
+    source_prompt_id: str
+    request_prompt_id: str
+    request_prompt: PromptRecord
+    source_prompt_text: str
+    template_name: str
+    style_family_name: str
+    generation_defaults: dict[str, object] = field(default_factory=dict)
+    available_gpus: list[int] | None = None
+    failure_policy: str = "fallback_original"
+    few_shot_example_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PromptRewriteArtifact:
+    artifact_id: str
+    stage_order: str
+    target_model_name: str
+    source_model_name: str
+    prompt_id: str
+    request_prompt_id: str
+    original_prompt: str
+    rewritten_prompt: str | None
+    status: str
+    used_prompt_source: str
+    template: str
+    style_family: str
+    error: str | None = None
+    few_shot_example_ids: list[str] = field(default_factory=list)
+    task_id: str | None = None
+    batch_id: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "artifact_id": self.artifact_id,
+            "stage_order": self.stage_order,
+            "target_model": self.target_model_name,
+            "source_model": self.source_model_name,
+            "prompt_id": self.prompt_id,
+            "request_prompt_id": self.request_prompt_id,
+            "original_prompt": self.original_prompt,
+            "rewritten_prompt": self.rewritten_prompt,
+            "status": self.status,
+            "used_prompt_source": self.used_prompt_source,
+            "template": self.template,
+            "style_family": self.style_family,
+            "error": self.error,
+            "few_shot_example_ids": list(self.few_shot_example_ids),
+            "task_id": self.task_id,
+            "batch_id": self.batch_id,
+        }
+
+
+@dataclass(slots=True)
 class TaskExecutionOutcome:
     result_payload: dict
     task_failed: bool
@@ -176,8 +274,19 @@ def _build_profile_manifest(
     profile_path: str | None,
     profile_generation_defaults: dict[str, object] | None,
     profile_runtime: dict[str, object] | None,
+    profile_global_negative_prompt: str | None = None,
+    profile_conditionings: list[dict[str, object]] | None = None,
+    profile_prompt_rewrites: list[dict[str, object]] | None = None,
 ) -> dict[str, object] | None:
-    if not profile_name and not profile_path and not profile_generation_defaults and not profile_runtime:
+    if (
+        not profile_name
+        and not profile_path
+        and not profile_generation_defaults
+        and not profile_runtime
+        and not profile_global_negative_prompt
+        and not profile_conditionings
+        and not profile_prompt_rewrites
+    ):
         return None
     payload: dict[str, object] = {}
     if profile_name:
@@ -188,6 +297,12 @@ def _build_profile_manifest(
         payload["generation_defaults"] = dict(profile_generation_defaults)
     if profile_runtime:
         payload["runtime"] = dict(profile_runtime)
+    if profile_global_negative_prompt:
+        payload["global_negative_prompt"] = profile_global_negative_prompt
+    if profile_conditionings:
+        payload["conditionings"] = [dict(conditioning) for conditioning in profile_conditionings]
+    if profile_prompt_rewrites:
+        payload["prompt_rewrites"] = [dict(rewrite) for rewrite in profile_prompt_rewrites]
     return payload
 
 
@@ -318,6 +433,7 @@ def run_single_model(
     batch_limit: int | None = None,
     progress: RunProgress | None = None,
     profile_generation_defaults: dict[str, object] | None = None,
+    profile_global_negative_prompt: str | None = None,
     continue_on_error: bool | None = None,
     max_failures: int | None = None,
     max_failure_rate: float | None = None,
@@ -334,6 +450,7 @@ def run_single_model(
         batch_limit=batch_limit,
         progress=progress,
         profile_generation_defaults=profile_generation_defaults,
+        profile_global_negative_prompt=profile_global_negative_prompt,
         continue_on_error=continue_on_error,
         max_failures=max_failures,
         max_failure_rate=max_failure_rate,
@@ -631,7 +748,7 @@ def run_recovery_plan(
         per_model_summary = _build_per_model_summary(
             models=models,
             all_records=all_records,
-            task_results=task_results,
+            task_results=primary_task_results,
             worker_strategies=worker_strategies,
             replica_plans_by_model=replica_plans_by_model,
             runtime_metrics=runtime_metrics,
@@ -801,6 +918,9 @@ def run_models(
     profile_path: str | None = None,
     profile_generation_defaults: dict[str, object] | None = None,
     profile_runtime: dict[str, object] | None = None,
+    profile_global_negative_prompt: str | None = None,
+    profile_conditionings: list[ConditioningSpec | dict[str, object]] | None = None,
+    profile_prompt_rewrites: list[PromptRewriteSpec | dict[str, object]] | None = None,
     continue_on_error: bool | None = None,
     max_failures: int | None = None,
     max_failure_rate: float | None = None,
@@ -810,6 +930,8 @@ def run_models(
         mock_mode=mock_mode,
     )
     registry = load_registry()
+    resolved_profile_conditionings = _coerce_profile_conditionings(profile_conditionings)
+    resolved_profile_prompt_rewrites = _coerce_profile_prompt_rewrites(profile_prompt_rewrites)
     if not model_names:
         raise RunFlowError("aigc run requires at least one model.")
     models = [registry.get_model(model_name) for model_name in model_names]
@@ -834,7 +956,7 @@ def run_models(
     run_logger = RunLogger(log_path=run_root / "running.log")
     progress = LoggedRunProgress(base=base_progress, logger=run_logger)
 
-    total_stages = 9
+    total_stages = 12
     stage_index = 1
     profile_label = profile_name or Path(profile_path).stem if profile_path else None
     progress.run_header(
@@ -895,9 +1017,11 @@ def run_models(
         "export_paths": {
             "samples_jsonl": str(ledger_path),
             "runtime_status_json": str(runtime_status_path),
+            "prompt_rewrites_jsonl": str(run_root / "prompt_rewrites.jsonl"),
         },
         "samples_ledger_path": str(ledger_path),
         "runtime_status_path": str(runtime_status_path),
+        "prompt_rewrites_path": str(run_root / "prompt_rewrites.jsonl"),
         "running_log_path": str(run_logger.log_path),
         "registry_path": str(registry.registry_path),
         "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
@@ -906,20 +1030,45 @@ def run_models(
             profile_path=profile_path,
             profile_generation_defaults=profile_generation_defaults,
             profile_runtime=profile_runtime,
+            profile_global_negative_prompt=profile_global_negative_prompt,
+            profile_conditionings=[spec.to_dict() for spec in resolved_profile_conditionings],
+            profile_prompt_rewrites=[spec.to_dict() for spec in resolved_profile_prompt_rewrites],
         ),
         "failure_policy": failure_policy.to_dict(),
     }
     write_run_manifest(run_root, initial_manifest)
     failures: list[dict[str, object]] = []
-    task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
+    prompt_rewrite_task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
+    conditioning_task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
+    primary_task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
+    prompt_rewrite_artifacts: list[PromptRewriteArtifact] = []
+    prompt_rewrite_summary = _build_prompt_rewrite_summary(
+        profile_prompt_rewrites=resolved_profile_prompt_rewrites
+    )
     export_path: Path | None = None
     failures_path = run_root / "failures.json"
     manifest_path = run_root / "run_manifest.json"
+    prompt_rewrites_path = run_root / "prompt_rewrites.jsonl"
     threshold_stop_reason: str | None = None
     try:
         progress.stage_start(stage_index, total_stages, "Ensuring environments")
         env_records: dict[str, EnvironmentRecord] = {}
-        for model in models:
+        source_model_names = sorted(
+            {
+                spec.source_model
+                for spec in resolved_profile_conditionings
+                if spec.source_mode == "generated" and spec.source_model
+            }
+        )
+        source_model_names = sorted(
+            set(source_model_names)
+            | {spec.source_model for spec in resolved_profile_prompt_rewrites}
+        )
+        environment_models: list[ModelInfo] = list(models)
+        for source_model_name in source_model_names:
+            if source_model_name not in {model.name for model in environment_models}:
+                environment_models.append(registry.get_model(source_model_name))
+        for model in environment_models:
             progress.env_message(f"Ensuring environment for model: {model.name}")
             env_records[model.name] = _resolve_environment_record(
                 manager=manager,
@@ -930,10 +1079,144 @@ def run_models(
         progress.stage_end(stage_index, total_stages, "Ensuring environments")
         stage_index += 1
 
+        effective_prompts_by_model: dict[str, list[PromptRecord]] = {
+            model.name: [_clone_prompt_record(prompt) for prompt in prompts]
+            for model in models
+        }
+
+        progress.stage_start(stage_index, total_stages, "Prompt Rewriting (before_conditioning)")
+        (
+            effective_prompts_by_model,
+            task_counter,
+            rewrite_artifacts_before,
+            rewrite_results_before,
+        ) = _run_prompt_rewrite_stage(
+            stage_order="before_conditioning",
+            models=models,
+            prompts_by_model=effective_prompts_by_model,
+            profile_prompt_rewrites=resolved_profile_prompt_rewrites,
+            registry=registry,
+            worker_runner=worker_runner,
+            execution_mode=resolved_execution_mode,
+            run_id=run_id,
+            run_root=run_root,
+            tasks_dir=tasks_dir,
+            workdir_root=workdir_root,
+            workers_root=workers_root,
+            env_records=env_records,
+            failures=failures,
+            progress=progress,
+            ledger_writer=ledger_writer,
+            telemetry=telemetry,
+            run_logger=run_logger,
+            base_progress=base_progress,
+            prompt_rewrite_summary=prompt_rewrite_summary,
+            task_counter_start=1,
+        )
+        prompt_rewrite_artifacts.extend(rewrite_artifacts_before)
+        prompt_rewrite_task_results.extend(rewrite_results_before)
+        telemetry.set_prompt_rewrite_summary(prompt_rewrite_summary)
+        progress.stage_end(stage_index, total_stages, "Prompt Rewriting (before_conditioning)")
+        stage_index += 1
+
+        progress.stage_start(stage_index, total_stages, "Conditioning Preparation")
+        (
+            conditioned_prompts_by_model,
+            conditioning_prepared_tasks_by_model,
+            conditioning_worker_strategies,
+            conditioning_source_models,
+            conditioning_summary,
+            task_counter,
+        ) = _resolve_conditioned_prompts_for_models(
+            models=models,
+            base_prompts_by_model=effective_prompts_by_model,
+            profile_conditionings=resolved_profile_conditionings,
+            registry=registry,
+            worker_runner=worker_runner,
+            execution_mode=resolved_execution_mode,
+            tasks_dir=tasks_dir,
+            workdir_root=workdir_root,
+            task_counter_start=task_counter,
+        )
+        telemetry.set_conditioning_summary(conditioning_summary)
+        if conditioning_source_models:
+            telemetry.set_plan(
+                prepared_tasks_by_model=conditioning_prepared_tasks_by_model,
+                append=False,
+            )
+            _execute_prepared_task_groups(
+                models=conditioning_source_models,
+                prepared_tasks_by_model=conditioning_prepared_tasks_by_model,
+                worker_strategies=conditioning_worker_strategies,
+                env_records=env_records,
+                execution_mode=resolved_execution_mode,
+                run_id=run_id,
+                run_root=run_root,
+                workers_root=workers_root,
+                failures=failures,
+                progress=progress,
+                ledger_writer=ledger_writer,
+                telemetry=telemetry,
+                failure_policy=failure_policy,
+                failure_budget=FailureBudget(total_planned_outputs=len(prompts)),
+                task_results_out=conditioning_task_results,
+                run_logger=run_logger,
+                base_progress=base_progress,
+                worker_runner=worker_runner,
+            )
+            generated_artifacts = _collect_generated_conditioning_artifacts(
+                conditioning_task_results=conditioning_task_results,
+            )
+            conditioning_summary["generated_artifacts"] = len(generated_artifacts)
+            _bind_generated_conditioning_artifacts(
+                models=models,
+                conditioned_prompts_by_model=conditioned_prompts_by_model,
+                artifacts=generated_artifacts,
+                conditioning_summary=conditioning_summary,
+            )
+            telemetry.set_conditioning_summary(conditioning_summary)
+        progress.stage_end(stage_index, total_stages, "Conditioning Preparation")
+        stage_index += 1
+
+        effective_prompts_by_model = conditioned_prompts_by_model
+        progress.stage_start(stage_index, total_stages, "Prompt Rewriting (after_conditioning)")
+        (
+            effective_prompts_by_model,
+            task_counter,
+            rewrite_artifacts_after,
+            rewrite_results_after,
+        ) = _run_prompt_rewrite_stage(
+            stage_order="after_conditioning",
+            models=models,
+            prompts_by_model=effective_prompts_by_model,
+            profile_prompt_rewrites=resolved_profile_prompt_rewrites,
+            registry=registry,
+            worker_runner=worker_runner,
+            execution_mode=resolved_execution_mode,
+            run_id=run_id,
+            run_root=run_root,
+            tasks_dir=tasks_dir,
+            workdir_root=workdir_root,
+            workers_root=workers_root,
+            env_records=env_records,
+            failures=failures,
+            progress=progress,
+            ledger_writer=ledger_writer,
+            telemetry=telemetry,
+            run_logger=run_logger,
+            base_progress=base_progress,
+            prompt_rewrite_summary=prompt_rewrite_summary,
+            task_counter_start=task_counter,
+        )
+        prompt_rewrite_artifacts.extend(rewrite_artifacts_after)
+        prompt_rewrite_task_results.extend(rewrite_results_after)
+        telemetry.set_prompt_rewrite_summary(prompt_rewrite_summary)
+        progress.stage_end(stage_index, total_stages, "Prompt Rewriting (after_conditioning)")
+        stage_index += 1
+
         progress.stage_start(stage_index, total_stages, "Preparing tasks")
         prepared_tasks_by_model: dict[str, list[PreparedTask]] = {}
         worker_strategies: dict[str, str] = {}
-        task_counter = 1
         for model in models:
             strategy = _resolve_worker_strategy(
                 registry=registry,
@@ -949,53 +1232,18 @@ def run_models(
             for directory in (model_tasks_dir, model_workdir_root, model_artifacts_root):
                 directory.mkdir(parents=True, exist_ok=True)
 
-            batched_prompts = list(
-                _batch_prompts_for_model(
-                    model=model,
-                    prompts=prompts,
-                    batch_limit=batch_limit,
-                    generation_defaults=profile_generation_defaults,
-                )
+            model_prepared_tasks, task_counter = _prepare_model_tasks(
+                model=model,
+                prompts=effective_prompts_by_model.get(model.name, []),
+                model_tasks_dir=model_tasks_dir,
+                model_workdir_root=model_workdir_root,
+                execution_mode=resolved_execution_mode,
+                strategy=strategy,
+                task_counter_start=task_counter,
+                generation_defaults=profile_generation_defaults,
+                global_negative_prompt=profile_global_negative_prompt,
+                batch_limit=batch_limit,
             )
-            total_tasks_for_model = len(batched_prompts)
-            model_prepared_tasks: list[PreparedTask] = []
-            for batch_number, prompt_batch in enumerate(batched_prompts, start=1):
-                task_id = f"task_{task_counter:06d}"
-                batch_id = f"{model_slug}_batch_{batch_number:06d}"
-                task_workdir = model_workdir_root / task_id
-                payload = TaskPayload(
-                    task_id=task_id,
-                    model_name=model.name,
-                    execution_mode=resolved_execution_mode,
-                    prompts=[_prompt_to_task_prompt(prompt) for prompt in prompt_batch],
-                    params=_default_generation_params(
-                        model,
-                        prompt_batch,
-                        generation_defaults=profile_generation_defaults,
-                    ),
-                    workdir=str(task_workdir),
-                    batch_id=batch_id,
-                    runtime_config={"worker_strategy": strategy},
-                    worker_strategy=strategy,
-                )
-                task_file = model_tasks_dir / f"{task_id}.json"
-                result_file = model_tasks_dir / f"{task_id}.result.json"
-                task_file.write_text(
-                    json.dumps(payload.to_dict(), indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                model_prepared_tasks.append(
-                    PreparedTask(
-                        model=model,
-                        payload=payload,
-                        task_file=task_file,
-                        result_file=result_file,
-                        batch_number=batch_number,
-                        total_tasks_for_model=total_tasks_for_model,
-                    )
-                )
-                task_counter += 1
-
             prepared_tasks_by_model[model.name] = model_prepared_tasks
 
         failure_budget = FailureBudget(
@@ -1005,135 +1253,39 @@ def run_models(
                 for prepared_task in prepared_tasks
             )
         )
-        telemetry.set_plan(prepared_tasks_by_model=prepared_tasks_by_model)
+        telemetry.set_plan(prepared_tasks_by_model=prepared_tasks_by_model, append=True)
         progress.stage_end(stage_index, total_stages, "Preparing tasks")
         stage_index += 1
 
         progress.stage_start(stage_index, total_stages, "Running tasks")
-        replica_plans_by_model: dict[str, list[ReplicaPlan]] = {}
-        for model in models:
-            strategy = worker_strategies[model.name]
-            prepared_tasks = prepared_tasks_by_model.get(model.name, [])
-            if strategy == "persistent_worker" and prepared_tasks:
-                replica_plans = _plan_replicas_for_model(
-                    model=model,
-                    prepared_tasks=prepared_tasks,
-                    execution_mode=resolved_execution_mode,
-                )
-                replica_plans_by_model[model.name] = replica_plans
-                telemetry.register_replica_assignments(
-                    model_name=model.name,
-                    replica_plans=replica_plans,
-                )
-                _log_replica_plan(progress=progress, model=model, replica_plans=replica_plans)
-                if len(replica_plans) == 1:
-                    replica_plan = replica_plans[0]
-                    with _PersistentWorkerSession(
-                        model=model,
-                        env_record=env_records[model.name],
-                        execution_mode=resolved_execution_mode,
-                        replica_id=replica_plan.replica_id,
-                        gpu_assignment=replica_plan.gpu_assignment,
-                        replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
-                        log_callback=lambda line: _handle_runtime_event(
-                            logger=run_logger,
-                            terminal_progress=base_progress,
-                            telemetry=telemetry,
-                            message=line,
-                        ),
-                    ) as session:
-                        for prepared_task in replica_plan.tasks:
-                            outcome = _execute_prepared_task(
-                                prepared_task=prepared_task,
-                                runner=lambda task, session=session: session.run_task(task),
-                                run_id=run_id,
-                                run_root=run_root,
-                                failures=failures,
-                                progress=progress,
-                                ledger_writer=ledger_writer,
-                                telemetry=telemetry,
-                            )
-                            task_results.append((model, prepared_task.payload, outcome.result_payload))
-                            _apply_failure_policy_after_task(
-                                outcome=outcome,
-                                prepared_task=prepared_task,
-                                failure_policy=failure_policy,
-                                failure_budget=failure_budget,
-                                progress=progress,
-                                model_name=model.name,
-                            )
-                else:
-                    _run_persistent_worker_replicas(
-                        model=model,
-                        env_record=env_records[model.name],
-                        replica_plans=replica_plans,
-                        execution_mode=resolved_execution_mode,
-                        run_id=run_id,
-                        run_root=run_root,
-                        workers_root=workers_root,
-                        failures=failures,
-                        progress=progress,
-                        ledger_writer=ledger_writer,
-                        telemetry=telemetry,
-                        failure_policy=failure_policy,
-                        failure_budget=failure_budget,
-                        task_results_out=task_results,
-                        log_callback=lambda line: _handle_runtime_event(
-                            logger=run_logger,
-                            terminal_progress=base_progress,
-                            telemetry=telemetry,
-                            message=line,
-                        ),
-                    )
-            else:
-                runner = worker_runner or _run_worker_task
-                for prepared_task in prepared_tasks:
-                    outcome = _execute_prepared_task(
-                        prepared_task=prepared_task,
-                        runner=lambda task, env_record=env_records[model.name], runner=runner: _invoke_worker_runner(
-                            runner,
-                            env_record,
-                            task.task_file,
-                            task.result_file,
-                            log_callback=lambda line: _handle_runtime_event(
-                                logger=run_logger,
-                                terminal_progress=base_progress,
-                                telemetry=telemetry,
-                                message=line,
-                            ),
-                        ),
-                        run_id=run_id,
-                        run_root=run_root,
-                        failures=failures,
-                        progress=progress,
-                        ledger_writer=ledger_writer,
-                        telemetry=telemetry,
-                    )
-                    task_results.append((model, prepared_task.payload, outcome.result_payload))
-                    _apply_failure_policy_after_task(
-                        outcome=outcome,
-                        prepared_task=prepared_task,
-                        failure_policy=failure_policy,
-                        failure_budget=failure_budget,
-                        progress=progress,
-                        model_name=model.name,
-                    )
-                if prepared_tasks:
-                    replica_plans_by_model[model.name] = [
-                        ReplicaPlan(replica_id=0, gpu_assignment=[], tasks=list(prepared_tasks))
-                    ]
-                    telemetry.register_replica_assignments(
-                        model_name=model.name,
-                        replica_plans=replica_plans_by_model[model.name],
-                    )
-        task_results.sort(key=lambda item: item[1].task_id)
+        replica_plans_by_model = _execute_prepared_task_groups(
+            models=models,
+            prepared_tasks_by_model=prepared_tasks_by_model,
+            worker_strategies=worker_strategies,
+            env_records=env_records,
+            execution_mode=resolved_execution_mode,
+            run_id=run_id,
+            run_root=run_root,
+            workers_root=workers_root,
+            failures=failures,
+            progress=progress,
+            ledger_writer=ledger_writer,
+            telemetry=telemetry,
+            failure_policy=failure_policy,
+            failure_budget=failure_budget,
+            task_results_out=primary_task_results,
+            run_logger=run_logger,
+            base_progress=base_progress,
+            worker_runner=worker_runner,
+        )
+        primary_task_results.sort(key=lambda item: item[1].task_id)
         progress.stage_end(stage_index, total_stages, "Running tasks")
         stage_index += 1
 
         progress.stage_start(stage_index, total_stages, "Exporting dataset")
         all_records = []
         record_index = 1
-        for model, payload, result_payload in task_results:
+        for model, payload, result_payload in primary_task_results:
             task_records = build_dataset_records(
                 run_id=run_id,
                 model=model,
@@ -1145,6 +1297,10 @@ def run_models(
             record_index += len(task_records)
 
         export_path = export_jsonl(all_records, exports_dir / "dataset.jsonl")
+        _write_prompt_rewrite_artifacts(
+            path=prompt_rewrites_path,
+            artifacts=prompt_rewrite_artifacts,
+        )
         progress.stage_end(stage_index, total_stages, "Exporting dataset")
         stage_index += 1
 
@@ -1155,7 +1311,7 @@ def run_models(
         per_model_summary = _build_per_model_summary(
             models=models,
             all_records=all_records,
-            task_results=task_results,
+            task_results=primary_task_results,
             worker_strategies=worker_strategies,
             replica_plans_by_model=replica_plans_by_model,
             runtime_metrics=runtime_metrics,
@@ -1170,22 +1326,29 @@ def run_models(
             "prompt_source": str(prompt_file),
             "prompt_count": len(prompts),
             "execution_mode": resolved_execution_mode,
-            "task_count": len(task_results),
+            "task_count": len(prompt_rewrite_task_results) + len(conditioning_task_results) + len(primary_task_results),
+            "prompt_rewrite_task_count": len(prompt_rewrite_task_results),
+            "primary_task_count": len(primary_task_results),
+            "conditioning_task_count": len(conditioning_task_results),
             "records_exported": len(all_records),
             "output_dir": str(run_root),
             "export_paths": {
                 "dataset_jsonl": str(export_path),
+                "prompt_rewrites_jsonl": str(prompt_rewrites_path),
                 "samples_jsonl": str(ledger_path),
                 "runtime_status_json": str(runtime_status_path),
                 "running_log": str(run_logger.log_path),
             },
             "export_path": str(export_path),
+            "prompt_rewrites_path": str(prompt_rewrites_path),
             "running_log_path": str(run_logger.log_path),
             "samples_ledger_path": str(ledger_path),
             "runtime_status_path": str(runtime_status_path),
             "failures_path": str(failures_path),
             "per_model_summary": per_model_summary,
             "runtime_metrics": runtime_metrics,
+            "conditioning_summary": conditioning_summary,
+            "prompt_rewrite_summary": prompt_rewrite_summary,
             "registry_path": str(registry.registry_path),
             "local_models_path": str(registry.local_models_path) if registry.local_models_path else None,
             "profile": _build_profile_manifest(
@@ -1193,6 +1356,9 @@ def run_models(
                 profile_path=profile_path,
                 profile_generation_defaults=profile_generation_defaults,
                 profile_runtime=profile_runtime,
+                profile_global_negative_prompt=profile_global_negative_prompt,
+                profile_conditionings=[spec.to_dict() for spec in resolved_profile_conditionings],
+                profile_prompt_rewrites=[spec.to_dict() for spec in resolved_profile_prompt_rewrites],
             ),
             "failure_policy": failure_policy.to_dict(),
             "failed_prompt_outputs": failure_budget.failed_prompt_outputs,
@@ -1209,7 +1375,7 @@ def run_models(
         # Compute simple success / failure counts for the final summary.
         task_statuses = [
             result["model_result"]["status"]
-            for _model, _payload, result in task_results
+            for _model, _payload, result in primary_task_results
         ]
         success_tasks, failed_tasks = summarize_task_statuses(task_statuses)
 
@@ -1220,7 +1386,7 @@ def run_models(
                 execution_mode=resolved_execution_mode,
                 model_names=[model.name for model in models],
                 prompt_count=len(prompts),
-                task_count=len(task_results),
+                task_count=len(prompt_rewrite_task_results) + len(conditioning_task_results) + len(primary_task_results),
                 success_tasks=success_tasks,
                 failed_tasks=failed_tasks,
                 output_dir=str(run_root),
@@ -1257,15 +1423,22 @@ def run_models(
             "running_log_path": str(run_logger.log_path),
             "samples_ledger_path": str(ledger_path),
             "runtime_status_path": str(runtime_status_path),
+            "prompt_rewrites_path": str(prompt_rewrites_path),
             "failures_path": str(failures_path),
             "failure_policy": failure_policy.to_dict(),
+            "conditioning_summary": conditioning_summary if "conditioning_summary" in locals() else None,
+            "prompt_rewrite_summary": prompt_rewrite_summary if "prompt_rewrite_summary" in locals() else None,
             "runtime_metrics": telemetry.finalize(status="failed"),
         }
         manifest_path = write_run_manifest(run_root, failure_manifest)
         failures_path = write_failures_summary(run_root, failures)
+        _write_prompt_rewrite_artifacts(
+            path=prompt_rewrites_path,
+            artifacts=prompt_rewrite_artifacts if "prompt_rewrite_artifacts" in locals() else [],
+        )
         task_statuses = [
             result["model_result"]["status"]
-            for _model, _payload, result in task_results
+            for _model, _payload, result in primary_task_results
         ]
         success_tasks, failed_tasks = summarize_task_statuses(task_statuses)
         progress.print_summary(
@@ -1275,7 +1448,7 @@ def run_models(
                 execution_mode=resolved_execution_mode,
                 model_names=[model.name for model in models],
                 prompt_count=len(prompts) if "prompts" in locals() else 0,
-                task_count=len(task_results),
+                task_count=len(prompt_rewrite_task_results) + len(conditioning_task_results) + len(primary_task_results),
                 success_tasks=success_tasks,
                 failed_tasks=max(failed_tasks, 1),
                 output_dir=str(run_root),
@@ -1311,7 +1484,7 @@ def run_models(
         model_names=[model.name for model in models],
         prompt_file=str(prompt_file),
         output_dir=str(run_root),
-        tasks_scheduled=len(task_results),
+        tasks_scheduled=len(prompt_rewrite_task_results) + len(conditioning_task_results) + len(primary_task_results),
         records_exported=len(all_records),
         export_path=str(export_path),
         execution_mode=resolved_execution_mode,
@@ -2235,6 +2408,148 @@ def _apply_failure_policy_after_task(
         raise RunFlowError(outcome.failure_message or f"Task {prepared_task.payload.task_id} failed.")
 
 
+def _execute_prepared_task_groups(
+    *,
+    models: list[ModelInfo],
+    prepared_tasks_by_model: dict[str, list[PreparedTask]],
+    worker_strategies: dict[str, str],
+    env_records: dict[str, EnvironmentRecord],
+    execution_mode: str,
+    run_id: str,
+    run_root: Path,
+    workers_root: Path,
+    failures: list[dict[str, object]],
+    progress: RunProgress,
+    ledger_writer: RunLedgerWriter,
+    telemetry: RunTelemetry | None,
+    failure_policy: FailurePolicy,
+    failure_budget: FailureBudget,
+    task_results_out: list[tuple[ModelInfo, TaskPayload, dict]],
+    run_logger: RunLogger,
+    base_progress: RunProgress,
+    worker_runner: Callable[[EnvironmentRecord, Path, Path], tuple[int, str]] | None = None,
+) -> dict[str, list[ReplicaPlan]]:
+    replica_plans_by_model: dict[str, list[ReplicaPlan]] = {}
+    for model in models:
+        strategy = worker_strategies[model.name]
+        prepared_tasks = prepared_tasks_by_model.get(model.name, [])
+        if strategy == "persistent_worker" and prepared_tasks:
+            replica_plans = _plan_replicas_for_model(
+                model=model,
+                prepared_tasks=prepared_tasks,
+                execution_mode=execution_mode,
+            )
+            replica_plans_by_model[model.name] = replica_plans
+            if telemetry is not None:
+                telemetry.register_replica_assignments(
+                    model_name=model.name,
+                    replica_plans=replica_plans,
+                )
+            _log_replica_plan(progress=progress, model=model, replica_plans=replica_plans)
+            if len(replica_plans) == 1:
+                replica_plan = replica_plans[0]
+                with _PersistentWorkerSession(
+                    model=model,
+                    env_record=env_records[model.name],
+                    execution_mode=execution_mode,
+                    replica_id=replica_plan.replica_id,
+                    gpu_assignment=replica_plan.gpu_assignment,
+                    replica_log_path=_replica_log_path(workers_root, model.name, replica_plan.replica_id),
+                    log_callback=lambda line: _handle_runtime_event(
+                        logger=run_logger,
+                        terminal_progress=base_progress,
+                        telemetry=telemetry,
+                        message=line,
+                    ),
+                ) as session:
+                    for prepared_task in replica_plan.tasks:
+                        outcome = _execute_prepared_task(
+                            prepared_task=prepared_task,
+                            runner=lambda task, session=session: session.run_task(task),
+                            run_id=run_id,
+                            run_root=run_root,
+                            failures=failures,
+                            progress=progress,
+                            ledger_writer=ledger_writer,
+                            telemetry=telemetry,
+                        )
+                        task_results_out.append((model, prepared_task.payload, outcome.result_payload))
+                        _apply_failure_policy_after_task(
+                            outcome=outcome,
+                            prepared_task=prepared_task,
+                            failure_policy=failure_policy,
+                            failure_budget=failure_budget,
+                            progress=progress,
+                            model_name=model.name,
+                        )
+            else:
+                _run_persistent_worker_replicas(
+                    model=model,
+                    env_record=env_records[model.name],
+                    replica_plans=replica_plans,
+                    execution_mode=execution_mode,
+                    run_id=run_id,
+                    run_root=run_root,
+                    workers_root=workers_root,
+                    failures=failures,
+                    progress=progress,
+                    ledger_writer=ledger_writer,
+                    telemetry=telemetry,
+                    failure_policy=failure_policy,
+                    failure_budget=failure_budget,
+                    task_results_out=task_results_out,
+                    log_callback=lambda line: _handle_runtime_event(
+                        logger=run_logger,
+                        terminal_progress=base_progress,
+                        telemetry=telemetry,
+                        message=line,
+                    ),
+                )
+        else:
+            runner = worker_runner or _run_worker_task
+            for prepared_task in prepared_tasks:
+                outcome = _execute_prepared_task(
+                    prepared_task=prepared_task,
+                    runner=lambda task, env_record=env_records[model.name], runner=runner: _invoke_worker_runner(
+                        runner,
+                        env_record,
+                        task.task_file,
+                        task.result_file,
+                        log_callback=lambda line: _handle_runtime_event(
+                            logger=run_logger,
+                            terminal_progress=base_progress,
+                            telemetry=telemetry,
+                            message=line,
+                        ),
+                    ),
+                    run_id=run_id,
+                    run_root=run_root,
+                    failures=failures,
+                    progress=progress,
+                    ledger_writer=ledger_writer,
+                    telemetry=telemetry,
+                )
+                task_results_out.append((model, prepared_task.payload, outcome.result_payload))
+                _apply_failure_policy_after_task(
+                    outcome=outcome,
+                    prepared_task=prepared_task,
+                    failure_policy=failure_policy,
+                    failure_budget=failure_budget,
+                    progress=progress,
+                    model_name=model.name,
+                )
+                if prepared_tasks:
+                    replica_plans_by_model[model.name] = [
+                        ReplicaPlan(replica_id=0, gpu_assignment=[], tasks=list(prepared_tasks))
+                    ]
+                if telemetry is not None:
+                    telemetry.register_replica_assignments(
+                        model_name=model.name,
+                        replica_plans=replica_plans_by_model[model.name],
+                    )
+    return replica_plans_by_model
+
+
 def _invoke_worker_runner(
     runner: Callable[..., tuple[int, str]],
     env_record: EnvironmentRecord,
@@ -2755,6 +3070,1019 @@ def _append_ledger_records(
         ledger_writer.append_records(records)
 
 
+def _clone_prompt_record(prompt: PromptRecord) -> PromptRecord:
+    return PromptRecord(
+        prompt_id=prompt.prompt_id,
+        prompt=prompt.prompt,
+        language=prompt.language,
+        negative_prompt=prompt.negative_prompt,
+        parameters=dict(prompt.parameters),
+        metadata=dict(prompt.metadata),
+        version=prompt.version,
+    )
+
+
+def _build_prompt_rewrite_summary(
+    *,
+    profile_prompt_rewrites: list[PromptRewriteSpec],
+) -> dict[str, object]:
+    return {
+        "enabled": bool(profile_prompt_rewrites),
+        "profile_specs": [spec.to_dict() for spec in profile_prompt_rewrites],
+        "source_models": sorted({spec.source_model for spec in profile_prompt_rewrites}),
+        "total_requests": 0,
+        "rewritten": 0,
+        "fallback_original": 0,
+        "failed_requests": 0,
+        "by_target_model": {},
+    }
+
+
+def _build_prompt_model_clones(
+    *,
+    models: list[ModelInfo],
+    prompts: list[PromptRecord],
+) -> dict[str, list[PromptRecord]]:
+    return {
+        model.name: [_clone_prompt_record(prompt) for prompt in prompts]
+        for model in models
+    }
+
+
+def _prompt_rewrite_artifact_id(
+    *,
+    stage_order: str,
+    target_model_name: str,
+    prompt_id: str,
+) -> str:
+    stage_slug = _slugify(stage_order)
+    model_slug = _slugify(target_model_name)
+    return f"prompt_rewrite_{stage_slug}_{model_slug}_{prompt_id}"
+
+
+def _get_applicable_prompt_rewrite_spec(
+    *,
+    model_name: str,
+    stage_order: str,
+    profile_prompt_rewrites: list[PromptRewriteSpec],
+) -> PromptRewriteSpec | None:
+    matches = [
+        spec
+        for spec in profile_prompt_rewrites
+        if spec.stage_order == stage_order and model_name in spec.target_models
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise RunFlowError(
+            f"Multiple prompt_rewrites specs matched model={model_name} stage_order={stage_order}."
+        )
+    return matches[0]
+
+
+def _run_prompt_rewrite_stage(
+    *,
+    stage_order: str,
+    models: list[ModelInfo],
+    prompts_by_model: dict[str, list[PromptRecord]],
+    profile_prompt_rewrites: list[PromptRewriteSpec],
+    registry,
+    worker_runner: Callable[[EnvironmentRecord, Path, Path], tuple[int, str]] | None,
+    execution_mode: str,
+    run_id: str,
+    run_root: Path,
+    tasks_dir: Path,
+    workdir_root: Path,
+    workers_root: Path,
+    env_records: dict[str, EnvironmentRecord],
+    failures: list[dict[str, object]],
+    progress: RunProgress,
+    ledger_writer: RunLedgerWriter,
+    telemetry: RunTelemetry,
+    run_logger: RunLogger,
+    base_progress: RunProgress,
+    prompt_rewrite_summary: dict[str, object],
+    task_counter_start: int,
+) -> tuple[
+    dict[str, list[PromptRecord]],
+    int,
+    list[PromptRewriteArtifact],
+    list[tuple[ModelInfo, TaskPayload, dict]],
+]:
+    del failures, ledger_writer, telemetry  # stage-level rewrite uses isolated failure/ledger sinks
+    stage_specs = [
+        spec for spec in profile_prompt_rewrites if spec.stage_order == stage_order
+    ]
+    if not stage_specs:
+        return prompts_by_model, task_counter_start, [], []
+
+    try:
+        catalog = load_prompt_rewrite_catalog()
+    except PromptRewriteConfigError as exc:
+        raise RunFlowError(str(exc)) from exc
+
+    stage_slug = _slugify(stage_order)
+    grouped_requests: dict[tuple[str, str, str, str, str], list[PromptRewriteRequest]] = {}
+    request_lookup: dict[str, PromptRewriteRequest] = {}
+    source_models: dict[str, ModelInfo] = {}
+    task_counter = task_counter_start
+    stage_artifacts: list[PromptRewriteArtifact] = []
+    stage_task_results: list[tuple[ModelInfo, TaskPayload, dict]] = []
+
+    for model in models:
+        model_prompts = prompts_by_model.get(model.name, [])
+        if not model_prompts:
+            continue
+        spec = _get_applicable_prompt_rewrite_spec(
+            model_name=model.name,
+            stage_order=stage_order,
+            profile_prompt_rewrites=profile_prompt_rewrites,
+        )
+        if spec is None:
+            continue
+        if spec.failure_policy != "fallback_original":
+            raise RunFlowError(
+                f"Unsupported prompt rewrite failure_policy for model={model.name}: {spec.failure_policy}"
+            )
+        try:
+            template, style_family = resolve_prompt_rewrite_config(
+                catalog=catalog,
+                template_name=spec.template,
+                style_family_name=spec.style_family,
+            )
+        except PromptRewriteConfigError as exc:
+            raise RunFlowError(str(exc)) from exc
+        few_shot_examples = select_prompt_rewrite_few_shot_examples(
+            style_family=style_family,
+            target_model_name=model.name,
+        )
+        few_shot_example_ids = [str(example.get("id", "")) for example in few_shot_examples]
+        source_models.setdefault(spec.source_model, registry.get_model(spec.source_model))
+        target_summary = _ensure_prompt_rewrite_target_summary(
+            prompt_rewrite_summary=prompt_rewrite_summary,
+            target_model_name=model.name,
+            source_model_name=spec.source_model,
+            template_name=template.name,
+            style_family_name=style_family.name,
+            stage_order=stage_order,
+        )
+
+        for prompt in model_prompts:
+            artifact_id = _prompt_rewrite_artifact_id(
+                stage_order=stage_order,
+                target_model_name=model.name,
+                prompt_id=prompt.prompt_id,
+            )
+            request_prompt_id = f"rewrite_{stage_slug}_{_slugify(model.name)}_{prompt.prompt_id}"
+            instruction = _render_prompt_rewrite_instruction(
+                original_prompt=prompt.prompt,
+                target_model_name=model.name,
+                source_model_name=spec.source_model,
+                template=template,
+                style_instruction=style_family.style_instruction,
+                few_shot_examples=few_shot_examples,
+                output_contract=render_prompt_rewrite_output_contract(style_family),
+                avoid_texts=[],
+            )
+            request_prompt = PromptRecord(
+                prompt_id=request_prompt_id,
+                prompt=instruction,
+                language=prompt.language,
+                metadata={
+                    "prompt_rewrite": {
+                        "target_model_name": model.name,
+                        "source_prompt_id": prompt.prompt_id,
+                        "artifact_id": artifact_id,
+                        "stage_order": stage_order,
+                    }
+                },
+            )
+            request = PromptRewriteRequest(
+                artifact_id=artifact_id,
+                stage_order=stage_order,
+                target_model_name=model.name,
+                source_model_name=spec.source_model,
+                source_prompt_id=prompt.prompt_id,
+                request_prompt_id=request_prompt_id,
+                request_prompt=request_prompt,
+                source_prompt_text=prompt.prompt,
+                template_name=template.name,
+                style_family_name=style_family.name,
+                generation_defaults=dict(spec.generation_defaults),
+                available_gpus=list(spec.available_gpus) if spec.available_gpus else None,
+                failure_policy=spec.failure_policy,
+                few_shot_example_ids=few_shot_example_ids,
+            )
+            request_lookup[request_prompt_id] = request
+            key = (
+                spec.source_model,
+                template.name,
+                style_family.name,
+                json.dumps(spec.generation_defaults, sort_keys=True, ensure_ascii=False),
+                json.dumps(spec.available_gpus or [], ensure_ascii=False),
+            )
+            grouped_requests.setdefault(key, []).append(request)
+            prompt_rewrite_summary["total_requests"] = int(prompt_rewrite_summary["total_requests"]) + 1
+            target_summary["requested"] = int(target_summary["requested"]) + 1
+
+    if not grouped_requests:
+        return prompts_by_model, task_counter, stage_artifacts, stage_task_results
+
+    prepared_tasks_by_source_model: dict[str, list[PreparedTask]] = {}
+    worker_strategies: dict[str, str] = {}
+    source_available_gpus: dict[str, list[int]] = {}
+    stage_tasks_root = tasks_dir / "prompt_rewrite" / stage_slug
+    stage_workdir_root = workdir_root / "prompt_rewrite" / stage_slug
+    for group_key in sorted(grouped_requests):
+        source_model_name, _template_name, _style_family_name, _defaults_sig, available_gpus_sig = group_key
+        requests = grouped_requests[group_key]
+        source_model = source_models[source_model_name]
+        worker_strategies.setdefault(
+            source_model_name,
+            _resolve_worker_strategy(
+                registry=registry,
+                model=source_model,
+                worker_runner=worker_runner,
+            ),
+        )
+        source_slug = _slugify(source_model_name)
+        model_tasks_dir = stage_tasks_root / source_slug
+        model_workdir_root = stage_workdir_root / source_slug
+        model_tasks_dir.mkdir(parents=True, exist_ok=True)
+        model_workdir_root.mkdir(parents=True, exist_ok=True)
+        prepared_group, task_counter = _prepare_model_tasks(
+            model=source_model,
+            prompts=[request.request_prompt for request in requests],
+            model_tasks_dir=model_tasks_dir,
+            model_workdir_root=model_workdir_root,
+            execution_mode=execution_mode,
+            strategy=worker_strategies[source_model_name],
+            task_counter_start=task_counter,
+            generation_defaults=requests[0].generation_defaults if requests else {},
+        )
+        prepared_tasks_by_source_model.setdefault(source_model_name, []).extend(prepared_group)
+        decoded_available = json.loads(available_gpus_sig)
+        single_gpu = _resolve_single_gpu_for_prompt_rewrite(
+            preferred=list(decoded_available) if isinstance(decoded_available, list) else None
+        )
+        if source_model_name not in source_available_gpus:
+            source_available_gpus[source_model_name] = single_gpu
+
+    temporary_run_root = run_root / "_prompt_rewrite_tmp" / stage_slug
+    temporary_workers_root = workers_root / "prompt_rewrite" / stage_slug
+    temporary_run_root.mkdir(parents=True, exist_ok=True)
+    temporary_workers_root.mkdir(parents=True, exist_ok=True)
+    temporary_ledger = RunLedgerWriter(temporary_run_root / "samples.jsonl")
+    rewrite_failures: list[dict[str, object]] = []
+    source_stage_errors: dict[str, str] = {}
+    try:
+        for source_model_name in sorted(prepared_tasks_by_source_model):
+            source_model = source_models[source_model_name]
+            source_tasks = prepared_tasks_by_source_model[source_model_name]
+            if not source_tasks:
+                continue
+            prepared_map = {source_model_name: source_tasks}
+            strategy_map = {source_model_name: worker_strategies[source_model_name]}
+            selected_gpus = source_available_gpus.get(source_model_name, [])
+            if selected_gpus:
+                progress.env_message(
+                    f"[rewrite] stage={stage_order} source_model={source_model_name} using_gpus={selected_gpus}"
+                )
+            with _temporary_available_gpus(selected_gpus):
+                try:
+                    _execute_prepared_task_groups(
+                        models=[source_model],
+                        prepared_tasks_by_model=prepared_map,
+                        worker_strategies=strategy_map,
+                        env_records=env_records,
+                        execution_mode=execution_mode,
+                        run_id=run_id,
+                        run_root=temporary_run_root,
+                        workers_root=temporary_workers_root,
+                        failures=rewrite_failures,
+                        progress=progress,
+                        ledger_writer=temporary_ledger,
+                        telemetry=None,
+                        failure_policy=FailurePolicy(continue_on_error=True),
+                        failure_budget=FailureBudget(
+                            total_planned_outputs=sum(len(task.payload.prompts) for task in source_tasks)
+                        ),
+                        task_results_out=stage_task_results,
+                        run_logger=run_logger,
+                        base_progress=base_progress,
+                        worker_runner=worker_runner,
+                    )
+                except Exception as exc:  # pragma: no cover - integration path
+                    source_stage_errors[source_model_name] = str(exc)
+                    progress.env_message(
+                        f"[WARN] prompt rewrite stage={stage_order} source_model={source_model_name} "
+                        f"failed, falling back to original prompts: {exc}"
+                    )
+    finally:
+        temporary_ledger.close()
+
+    rewritten_by_request_id: dict[str, tuple[str | None, str | None, str | None]] = {}
+    for model, payload, result in stage_task_results:
+        batch_items = list(result.get("model_result", {}).get("batch_items", []))
+        for batch_item in batch_items:
+            request_prompt_id = str(batch_item.get("prompt_id", "")).strip()
+            if not request_prompt_id:
+                continue
+            if str(batch_item.get("status", "")) != "success":
+                rewritten_by_request_id[request_prompt_id] = (
+                    None,
+                    "batch item status failed",
+                    payload.task_id,
+                )
+                continue
+            artifacts = list(batch_item.get("artifacts", []))
+            if not artifacts:
+                rewritten_by_request_id[request_prompt_id] = (
+                    None,
+                    "rewrite output artifacts missing",
+                    payload.task_id,
+                )
+                continue
+            first_artifact = artifacts[0]
+            artifact_path = Path(str(first_artifact.get("path", "")))
+            if not artifact_path.exists():
+                rewritten_by_request_id[request_prompt_id] = (
+                    None,
+                    f"rewrite output path missing: {artifact_path}",
+                    payload.task_id,
+                )
+                continue
+            raw_response = artifact_path.read_text(encoding="utf-8")
+            rewritten_prompt = _parse_prompt_rewrite_response(raw_response)
+            rewritten_by_request_id[request_prompt_id] = (
+                rewritten_prompt,
+                None if rewritten_prompt else "rewrite response empty",
+                payload.task_id,
+            )
+
+    for request_prompt_id, request in request_lookup.items():
+        target_prompts = prompts_by_model.get(request.target_model_name, [])
+        target_prompt = next(
+            (prompt for prompt in target_prompts if prompt.prompt_id == request.source_prompt_id),
+            None,
+        )
+        if target_prompt is None:
+            continue
+        rewritten_prompt, rewrite_error, task_id = rewritten_by_request_id.get(
+            request_prompt_id,
+            (
+                None,
+                source_stage_errors.get(request.source_model_name, "rewrite output missing"),
+                None,
+            ),
+        )
+        if rewritten_prompt:
+            target_prompt.prompt = rewritten_prompt
+            status = "rewritten"
+            used_prompt_source = "rewritten"
+            prompt_rewrite_summary["rewritten"] = int(prompt_rewrite_summary["rewritten"]) + 1
+        else:
+            status = "fallback_original"
+            used_prompt_source = "original_fallback"
+            prompt_rewrite_summary["fallback_original"] = int(prompt_rewrite_summary["fallback_original"]) + 1
+            prompt_rewrite_summary["failed_requests"] = int(prompt_rewrite_summary["failed_requests"]) + 1
+
+        target_summary = _ensure_prompt_rewrite_target_summary(
+            prompt_rewrite_summary=prompt_rewrite_summary,
+            target_model_name=request.target_model_name,
+            source_model_name=request.source_model_name,
+            template_name=request.template_name,
+            style_family_name=request.style_family_name,
+            stage_order=stage_order,
+        )
+        target_summary[status] = int(target_summary.get(status, 0)) + 1
+        if status != "rewritten":
+            target_summary["failed_requests"] = int(target_summary.get("failed_requests", 0)) + 1
+
+        artifact = PromptRewriteArtifact(
+            artifact_id=request.artifact_id,
+            stage_order=stage_order,
+            target_model_name=request.target_model_name,
+            source_model_name=request.source_model_name,
+            prompt_id=request.source_prompt_id,
+            request_prompt_id=request_prompt_id,
+            original_prompt=request.source_prompt_text,
+            rewritten_prompt=rewritten_prompt,
+            status=status,
+            used_prompt_source=used_prompt_source,
+            template=request.template_name,
+            style_family=request.style_family_name,
+            error=rewrite_error,
+            few_shot_example_ids=list(request.few_shot_example_ids),
+            task_id=task_id,
+            batch_id=None,
+        )
+        stage_artifacts.append(artifact)
+        _apply_prompt_rewrite_metadata(prompt=target_prompt, artifact=artifact)
+
+    return prompts_by_model, task_counter, stage_artifacts, stage_task_results
+
+
+def _ensure_prompt_rewrite_target_summary(
+    *,
+    prompt_rewrite_summary: dict[str, object],
+    target_model_name: str,
+    source_model_name: str,
+    template_name: str,
+    style_family_name: str,
+    stage_order: str,
+) -> dict[str, object]:
+    by_target = prompt_rewrite_summary.setdefault("by_target_model", {})
+    assert isinstance(by_target, dict)
+    summary = by_target.setdefault(
+        target_model_name,
+        {
+            "source_model": source_model_name,
+            "template": template_name,
+            "style_family": style_family_name,
+            "stage_orders": [],
+            "requested": 0,
+            "rewritten": 0,
+            "fallback_original": 0,
+            "failed_requests": 0,
+        },
+    )
+    assert isinstance(summary, dict)
+    stage_orders = summary.get("stage_orders")
+    if isinstance(stage_orders, list) and stage_order not in stage_orders:
+        stage_orders.append(stage_order)
+    return summary
+
+
+def _resolve_single_gpu_for_prompt_rewrite(*, preferred: list[int] | None) -> list[int]:
+    if preferred:
+        return [int(preferred[0])]
+    available = _resolve_available_gpus()
+    if available:
+        return [int(available[0])]
+    return []
+
+
+@contextlib.contextmanager
+def _temporary_available_gpus(gpu_ids: list[int]):
+    if not gpu_ids:
+        yield
+        return
+    previous = os.environ.get("AIGC_AVAILABLE_GPUS")
+    os.environ["AIGC_AVAILABLE_GPUS"] = ",".join(str(gpu_id) for gpu_id in gpu_ids)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("AIGC_AVAILABLE_GPUS", None)
+        else:
+            os.environ["AIGC_AVAILABLE_GPUS"] = previous
+
+
+def _render_prompt_rewrite_instruction(
+    *,
+    original_prompt: str,
+    target_model_name: str,
+    source_model_name: str,
+    template,
+    style_instruction: str,
+    few_shot_examples: list[dict[str, object]],
+    output_contract: str,
+    avoid_texts: list[str],
+) -> str:
+    avoid_block = "\n".join(f"- {text}" for text in avoid_texts) if avoid_texts else "- none"
+    return render_rewrite_instruction(
+        template=template,
+        values={
+            "original_prompt": original_prompt,
+            "target_model_name": target_model_name,
+            "source_model_name": source_model_name,
+            "style_instruction": style_instruction,
+            "few_shot_block": render_prompt_rewrite_few_shot_block(few_shot_examples),
+            "output_contract": output_contract,
+            "avoid_block": avoid_block,
+        },
+    )
+
+
+def _parse_prompt_rewrite_response(raw: str) -> str:
+    text = raw.strip()
+    if not text:
+        return ""
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            for key in ("prompt", "rewritten_prompt", "content"):
+                value = payload.get(key)
+                if value not in (None, ""):
+                    return str(value).strip()
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match is not None:
+        try:
+            payload = json.loads(match.group(0))
+            if isinstance(payload, dict):
+                for key in ("prompt", "rewritten_prompt", "content"):
+                    value = payload.get(key)
+                    if value not in (None, ""):
+                        return str(value).strip()
+        except json.JSONDecodeError:
+            pass
+    return text
+
+
+def _apply_prompt_rewrite_metadata(
+    *,
+    prompt: PromptRecord,
+    artifact: PromptRewriteArtifact,
+) -> None:
+    rewrite_payload = {
+        "status": artifact.status,
+        "source_model": artifact.source_model_name,
+        "template": artifact.template,
+        "style_family": artifact.style_family,
+        "artifact_id": artifact.artifact_id,
+        "original_prompt": artifact.original_prompt,
+        "used_prompt_source": artifact.used_prompt_source,
+        "stage_order": artifact.stage_order,
+        "few_shot_example_ids": list(artifact.few_shot_example_ids),
+        "error": artifact.error,
+    }
+    prompt.metadata["prompt_rewrite"] = dict(rewrite_payload)
+    history = list(prompt.metadata.get("prompt_rewrite_history", []))
+    history.append(dict(rewrite_payload))
+    prompt.metadata["prompt_rewrite_history"] = history
+
+
+def _write_prompt_rewrite_artifacts(
+    *,
+    path: Path,
+    artifacts: list[PromptRewriteArtifact],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for artifact in artifacts:
+            handle.write(json.dumps(artifact.to_dict(), ensure_ascii=False) + "\n")
+
+
+def _get_conditioning_requirement(model: ModelInfo) -> ConditioningRequirement | None:
+    if model.name == "MOVA-720p":
+        return ConditioningRequirement(
+            conditioning_type="image",
+            target_param="ref_path",
+            prompt_param_aliases=("ref_path", "image_path"),
+        )
+    return None
+
+
+def _get_applicable_conditioning_spec(
+    *,
+    model_name: str,
+    conditioning_type: str,
+    profile_conditionings: list[ConditioningSpec],
+) -> ConditioningSpec | None:
+    matches = [
+        spec
+        for spec in profile_conditionings
+        if spec.conditioning_type == conditioning_type and model_name in spec.target_models
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise RunFlowError(
+            f"Multiple conditioning specs matched model={model_name} conditioning_type={conditioning_type}."
+        )
+    return matches[0]
+
+
+def _provided_conditioning_path(
+    prompt: PromptRecord,
+    requirement: ConditioningRequirement,
+) -> str | None:
+    for key in requirement.prompt_param_aliases:
+        value = prompt.parameters.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _conditioning_artifact_id(
+    *,
+    target_model_name: str,
+    prompt_id: str,
+    conditioning_type: str,
+    source_stage: str,
+) -> str:
+    target_slug = _slugify(target_model_name)
+    stage_slug = _slugify(source_stage)
+    return f"{stage_slug}_{target_slug}_{conditioning_type}_{prompt_id}"
+
+
+def _build_conditioning_binding(
+    *,
+    artifact_id: str,
+    conditioning_type: str,
+    source_stage: str,
+    source_model: str | None,
+    source_prompt_id: str,
+    path: str,
+    target_param: str,
+) -> dict[str, object]:
+    return {
+        "artifact_id": artifact_id,
+        "artifact_type": conditioning_type,
+        "source_stage": source_stage,
+        "source_model": source_model,
+        "source_prompt_id": source_prompt_id,
+        "path": path,
+        "target_param": target_param,
+    }
+
+
+def _apply_conditioning_binding_to_prompt(
+    *,
+    prompt: PromptRecord,
+    requirement: ConditioningRequirement,
+    binding: dict[str, object],
+    source_label: str,
+) -> None:
+    prompt.parameters[requirement.target_param] = str(binding["path"])
+    requirements = list(prompt.metadata.get("conditioning_requirements", []))
+    requirements.append(
+        {
+            "conditioning_type": requirement.conditioning_type,
+            "target_param": requirement.target_param,
+            "required": requirement.required,
+        }
+    )
+    bindings = dict(prompt.metadata.get("conditioning_bindings", {}))
+    bindings[requirement.conditioning_type] = dict(binding)
+    sources = dict(prompt.metadata.get("conditioning_source", {}))
+    sources[requirement.conditioning_type] = source_label
+    artifact_ids = list(prompt.metadata.get("conditioning_artifact_ids", []))
+    artifact_id = binding.get("artifact_id")
+    if artifact_id not in artifact_ids and artifact_id not in (None, ""):
+        artifact_ids.append(str(artifact_id))
+    prompt.metadata["conditioning_requirements"] = requirements
+    prompt.metadata["conditioning_bindings"] = bindings
+    prompt.metadata["conditioning_source"] = sources
+    prompt.metadata["conditioning_artifact_ids"] = artifact_ids
+
+
+def _prepare_model_tasks(
+    *,
+    model: ModelInfo,
+    prompts: list[PromptRecord],
+    model_tasks_dir: Path,
+    model_workdir_root: Path,
+    execution_mode: str,
+    strategy: str,
+    task_counter_start: int,
+    generation_defaults: dict[str, object] | None,
+    global_negative_prompt: str | None = None,
+    batch_limit: int | None = None,
+) -> tuple[list[PreparedTask], int]:
+    batched_prompts = list(
+        _batch_prompts_for_model(
+            model=model,
+            prompts=prompts,
+            batch_limit=batch_limit,
+            generation_defaults=generation_defaults,
+            global_negative_prompt=global_negative_prompt,
+        )
+    )
+    total_tasks_for_model = len(batched_prompts)
+    task_counter = task_counter_start
+    prepared_tasks: list[PreparedTask] = []
+    model_slug = _slugify(model.name)
+    for batch_number, prompt_batch in enumerate(batched_prompts, start=1):
+        task_id = f"task_{task_counter:06d}"
+        batch_id = f"{model_slug}_batch_{batch_number:06d}"
+        task_workdir = model_workdir_root / task_id
+        payload = TaskPayload(
+            task_id=task_id,
+            model_name=model.name,
+            execution_mode=execution_mode,
+            prompts=[_prompt_to_task_prompt(prompt) for prompt in prompt_batch],
+            params=_default_generation_params(
+                model,
+                prompt_batch,
+                generation_defaults=generation_defaults,
+                global_negative_prompt=global_negative_prompt,
+            ),
+            workdir=str(task_workdir),
+            batch_id=batch_id,
+            runtime_config={"worker_strategy": strategy},
+            worker_strategy=strategy,
+        )
+        task_file = model_tasks_dir / f"{task_id}.json"
+        result_file = model_tasks_dir / f"{task_id}.result.json"
+        task_file.write_text(
+            json.dumps(payload.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        prepared_tasks.append(
+            PreparedTask(
+                model=model,
+                payload=payload,
+                task_file=task_file,
+                result_file=result_file,
+                batch_number=batch_number,
+                total_tasks_for_model=total_tasks_for_model,
+            )
+        )
+        task_counter += 1
+    return prepared_tasks, task_counter
+
+
+def _resolve_conditioned_prompts_for_models(
+    *,
+    models: list[ModelInfo],
+    base_prompts_by_model: dict[str, list[PromptRecord]],
+    profile_conditionings: list[ConditioningSpec],
+    registry,
+    worker_runner: Callable[[EnvironmentRecord, Path, Path], tuple[int, str]] | None,
+    execution_mode: str,
+    tasks_dir: Path,
+    workdir_root: Path,
+    task_counter_start: int,
+) -> tuple[
+    dict[str, list[PromptRecord]],
+    dict[str, list[PreparedTask]],
+    dict[str, str],
+    list[ModelInfo],
+    dict[str, object],
+    int,
+]:
+    conditioned_prompts_by_model: dict[str, list[PromptRecord]] = {}
+    for model in models:
+        model_prompts = list(base_prompts_by_model.get(model.name, []))
+        conditioned_prompts_by_model[model.name] = [
+            _clone_prompt_record(prompt) for prompt in model_prompts
+        ]
+    generated_requests_by_group: dict[tuple[str, str, str], list[ConditioningRequest]] = {}
+    source_models_by_name: dict[str, ModelInfo] = {}
+    conditioning_summary: dict[str, object] = {
+        "enabled": False,
+        "profile_specs": [spec.to_dict() for spec in profile_conditionings],
+        "provided_bindings": 0,
+        "generated_bindings": 0,
+        "generated_artifacts": 0,
+        "source_models": [],
+        "by_target_model": {},
+    }
+
+    for model in models:
+        requirement = _get_conditioning_requirement(model)
+        if requirement is None:
+            continue
+        conditioning_summary["enabled"] = True
+        spec = _get_applicable_conditioning_spec(
+            model_name=model.name,
+            conditioning_type=requirement.conditioning_type,
+            profile_conditionings=profile_conditionings,
+        )
+        model_summary = conditioning_summary["by_target_model"].setdefault(
+            model.name,
+            {
+                "conditioning_type": requirement.conditioning_type,
+                "provided_bindings": 0,
+                "generated_requested": 0,
+                "generated_bound": 0,
+                "source_model": spec.source_model if spec is not None else None,
+            },
+        )
+        assert isinstance(model_summary, dict)
+
+        source_prompts = list(base_prompts_by_model.get(model.name, []))
+        if len(source_prompts) != len(conditioned_prompts_by_model[model.name]):
+            raise RunFlowError(
+                f"Conditioning prompt alignment mismatch for model={model.name}: "
+                f"{len(source_prompts)} source prompts vs {len(conditioned_prompts_by_model[model.name])} "
+                "conditioned prompts."
+            )
+        for original_prompt, conditioned_prompt in zip(
+            source_prompts,
+            conditioned_prompts_by_model[model.name],
+            strict=True,
+        ):
+            provided_path = _provided_conditioning_path(conditioned_prompt, requirement)
+            if provided_path:
+                artifact_id = _conditioning_artifact_id(
+                    target_model_name=model.name,
+                    prompt_id=conditioned_prompt.prompt_id,
+                    conditioning_type=requirement.conditioning_type,
+                    source_stage="prompt_provided",
+                )
+                binding = _build_conditioning_binding(
+                    artifact_id=artifact_id,
+                    conditioning_type=requirement.conditioning_type,
+                    source_stage="prompt_provided",
+                    source_model=None,
+                    source_prompt_id=conditioned_prompt.prompt_id,
+                    path=provided_path,
+                    target_param=requirement.target_param,
+                )
+                _apply_conditioning_binding_to_prompt(
+                    prompt=conditioned_prompt,
+                    requirement=requirement,
+                    binding=binding,
+                    source_label="provided",
+                )
+                conditioning_summary["provided_bindings"] = int(conditioning_summary["provided_bindings"]) + 1
+                model_summary["provided_bindings"] = int(model_summary["provided_bindings"]) + 1
+                continue
+
+            if spec is None:
+                if execution_mode == "mock":
+                    continue
+                raise RunFlowError(
+                    f"{model.name} requires {requirement.conditioning_type} conditioning via "
+                    f"{'/'.join(requirement.prompt_param_aliases)} or a profile conditionings entry."
+                )
+            if spec.source_mode != "generated" or not spec.source_model:
+                raise RunFlowError(
+                    f"{model.name} requires generated {requirement.conditioning_type} conditioning, "
+                    "but the matching profile spec is not source_mode=generated."
+                )
+
+            conditioning_prompt = _clone_prompt_record(original_prompt)
+            conditioning_prompt.metadata["conditioning_target_model"] = model.name
+            conditioning_prompt.metadata["conditioning_type"] = requirement.conditioning_type
+            signature = json.dumps(spec.generation_defaults, sort_keys=True, ensure_ascii=False)
+            generated_requests_by_group.setdefault(
+                (spec.source_model, model.name, signature),
+                [],
+            ).append(
+                ConditioningRequest(
+                    target_model_name=model.name,
+                    source_model_name=spec.source_model,
+                    conditioning_type=requirement.conditioning_type,
+                    target_param=requirement.target_param,
+                    source_prompt=conditioning_prompt,
+                    generation_defaults=dict(spec.generation_defaults),
+                )
+            )
+            model_summary["generated_requested"] = int(model_summary["generated_requested"]) + 1
+            source_models_by_name.setdefault(spec.source_model, registry.get_model(spec.source_model))
+
+    if not generated_requests_by_group:
+        conditioning_summary["source_models"] = sorted(source_models_by_name)
+        return (
+            conditioned_prompts_by_model,
+            {},
+            {},
+            [],
+            conditioning_summary,
+            task_counter_start,
+        )
+
+    prepared_tasks_by_source_model: dict[str, list[PreparedTask]] = {}
+    worker_strategies: dict[str, str] = {}
+    task_counter = task_counter_start
+    conditioning_tasks_root = tasks_dir / "conditioning"
+    conditioning_workdir_root = workdir_root / "conditioning"
+    for source_model_name in sorted(source_models_by_name):
+        source_model = source_models_by_name[source_model_name]
+        strategy = _resolve_worker_strategy(
+            registry=registry,
+            model=source_model,
+            worker_runner=worker_runner,
+        )
+        worker_strategies[source_model_name] = strategy
+        model_slug = _slugify(source_model.name)
+        model_tasks_dir = conditioning_tasks_root / model_slug
+        model_workdir_root = conditioning_workdir_root / model_slug
+        model_tasks_dir.mkdir(parents=True, exist_ok=True)
+        model_workdir_root.mkdir(parents=True, exist_ok=True)
+
+        source_model_tasks: list[PreparedTask] = []
+        for key in sorted(generated_requests_by_group):
+            grouped_source_model_name, _target_model_name, _signature = key
+            if grouped_source_model_name != source_model_name:
+                continue
+            requests = generated_requests_by_group[key]
+            group_prompts = [request.source_prompt for request in requests]
+            group_defaults = requests[0].generation_defaults if requests else {}
+            prepared_group, task_counter = _prepare_model_tasks(
+                model=source_model,
+                prompts=group_prompts,
+                model_tasks_dir=model_tasks_dir,
+                model_workdir_root=model_workdir_root,
+                execution_mode=execution_mode,
+                strategy=strategy,
+                task_counter_start=task_counter,
+                generation_defaults=group_defaults,
+            )
+            source_model_tasks.extend(prepared_group)
+
+        total_tasks_for_model = len(source_model_tasks)
+        for batch_number, prepared_task in enumerate(source_model_tasks, start=1):
+            prepared_task.batch_number = batch_number
+            prepared_task.total_tasks_for_model = total_tasks_for_model
+        prepared_tasks_by_source_model[source_model_name] = source_model_tasks
+
+    conditioning_summary["source_models"] = sorted(source_models_by_name)
+    return (
+        conditioned_prompts_by_model,
+        prepared_tasks_by_source_model,
+        worker_strategies,
+        [source_models_by_name[name] for name in sorted(source_models_by_name)],
+        conditioning_summary,
+        task_counter,
+    )
+
+
+def _collect_generated_conditioning_artifacts(
+    *,
+    conditioning_task_results: list[tuple[ModelInfo, TaskPayload, dict]],
+) -> dict[tuple[str, str, str], ConditioningArtifact]:
+    artifacts: dict[tuple[str, str, str], ConditioningArtifact] = {}
+    for model, payload, result in conditioning_task_results:
+        prompt_lookup = {prompt.prompt_id: prompt for prompt in payload.prompts}
+        batch_items = list(result.get("model_result", {}).get("batch_items", []))
+        for batch_item in batch_items:
+            if str(batch_item.get("status", "")) != "success":
+                continue
+            prompt_id = str(batch_item.get("prompt_id", ""))
+            prompt = prompt_lookup.get(prompt_id)
+            if prompt is None:
+                continue
+            target_model_name = str(prompt.metadata.get("conditioning_target_model", "")).strip()
+            conditioning_type = str(prompt.metadata.get("conditioning_type", "")).strip() or "image"
+            artifacts_list = list(batch_item.get("artifacts", []))
+            if not artifacts_list:
+                continue
+            artifact = artifacts_list[0]
+            artifact_path = str(artifact.get("path", "")).strip()
+            if not artifact_path:
+                continue
+            artifact_id = _conditioning_artifact_id(
+                target_model_name=target_model_name,
+                prompt_id=prompt_id,
+                conditioning_type=conditioning_type,
+                source_stage="conditioning_preparation",
+            )
+            artifacts[(target_model_name, prompt_id, conditioning_type)] = ConditioningArtifact(
+                artifact_id=artifact_id,
+                artifact_type=conditioning_type,
+                source_stage="conditioning_preparation",
+                source_model=model.name,
+                source_prompt_id=prompt_id,
+                target_model_name=target_model_name,
+                path=artifact_path,
+                metadata={
+                    "task_id": payload.task_id,
+                    "artifact_type": artifact.get("type"),
+                    "batch_id": payload.batch_id,
+                },
+            )
+    return artifacts
+
+
+def _bind_generated_conditioning_artifacts(
+    *,
+    models: list[ModelInfo],
+    conditioned_prompts_by_model: dict[str, list[PromptRecord]],
+    artifacts: dict[tuple[str, str, str], ConditioningArtifact],
+    conditioning_summary: dict[str, object],
+) -> None:
+    for model in models:
+        requirement = _get_conditioning_requirement(model)
+        if requirement is None:
+            continue
+        model_summary = conditioning_summary.get("by_target_model", {}).get(model.name)
+        assert model_summary is None or isinstance(model_summary, dict)
+        for prompt in conditioned_prompts_by_model.get(model.name, []):
+            if _provided_conditioning_path(prompt, requirement):
+                continue
+            artifact = artifacts.get((model.name, prompt.prompt_id, requirement.conditioning_type))
+            if artifact is None:
+                raise RunFlowError(
+                    f"Missing generated {requirement.conditioning_type} conditioning artifact for "
+                    f"model={model.name} prompt_id={prompt.prompt_id}."
+                )
+            binding = _build_conditioning_binding(
+                artifact_id=artifact.artifact_id,
+                conditioning_type=artifact.artifact_type,
+                source_stage=artifact.source_stage,
+                source_model=artifact.source_model,
+                source_prompt_id=artifact.source_prompt_id,
+                path=artifact.path,
+                target_param=requirement.target_param,
+            )
+            _apply_conditioning_binding_to_prompt(
+                prompt=prompt,
+                requirement=requirement,
+                binding=binding,
+                source_label="generated",
+            )
+            conditioning_summary["generated_bindings"] = int(conditioning_summary["generated_bindings"]) + 1
+            if model_summary is not None:
+                model_summary["generated_bound"] = int(model_summary["generated_bound"]) + 1
+
+
 def _merge_diagnostic_logs(*parts: str | None) -> str:
     merged: list[str] = []
     seen: set[str] = set()
@@ -2777,11 +4105,102 @@ def _prompt_to_task_prompt(prompt: PromptRecord) -> TaskPrompt:
     )
 
 
+def _coerce_profile_conditionings(
+    profile_conditionings: list[ConditioningSpec | dict[str, object]] | None,
+) -> list[ConditioningSpec]:
+    if not profile_conditionings:
+        return []
+    resolved: list[ConditioningSpec] = []
+    for item in profile_conditionings:
+        if isinstance(item, ConditioningSpec):
+            resolved.append(item)
+            continue
+        if not isinstance(item, dict):
+            raise RunFlowError("profile_conditionings entries must be dicts or ConditioningSpec objects.")
+        target_models_raw = item.get("target_models", item.get("target_model"))
+        if isinstance(target_models_raw, str):
+            target_models = [target_models_raw]
+        elif isinstance(target_models_raw, list):
+            target_models = [str(value).strip() for value in target_models_raw if str(value).strip()]
+        else:
+            target_models = []
+        resolved.append(
+            ConditioningSpec(
+                target_models=target_models,
+                conditioning_type=str(item.get("conditioning_type", item.get("type", ""))).strip().lower(),
+                source_mode=str(item.get("source_mode", "")).strip().lower(),
+                source_model=str(item.get("source_model")).strip()
+                if item.get("source_model") not in (None, "")
+                else None,
+                generation_defaults=dict(item.get("generation_defaults") or {}),
+                artifact_retention=str(item.get("artifact_retention")).strip()
+                if item.get("artifact_retention") not in (None, "")
+                else None,
+                raw=dict(item),
+            )
+        )
+    return resolved
+
+
+def _coerce_profile_prompt_rewrites(
+    profile_prompt_rewrites: list[PromptRewriteSpec | dict[str, object]] | None,
+) -> list[PromptRewriteSpec]:
+    if not profile_prompt_rewrites:
+        return []
+    resolved: list[PromptRewriteSpec] = []
+    for item in profile_prompt_rewrites:
+        if isinstance(item, PromptRewriteSpec):
+            resolved.append(item)
+            continue
+        if not isinstance(item, dict):
+            raise RunFlowError(
+                "profile_prompt_rewrites entries must be dicts or PromptRewriteSpec objects."
+            )
+        target_models_raw = item.get("target_models", item.get("target_model"))
+        if isinstance(target_models_raw, str):
+            target_models = [target_models_raw]
+        elif isinstance(target_models_raw, list):
+            target_models = [str(value).strip() for value in target_models_raw if str(value).strip()]
+        else:
+            target_models = []
+        if not target_models:
+            raise RunFlowError("profile_prompt_rewrites entry missing target_model(s).")
+        source_model = str(item.get("source_model", "")).strip()
+        if not source_model:
+            raise RunFlowError("profile_prompt_rewrites entry missing source_model.")
+        template = str(item.get("template", "")).strip()
+        if not template:
+            raise RunFlowError("profile_prompt_rewrites entry missing template.")
+        style_family = str(item.get("style_family", "")).strip()
+        if not style_family:
+            raise RunFlowError("profile_prompt_rewrites entry missing style_family.")
+        runtime = item.get("runtime") or {}
+        if not isinstance(runtime, dict):
+            raise RunFlowError("profile_prompt_rewrites runtime must be an object.")
+        resolved.append(
+            PromptRewriteSpec(
+                target_models=target_models,
+                source_model=source_model,
+                template=template,
+                style_family=style_family,
+                generation_defaults=dict(item.get("generation_defaults") or {}),
+                runtime=dict(runtime),
+                failure_policy=str(item.get("failure_policy", "fallback_original")).strip().lower()
+                or "fallback_original",
+                stage_order=str(item.get("stage_order", "before_conditioning")).strip().lower()
+                or "before_conditioning",
+                raw=dict(item),
+            )
+        )
+    return resolved
+
+
 def _default_generation_params(
     model: ModelInfo,
     prompts: list[PromptRecord],
     *,
     generation_defaults: dict[str, object] | None = None,
+    global_negative_prompt: str | None = None,
 ) -> dict[str, object]:
     if not prompts:
         raise RunFlowError(f"Cannot build generation params for {model.name} with no prompts.")
@@ -2791,7 +4210,10 @@ def _default_generation_params(
     params = _merge_generation_param_overrides(params, prompts[0].parameters)
 
     if model.capabilities.get("supports_negative_prompt"):
-        params["negative_prompts"] = [batch_prompt.negative_prompt or "" for batch_prompt in prompts]
+        fallback_negative_prompt = (global_negative_prompt or "").strip()
+        params["negative_prompts"] = [
+            batch_prompt.negative_prompt or fallback_negative_prompt for batch_prompt in prompts
+        ]
     return params
 
 
@@ -3045,6 +4467,7 @@ def _batch_prompts_for_model(
     prompts: list[PromptRecord],
     batch_limit: int | None,
     generation_defaults: dict[str, object] | None = None,
+    global_negative_prompt: str | None = None,
 ) -> list[list[PromptRecord]]:
     batch_size = _resolve_batch_size(model=model, batch_limit=batch_limit)
     batches: list[list[PromptRecord]] = []
@@ -3056,6 +4479,7 @@ def _batch_prompts_for_model(
             model=model,
             prompt=prompt,
             generation_defaults=generation_defaults,
+            global_negative_prompt=global_negative_prompt,
         )
         if current_batch and (len(current_batch) >= batch_size or signature != current_signature):
             batches.append(current_batch)
@@ -3086,8 +4510,14 @@ def _prompt_batch_signature(
     model: ModelInfo,
     prompt: PromptRecord,
     generation_defaults: dict[str, object] | None = None,
+    global_negative_prompt: str | None = None,
 ) -> str:
-    params = _default_generation_params(model, [prompt], generation_defaults=generation_defaults)
+    params = _default_generation_params(
+        model,
+        [prompt],
+        generation_defaults=generation_defaults,
+        global_negative_prompt=global_negative_prompt,
+    )
     params.pop("negative_prompts", None)
     return json.dumps(params, sort_keys=True, ensure_ascii=False)
 

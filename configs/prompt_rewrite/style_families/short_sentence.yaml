@@ -1,0 +1,22 @@
+name: short_sentence
+version: v1
+description: Concise one-sentence rewrite style.
+style_instruction: >
+  Rewrite as one concise natural sentence, retaining key entities and actions while reducing verbosity.
+output_contract:
+  format: json
+  required_keys: [prompt]
+max_examples_per_request: 2
+few_shot_examples:
+  - id: short_video_001
+    applicability:
+      target_models: [LongCat-Video, Wan2.2-T2V-A14B-Diffusers, CogVideoX-5B]
+    input:
+      prompt: two people running in rain
+    output:
+      prompt: Two people run through heavy rain on a city street as water splashes and neon reflections streak across wet asphalt.
+  - id: short_generic_001
+    input:
+      prompt: a dog in park
+    output:
+      prompt: A playful dog runs through a sunlit park with natural motion and realistic outdoor detail.

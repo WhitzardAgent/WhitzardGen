@@ -1,0 +1,22 @@
+name: keyword_list
+version: v1
+description: Compact keyword/phrase rewrite style.
+style_instruction: >
+  Rewrite as a compact comma-separated keyword phrase set that remains realistic and model-friendly.
+output_contract:
+  format: json
+  required_keys: [prompt]
+max_examples_per_request: 2
+few_shot_examples:
+  - id: keyword_video_001
+    applicability:
+      target_models: [MOVA-720p, Helios]
+    input:
+      prompt: car driving on mountain road
+    output:
+      prompt: realistic sports car, mountain road curve, dynamic motion, natural daylight, road-side trees, cinematic camera tracking
+  - id: keyword_generic_001
+    input:
+      prompt: a tropical fish
+    output:
+      prompt: tropical fish, coral reef, clear ocean water, sunlight caustics, close-up motion, photorealistic detail

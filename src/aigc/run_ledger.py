@@ -56,6 +56,7 @@ def build_sample_ledger_records(
                 prompt=prompt.prompt,
                 negative_prompt=prompt.negative_prompt,
                 language=prompt.language,
+                prompt_metadata=dict(prompt.metadata),
                 batch_index=index,
                 error_message=error_message
                 or _extract_error_message(task_result)
@@ -89,6 +90,7 @@ def build_sample_ledger_records(
                 "prompt": prompt.prompt,
                 "negative_prompt": prompt.negative_prompt,
                 "language": prompt.language,
+                "prompt_metadata": dict(prompt.metadata),
                 "status": status,
                 "artifact_type": first_artifact.get("type"),
                 "artifact_path": first_artifact.get("path"),
@@ -115,6 +117,15 @@ def build_sample_ledger_records(
                     "gpu_assignment",
                     task_payload.runtime_config.get("gpu_assignment"),
                 ),
+                "conditioning_source": dict(prompt.metadata.get("conditioning_source", {}))
+                if isinstance(prompt.metadata.get("conditioning_source"), dict)
+                else prompt.metadata.get("conditioning_source"),
+                "conditioning_bindings": dict(prompt.metadata.get("conditioning_bindings", {}))
+                if isinstance(prompt.metadata.get("conditioning_bindings"), dict)
+                else prompt.metadata.get("conditioning_bindings"),
+                "conditioning_artifact_ids": list(prompt.metadata.get("conditioning_artifact_ids", []))
+                if isinstance(prompt.metadata.get("conditioning_artifact_ids"), list)
+                else [],
             }
         )
     if records:
@@ -129,6 +140,7 @@ def build_sample_ledger_records(
             prompt=prompt.prompt,
             negative_prompt=prompt.negative_prompt,
             language=prompt.language,
+            prompt_metadata=dict(prompt.metadata),
             batch_index=index,
             error_message=error_message
             or _extract_error_message(task_result)
@@ -149,6 +161,7 @@ def _failure_record(
     prompt: str,
     negative_prompt: str | None,
     language: str,
+    prompt_metadata: dict[str, Any],
     batch_index: int,
     error_message: str,
     failure_category: str | None,
@@ -163,6 +176,7 @@ def _failure_record(
         "prompt": prompt,
         "negative_prompt": negative_prompt,
         "language": language,
+        "prompt_metadata": dict(prompt_metadata),
         "status": "failed",
         "artifact_type": None,
         "artifact_path": None,
@@ -173,6 +187,15 @@ def _failure_record(
         "batch_index": batch_index,
         "execution_mode": task_payload.execution_mode,
         "gpu_assignment": task_payload.runtime_config.get("gpu_assignment"),
+        "conditioning_source": dict(prompt_metadata.get("conditioning_source", {}))
+        if isinstance(prompt_metadata.get("conditioning_source"), dict)
+        else prompt_metadata.get("conditioning_source"),
+        "conditioning_bindings": dict(prompt_metadata.get("conditioning_bindings", {}))
+        if isinstance(prompt_metadata.get("conditioning_bindings"), dict)
+        else prompt_metadata.get("conditioning_bindings"),
+        "conditioning_artifact_ids": list(prompt_metadata.get("conditioning_artifact_ids", []))
+        if isinstance(prompt_metadata.get("conditioning_artifact_ids"), list)
+        else [],
     }
 
 

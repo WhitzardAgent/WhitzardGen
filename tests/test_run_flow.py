@@ -300,6 +300,268 @@ class RunFlowTests(unittest.TestCase):
             "persistent_worker",
         )
 
+    def test_generated_conditioning_for_mova_binds_ref_path_and_records_lineage(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "mova_conditioning.txt"
+        prompts_path.write_text("a quiet alley with drifting fog\n", encoding="utf-8")
+
+        summary = run_models(
+            model_names=["MOVA-720p"],
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "mova_conditioning_generated",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=self._inprocess_worker_runner,
+            profile_conditionings=[
+                {
+                    "target_model": "MOVA-720p",
+                    "conditioning_type": "image",
+                    "source_mode": "generated",
+                    "source_model": "Z-Image",
+                    "generation_defaults": {"width": 1024, "height": 1024},
+                }
+            ],
+        )
+
+        self.assertEqual(summary.tasks_scheduled, 2)
+        conditioning_task_dir = Path(summary.output_dir) / "tasks" / "conditioning" / "z-image"
+        self.assertTrue(conditioning_task_dir.exists())
+        primary_task_dir = Path(summary.output_dir) / "tasks" / "mova-720p"
+        primary_task_file = next(
+            path for path in primary_task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        primary_payload = json.loads(primary_task_file.read_text(encoding="utf-8"))
+        self.assertIn("ref_path", primary_payload["params"])
+        self.assertTrue(str(primary_payload["params"]["ref_path"]).endswith(".png"))
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["conditioning_summary"]["generated_artifacts"], 1)
+        self.assertEqual(manifest["conditioning_summary"]["generated_bindings"], 1)
+        self.assertEqual(manifest["conditioning_summary"]["source_models"], ["Z-Image"])
+
+        runtime_status = json.loads((Path(summary.output_dir) / "runtime_status.json").read_text(encoding="utf-8"))
+        self.assertEqual(runtime_status["conditioning"]["generated_artifacts"], 1)
+
+        dataset_record = json.loads(Path(summary.export_path).read_text(encoding="utf-8").splitlines()[0])
+        prompt_metadata = dataset_record["prompt_metadata"]
+        self.assertEqual(prompt_metadata["conditioning_source"]["image"], "generated")
+        self.assertEqual(
+            prompt_metadata["conditioning_bindings"]["image"]["path"],
+            primary_payload["params"]["ref_path"],
+        )
+        self.assertEqual(len(prompt_metadata["conditioning_artifact_ids"]), 1)
+
+    def test_prompt_provided_ref_path_skips_generated_conditioning(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        ref_path = tmpdir / "provided_ref.png"
+        ref_path.write_bytes(b"fake")
+        prompts_path = tmpdir / "mova_conditioning.jsonl"
+        prompts_path.write_text(
+            json.dumps(
+                {
+                    "prompt_id": "m001",
+                    "prompt": "a paper lantern drifting over a river",
+                    "language": "en",
+                    "parameters": {"ref_path": str(ref_path)},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        summary = run_models(
+            model_names=["MOVA-720p"],
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "mova_conditioning_provided",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=self._inprocess_worker_runner,
+            profile_conditionings=[
+                {
+                    "target_model": "MOVA-720p",
+                    "conditioning_type": "image",
+                    "source_mode": "generated",
+                    "source_model": "Z-Image",
+                }
+            ],
+        )
+
+        self.assertEqual(summary.tasks_scheduled, 1)
+        self.assertFalse((Path(summary.output_dir) / "tasks" / "conditioning").exists())
+        primary_task_dir = Path(summary.output_dir) / "tasks" / "mova-720p"
+        primary_task_file = next(
+            path for path in primary_task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        primary_payload = json.loads(primary_task_file.read_text(encoding="utf-8"))
+        self.assertEqual(primary_payload["params"]["ref_path"], str(ref_path))
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["conditioning_summary"]["provided_bindings"], 1)
+        self.assertEqual(manifest["conditioning_summary"]["generated_artifacts"], 0)
+
+        dataset_record = json.loads(Path(summary.export_path).read_text(encoding="utf-8").splitlines()[0])
+        prompt_metadata = dataset_record["prompt_metadata"]
+        self.assertEqual(prompt_metadata["conditioning_source"]["image"], "provided")
+        self.assertEqual(prompt_metadata["conditioning_bindings"]["image"]["path"], str(ref_path))
+
+    def test_prompt_rewrite_before_conditioning_rewrites_conditioning_source_prompt(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        original_prompt = "a quiet alley with drifting fog"
+        prompts_path = tmpdir / "mova_rewrite_before.txt"
+        prompts_path.write_text(original_prompt + "\n", encoding="utf-8")
+
+        summary = run_models(
+            model_names=["MOVA-720p"],
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "mova_rewrite_before_conditioning",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=self._inprocess_worker_runner,
+            profile_prompt_rewrites=[
+                {
+                    "target_models": ["MOVA-720p"],
+                    "source_model": "Qwen3-32B",
+                    "template": "model_rewrite_v1",
+                    "style_family": "detailed_sentence",
+                    "runtime": {"available_gpus": [0]},
+                    "stage_order": "before_conditioning",
+                }
+            ],
+            profile_conditionings=[
+                {
+                    "target_model": "MOVA-720p",
+                    "conditioning_type": "image",
+                    "source_mode": "generated",
+                    "source_model": "Z-Image",
+                }
+            ],
+        )
+
+        self.assertEqual(summary.tasks_scheduled, 3)
+        conditioning_task_dir = Path(summary.output_dir) / "tasks" / "conditioning" / "z-image"
+        conditioning_task_file = next(
+            path for path in conditioning_task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        conditioning_payload = json.loads(conditioning_task_file.read_text(encoding="utf-8"))
+        self.assertTrue(conditioning_payload["prompts"][0]["prompt"].endswith("[rewritten]"))
+
+        primary_task_dir = Path(summary.output_dir) / "tasks" / "mova-720p"
+        primary_task_file = next(
+            path for path in primary_task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        primary_payload = json.loads(primary_task_file.read_text(encoding="utf-8"))
+        self.assertTrue(primary_payload["prompts"][0]["prompt"].endswith("[rewritten]"))
+
+        rewrite_records = [
+            json.loads(line)
+            for line in (Path(summary.output_dir) / "prompt_rewrites.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(rewrite_records), 1)
+        self.assertEqual(rewrite_records[0]["status"], "rewritten")
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["prompt_rewrite_summary"]["total_requests"], 1)
+        self.assertEqual(manifest["prompt_rewrite_summary"]["rewritten"], 1)
+
+        dataset_record = json.loads(Path(summary.export_path).read_text(encoding="utf-8").splitlines()[0])
+        rewrite_metadata = dataset_record["prompt_metadata"]["prompt_rewrite"]
+        self.assertEqual(rewrite_metadata["status"], "rewritten")
+        self.assertEqual(rewrite_metadata["used_prompt_source"], "rewritten")
+
+    def test_prompt_rewrite_after_conditioning_keeps_conditioning_on_original_prompt(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        original_prompt = "a lantern glows beside a stormy mountain path"
+        prompts_path = tmpdir / "mova_rewrite_after.txt"
+        prompts_path.write_text(original_prompt + "\n", encoding="utf-8")
+
+        summary = run_models(
+            model_names=["MOVA-720p"],
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "mova_rewrite_after_conditioning",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+            worker_runner=self._inprocess_worker_runner,
+            profile_prompt_rewrites=[
+                {
+                    "target_models": ["MOVA-720p"],
+                    "source_model": "Qwen3-32B",
+                    "template": "model_rewrite_v1",
+                    "style_family": "detailed_sentence",
+                    "runtime": {"available_gpus": [0]},
+                    "stage_order": "after_conditioning",
+                }
+            ],
+            profile_conditionings=[
+                {
+                    "target_model": "MOVA-720p",
+                    "conditioning_type": "image",
+                    "source_mode": "generated",
+                    "source_model": "Z-Image",
+                }
+            ],
+        )
+
+        conditioning_task_dir = Path(summary.output_dir) / "tasks" / "conditioning" / "z-image"
+        conditioning_task_file = next(
+            path for path in conditioning_task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        conditioning_payload = json.loads(conditioning_task_file.read_text(encoding="utf-8"))
+        self.assertEqual(conditioning_payload["prompts"][0]["prompt"], original_prompt)
+
+        primary_task_dir = Path(summary.output_dir) / "tasks" / "mova-720p"
+        primary_task_file = next(
+            path for path in primary_task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        primary_payload = json.loads(primary_task_file.read_text(encoding="utf-8"))
+        self.assertTrue(primary_payload["prompts"][0]["prompt"].endswith("[rewritten]"))
+
+    def test_prompt_rewrite_failure_falls_back_to_original_prompt(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        original_prompt = "a futuristic city at night"
+        prompts_path = tmpdir / "rewrite_fallback.txt"
+        prompts_path.write_text(original_prompt + "\n", encoding="utf-8")
+
+        with patch("aigc.run_flow._parse_prompt_rewrite_response", return_value=""):
+            summary = run_models(
+                model_names=["Z-Image"],
+                prompt_file=prompts_path,
+                out_dir=tmpdir / "runs" / "rewrite_fallback",
+                execution_mode="mock",
+                env_manager=FakeEnvManager(),
+                worker_runner=self._inprocess_worker_runner,
+                profile_prompt_rewrites=[
+                    {
+                        "target_models": ["Z-Image"],
+                        "source_model": "Qwen3-32B",
+                        "template": "model_rewrite_v1",
+                        "style_family": "detailed_sentence",
+                        "runtime": {"available_gpus": [0]},
+                        "stage_order": "before_conditioning",
+                    }
+                ],
+            )
+
+        task_dir = Path(summary.output_dir) / "tasks" / "z-image"
+        task_file = next(
+            path for path in task_dir.iterdir() if path.suffix == ".json" and ".result." not in path.name
+        )
+        payload = json.loads(task_file.read_text(encoding="utf-8"))
+        self.assertEqual(payload["prompts"][0]["prompt"], original_prompt)
+
+        rewrite_record = json.loads(
+            (Path(summary.output_dir) / "prompt_rewrites.jsonl").read_text(encoding="utf-8").splitlines()[0]
+        )
+        self.assertEqual(rewrite_record["status"], "fallback_original")
+        self.assertEqual(rewrite_record["used_prompt_source"], "original_fallback")
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["prompt_rewrite_summary"]["fallback_original"], 1)
+        self.assertEqual(manifest["prompt_rewrite_summary"]["failed_requests"], 1)
+
     def test_wan_mock_run_batches_two_prompts_into_one_task(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "wan_batch.txt"
@@ -501,6 +763,29 @@ class RunFlowTests(unittest.TestCase):
         self.assertEqual(params["guidance_scale"], 5.5)
         self.assertEqual(params["num_inference_steps"], 40)
         self.assertEqual(params["negative_prompts"], ["blurry"])
+
+    def test_generation_params_use_profile_global_negative_prompt_as_fallback(self) -> None:
+        registry = load_registry()
+        model = registry.get_model("Wan2.2-T2V-A14B-Diffusers")
+        prompt = type(
+            "PromptStub",
+            (),
+            {
+                "prompt": "a city at night",
+                "language": "en",
+                "negative_prompt": None,
+                "parameters": {},
+                "metadata": {},
+            },
+        )()
+
+        params = _default_generation_params(
+            model,
+            [prompt],  # type: ignore[list-item]
+            global_negative_prompt="low quality, blurry",
+        )
+
+        self.assertEqual(params["negative_prompts"], ["low quality, blurry"])
 
     def test_batching_splits_when_effective_generation_params_differ(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -750,33 +1035,34 @@ class RunFlowTests(unittest.TestCase):
                     out_dir=tmpdir / "runs" / "replica_video",
                     execution_mode="mock",
                     env_manager=FakeEnvManager(),
+                    batch_limit=1,
                     progress=TextRunProgress(stream=progress_stream),
                 )
 
         manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
         per_model = manifest["per_model_summary"]["CogVideoX-5B"]
-        self.assertEqual(per_model["replica_count"], 2)
+        self.assertEqual(per_model["replica_count"], 4)
         self.assertEqual(
             [replica["gpu_assignment"] for replica in per_model["replicas"]],
-            [[0], [1]],
+            [[0], [1], [2], [3]],
         )
-        self.assertEqual(sum(replica["task_count"] for replica in per_model["replicas"]), 2)
-        self.assertEqual(per_model["replica_count_requested"], 2)
+        self.assertEqual(sum(replica["task_count"] for replica in per_model["replicas"]), 4)
+        self.assertEqual(per_model["replica_count_requested"], 4)
 
         records = [
             json.loads(line)
             for line in Path(summary.export_path).read_text(encoding="utf-8").strip().splitlines()
         ]
-        self.assertEqual({record["execution_metadata"]["replica_id"] for record in records}, {0, 1})
+        self.assertEqual({record["execution_metadata"]["replica_id"] for record in records}, {0, 1, 2, 3})
         self.assertEqual(
             {tuple(record["execution_metadata"]["gpu_assignment"]) for record in records},
-            {(0,), (1,)},
+            {(0,), (1,), (2,), (3,)},
         )
 
         progress_text = progress_stream.getvalue()
         self.assertIn("[SCHED] model=CogVideoX-5B available_gpus=[0, 1, 2, 3]", progress_text)
         self.assertIn("[SCHED] model=CogVideoX-5B gpus_per_replica=1", progress_text)
-        self.assertIn("[SCHED] model=CogVideoX-5B starting 2 replicas", progress_text)
+        self.assertIn("[SCHED] model=CogVideoX-5B starting 4 replicas", progress_text)
 
     def test_primary_ready_starts_early_dispatch_before_secondary_ready(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -898,9 +1184,9 @@ class RunFlowTests(unittest.TestCase):
             progress_text,
         )
         self.assertIn("[SCHED] model=CogVideoX-5B warming secondary replicas count=1", progress_text)
-        self.assertIn(
-            "[SCHED] model=CogVideoX-5B secondary replica=1 ready, joined active pool GPUs=[1] replicas_active=1/2",
+        self.assertRegex(
             progress_text,
+            r"\[SCHED\] model=CogVideoX-5B secondary replica=1 ready, joined active pool GPUs=\[1\] replicas_active=[12]/2",
         )
 
     def test_secondary_startup_failure_retries_once_then_degrades(self) -> None:
@@ -1631,7 +1917,10 @@ class RunFlowTests(unittest.TestCase):
         running_log = Path(summary.output_dir) / "running.log"
         self.assertTrue(running_log.exists())
         running_log_text = running_log.read_text(encoding="utf-8")
-        self.assertRegex(running_log_text, r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[STAGE 1/9\] Loading prompts\.\.\.")
+        self.assertRegex(
+            running_log_text,
+            r"20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[STAGE 1/\d+\] Loading prompts\.\.\.",
+        )
         self.assertIn("[summary] Run complete", running_log_text)
         self.assertIn("[summary] running_log:", running_log_text)
         export_path = Path(summary.export_path)

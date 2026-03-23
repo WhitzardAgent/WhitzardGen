@@ -1,9 +1,144 @@
 # Progress
 
 ## Current Phase
-- Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
+- Phase 30 — Profile-Driven Prompt Rewrite Stage (Model-Specific Few-Shot, Single-LLM GPU)
 
 ## Completed
+- 2026-03-23 22:42:00 CST
+- Validated the profile-level global negative prompt slice locally:
+  - `python3 -m py_compile src/aigc/run_profiles.py src/aigc/run_flow.py src/aigc/cli/main.py tests/test_run_profiles.py tests/test_cli_runs.py tests/test_run_flow.py`
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_profiles -v`
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs.RunsCliTests.test_handle_run_uses_profile_and_cli_overrides -v`
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_generation_params_use_profile_global_negative_prompt_as_fallback -v`
+  - result: all passed
+- 2026-03-23 22:35:00 CST
+- Added profile-level global negative prompt support for run execution:
+  - run profile now supports `global_negative_prompt`
+  - CLI `handle_run` now passes profile global negative prompt into `run_models(...)`
+  - generation params now apply profile `global_negative_prompt` as fallback when:
+    - the model supports negative prompts, and
+    - the prompt row does not provide `negative_prompt`
+  - explicit prompt-level `negative_prompt` still takes precedence
+  - added `Wan2.2-T2V-A14B-Diffusers` example profile:
+    - `configs/run_profiles/wan22_real_global_negative.yaml`
+  - added focused tests in:
+    - `tests/test_run_profiles.py`
+    - `tests/test_cli_runs.py`
+    - `tests/test_run_flow.py`
+- 2026-03-23 22:05:00 CST
+- Completed Phase 30 validation + stabilization pass:
+  - fixed prompt-rewrite output persistence in `run_models` success/failure paths:
+    - ensured `prompt_rewrites.jsonl` is always materialized under run root
+  - removed accidental rewrite-artifact write calls from recovery path
+  - resolved prompt-rewrite config import cycle by making `prompt_rewrite/config.py` self-contained
+  - updated/added focused regression tests for:
+    - run-profile rewrite parsing and request passthrough
+    - before/after conditioning rewrite order behavior
+    - fallback-to-original rewrite behavior
+    - stage-count expectation and replica snapshot test stability
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/run_profiles.py src/aigc/run_flow.py src/aigc/runtime_telemetry.py src/aigc/cli/main.py src/aigc/prompt_rewrite/config.py src/aigc/adapters/texts/qwen3.py tests/test_run_profiles.py tests/test_run_flow.py tests/test_cli_runs.py`
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_profiles -v`
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs -v`
+  - `PYTHONPATH=src python3 -m unittest tests.test_text_adapter -v`
+  - `PYTHONPATH=src python3 -m unittest tests.test_runtime_telemetry -v`
+  - `PYTHONPATH=src python3 -m unittest tests.test_prompt_generation -v`
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow -v`
+  - result: all passed locally for the above suites
+- 2026-03-23 18:35:00 CST
+- Implemented the core Phase 30 prompt-rewrite execution path:
+  - added a dedicated prompt-rewrite config layer:
+    - `src/aigc/prompt_rewrite/config.py`
+    - `src/aigc/prompt_rewrite/__init__.py`
+    - `configs/prompt_rewrite/templates/model_rewrite_v1.yaml`
+    - `configs/prompt_rewrite/style_families/{detailed_sentence,short_sentence,keyword_list}.yaml`
+  - integrated explicit rewrite stages into `run_flow`:
+    - `Prompt Rewriting (before_conditioning)`
+    - `Conditioning Preparation`
+    - `Prompt Rewriting (after_conditioning)`
+  - rewrite stage now supports:
+    - profile-driven target/source mapping
+    - template/style-family resolution
+    - model-specific few-shot example selection
+    - single-GPU pinning for rewrite source model execution
+    - default `fallback_original` behavior when rewrite output is unavailable
+  - added rewrite lineage artifacts and summaries:
+    - run-level `prompt_rewrites.jsonl`
+    - `run_manifest.json` fields:
+      - `prompt_rewrite_summary`
+      - `prompt_rewrite_task_count`
+      - `prompt_rewrites_path`
+    - `runtime_status.json` now includes `prompt_rewrite`
+    - prompt metadata now includes `prompt_rewrite` + `prompt_rewrite_history`
+  - profile plumbing now supports `prompt_rewrites` end-to-end from:
+    - `run_profiles` parsing
+    - CLI `handle_run`
+    - `run_flow` execution
+- Added/updated focused tests for Phase 30 parsing + run-flow behavior:
+  - `tests/test_run_profiles.py`
+  - `tests/test_run_flow.py`
+  - `tests/test_cli_runs.py`
+- Added lightweight Qwen3 mock-path support for rewrite-stage testing in:
+  - `src/aigc/adapters/texts/qwen3.py`
+- 2026-03-23 18:05:00 CST
+- Started Phase 30 by extending run-profile schema with a first-class `prompt_rewrites` block:
+  - added `PromptRewriteSpec` parsing/validation in `src/aigc/run_profiles.py`
+  - supported fields now include:
+    - `target_models`
+    - `source_model`
+    - `template`
+    - `style_family`
+    - `generation_defaults`
+    - `runtime.available_gpus`
+    - `failure_policy` (currently `fallback_original`)
+    - `stage_order` (`before_conditioning` / `after_conditioning`)
+  - `RunProfile` now carries parsed `prompt_rewrites`
+  - `resolve_profile_run_request(...)` now passes `prompt_rewrites` downstream for `run_flow` stage wiring
+- 2026-03-23 10:35:00 CST
+- Implemented the core Phase 29 conditioning-artifact path for explicit generated/provided image conditioning:
+  - `run_flow` now has a dedicated `Conditioning Preparation` stage before primary task preparation
+  - profile-level `conditionings` specs can drive upstream artifact generation
+  - first end-to-end supported flow is:
+    - generated image conditioning -> `MOVA-720p` `ref_path`
+  - prompt-level `ref_path` / `image_path` still takes precedence and skips generated conditioning
+- Added conditioning lineage propagation through run artifacts:
+  - primary prompt metadata now records:
+    - `conditioning_requirements`
+    - `conditioning_bindings`
+    - `conditioning_source`
+    - `conditioning_artifact_ids`
+  - `samples.jsonl` now carries prompt metadata plus conditioning lineage fields
+  - `runtime_status.json` now exposes a `conditioning` summary block
+  - `run_manifest.json` now carries `conditioning_summary`
+- The upstream conditioning stage reuses the existing kernel instead of loading a second model inside MOVA:
+  - source models still run through normal worker strategy / batching / persistent-worker logic
+  - primary MOVA tasks are only materialized after generated conditioning artifacts are ready
+- Added focused regression coverage for:
+  - run-profile conditioning parsing
+  - CLI profile conditioning passthrough
+  - generated conditioning -> MOVA `ref_path` binding
+  - provided `ref_path` skipping generated conditioning
+  - preservation of the older MOVA mock-mode path
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/run_profiles.py src/aigc/run_flow.py src/aigc/run_ledger.py src/aigc/runtime_telemetry.py src/aigc/cli/main.py tests/test_run_profiles.py tests/test_run_flow.py tests/test_cli_runs.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_profiles tests.test_cli_runs.RunsCliTests.test_handle_run_uses_profile_and_cli_overrides tests.test_run_flow.RunFlowTests.test_generated_conditioning_for_mova_binds_ref_path_and_records_lineage tests.test_run_flow.RunFlowTests.test_prompt_provided_ref_path_skips_generated_conditioning -v`
+  - result: 10 tests passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_selected_mova_video_model_uses_persistent_worker_strategy_in_mock_mode -v`
+  - result: passed when rerun outside the sandbox to bypass the known local multiprocessing socket-bind restriction
+- 2026-03-23 09:55:00 CST
+- Started Phase 29 by extending run-profile parsing with first-class conditioning specs:
+  - added a validated `conditionings` section to `RunProfile`
+  - introduced `ConditioningSpec` with:
+    - `target_models`
+    - `conditioning_type`
+    - `source_mode`
+    - `source_model`
+    - `generation_defaults`
+    - `artifact_retention`
+  - `resolve_profile_run_request(...)` now carries resolved profile conditionings forward into the run request
+  - run-profile serialization now preserves conditioning config for later manifest/debug output
+- This lays the profile/schema foundation for the upcoming explicit conditioning-preparation stage and generated ref-image flow for MOVA.
 - 2026-03-23 02:35:00 CST
 - Fixed the MOVA worker-bootstrap stall caused by eager top-level imports in `mova_adapter.py`:
   - heavy runtime dependencies are now imported lazily inside a helper during `_get_or_load_pipeline()`
@@ -2128,6 +2263,32 @@
   - narrowed runtime output ignores to repository-root paths only
 
 ## Files Added/Modified
+- /Users/morinop/coding/whitzardgen/configs/run_profiles/wan22_real_global_negative.yaml
+- /Users/morinop/coding/whitzardgen/src/aigc/run_profiles.py
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_profiles.py
+- /Users/morinop/coding/whitzardgen/tests/test_cli_runs.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/src/aigc/run_flow.py
+- /Users/morinop/coding/whitzardgen/src/aigc/runtime_telemetry.py
+- /Users/morinop/coding/whitzardgen/src/aigc/cli/main.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompt_rewrite/config.py
+- /Users/morinop/coding/whitzardgen/src/aigc/prompt_rewrite/__init__.py
+- /Users/morinop/coding/whitzardgen/configs/prompt_rewrite/templates/model_rewrite_v1.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_rewrite/style_families/detailed_sentence.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_rewrite/style_families/short_sentence.yaml
+- /Users/morinop/coding/whitzardgen/configs/prompt_rewrite/style_families/keyword_list.yaml
+- /Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/qwen3.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_profiles.py
+- /Users/morinop/coding/whitzardgen/tests/test_run_flow.py
+- /Users/morinop/coding/whitzardgen/tests/test_cli_runs.py
+- /Users/morinop/coding/whitzardgen/progress.md
+- /Users/morinop/coding/whitzardgen/src/aigc/run_profiles.py
+- /Users/morinop/coding/whitzardgen/progress.md
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/mova_adapter.py
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/__init__.py
 - /Users/morinop/coding/whitzardgen/src/aigc/adapters/stubs.py
@@ -2389,6 +2550,39 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
+- Updated at 2026-03-23 22:42:00 CST.
+- Global profile negative prompt support is implemented and locally validated with focused tests.
+- Updated at 2026-03-23 22:35:00 CST.
+- Profile-level `global_negative_prompt` is now wired end-to-end:
+  - profile parsing
+  - CLI request passthrough
+  - run-time generation-parameter fallback for negative-capable models
+- A concrete Wan2.2 example profile is available for direct use:
+  - `configs/run_profiles/wan22_real_global_negative.yaml`
+- Updated at 2026-03-23 22:05:00 CST.
+- Phase 30 is implemented and locally validated:
+  - profile-driven prompt rewrite stages are active
+  - rewrite lineage lands in run artifacts/manifest/runtime status
+  - before/after conditioning ordering works with MOVA generated conditioning
+  - fallback-original policy works without aborting the run
+- Updated at 2026-03-23 18:35:00 CST.
+- Phase 30 core code wiring is in place locally:
+  - profile parsing + CLI passthrough for `prompt_rewrites`
+  - explicit before/after conditioning rewrite stages
+  - rewrite lineage artifacts and summary fields
+- Next immediate step is focused test execution + fixups for any regressions.
+- Updated at 2026-03-23 18:05:00 CST.
+- Phase 30 is in progress:
+  - profile-layer `prompt_rewrites` input schema is now implemented
+  - next step is wiring the explicit rewrite stage in `run_flow` with configurable order relative to conditioning
+- Updated at 2026-03-23 10:35:00 CST.
+- Phase 29 core conditioning plumbing is now in place locally:
+  - explicit profile-driven conditioning specs exist
+  - generated upstream image artifacts can be bound into MOVA `ref_path`
+  - prompt-provided conditioning paths still override generation
+- Existing MOVA mock-mode compatibility is preserved:
+  - mock runs without conditioning config still work
+  - real runs can now fail earlier and more clearly when required conditioning is missing
 - Updated at 2026-03-23 02:35:00 CST.
 - The MOVA adapter now lazy-imports its heavy runtime dependencies, so worker bootstrap should no longer stall before `checkpoint_dir`/load diagnostics appear.
 - Updated at 2026-03-23 02:15:00 CST.
@@ -2615,6 +2809,8 @@
 - The multi-replica scheduling work from Phase 11 remains in place underneath this improved logging layer.
 
 ## Blockers
+- Broader recovery/resume coverage for separate conditioning-stage tasks is still pending beyond the focused generated/provided regression now in place.
+- Conditioning throughput/ETA semantics may need a follow-up refinement if mixed-stage totals feel confusing during long runs.
 - Local prompt-generation smoke needs an explicit writable `--out` path in this sandbox because the configured default prompt-runs root points to `/inspire/...`, which is not writable here.
 - Real remote validation is still needed for Phase 28:
   - run `aigc prompts generate --execution-mode real` with `Qwen3-32B`
@@ -2669,6 +2865,30 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
+- Run focused regression for the global negative prompt slice:
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_profiles -v`
+  - `PYTHONPATH=src python3 -m unittest tests.test_cli_runs.RunsCliTests.test_handle_run_uses_profile_and_cli_overrides -v`
+  - `PYTHONPATH=src python3 -m unittest tests.test_run_flow.RunFlowTests.test_generation_params_use_profile_global_negative_prompt_as_fallback -v`
+- Sync to remote and validate:
+  - `aigc run --profile configs/run_profiles/wan22_real_global_negative.yaml`
+- Sync this Phase 30 slice to the remote server and run one real profile that includes:
+  - `prompt_rewrites` using `Qwen3-32B`
+  - MOVA generated conditioning
+  - both `before_conditioning` and `after_conditioning` variants for A/B behavior verification
+- Then tune rewrite template/style few-shot examples based on real quality and latency.
+- Run focused regression for Phase 30 and fix any breakages:
+  - `tests.test_run_profiles`
+  - rewrite-related `tests.test_run_flow` cases
+  - `tests.test_cli_runs` handle_run profile passthrough case
+- After tests are green, do a compact pass on README/profile examples for `prompt_rewrites` usage.
+- Implement Prompt Rewriting stage execution in `run_flow`:
+  - add `before_conditioning` and `after_conditioning` stage hooks
+  - execute rewrite source-model task sets with single-GPU pinning
+  - apply fallback-to-original behavior and write `prompt_rewrites.jsonl` lineage
+- Extend the new conditioning pipeline with:
+  - broader recovery/resume tests around conditioning-stage tasks
+  - possible telemetry polish if mixed-stage throughput totals are too confusing in practice
+  - profile/docs examples for generated ref-image workflows such as MOVA
 - Re-run one remote MOVA worker bootstrap and confirm the `checkpoint_dir` print now appears after `loading model...`.
 - Sync this MOVA adapter rename/direct-import slice to the remote cluster and confirm the `mova` package is installed in the `mova` env before the next real run.
 - Re-run one real remote MOVA startup after syncing this slice; if it still stalls, inspect the exact contents/layout of the configured checkpoint root.

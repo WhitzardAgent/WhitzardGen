@@ -246,6 +246,7 @@ class RunsCliTests(unittest.TestCase):
                     "models: [Z-Image, FLUX.1-dev]",
                     "prompts: profile_prompts.txt",
                     "execution_mode: real",
+                    "global_negative_prompt: low quality, blurry",
                     "generation_defaults:",
                     "  width: 1024",
                     "  num_inference_steps: 40",
@@ -287,6 +288,9 @@ class RunsCliTests(unittest.TestCase):
                 {"width": 1024, "num_inference_steps": 40},
             )
             self.assertEqual(kwargs["profile_runtime"], {"available_gpus": [2, 3]})
+            self.assertEqual(kwargs["profile_global_negative_prompt"], "low quality, blurry")
+            self.assertEqual(kwargs["profile_conditionings"], [])
+            self.assertEqual(kwargs["profile_prompt_rewrites"], [])
             self.assertTrue(kwargs["continue_on_error"])
             self.assertEqual(kwargs["max_failures"], 5)
             self.assertEqual(kwargs["max_failure_rate"], 0.25)

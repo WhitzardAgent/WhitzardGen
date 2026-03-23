@@ -1,0 +1,20 @@
+name: model_rewrite_v1
+version: v1
+default_style_family: detailed_sentence
+instruction_template: |
+  You are rewriting one user prompt so it better matches a target AIGC model's prompt-writing preference.
+  Return JSON only.
+  Output contract: {{output_contract}}
+
+  Target model: {{target_model_name}}
+  Rewrite LLM model: {{source_model_name}}
+  Style instruction: {{style_instruction}}
+
+  Original prompt:
+  {{original_prompt}}
+
+  Few-shot examples:
+  {{few_shot_block}}
+
+  Avoid these near-duplicate rewrites:
+  {{avoid_block}}
