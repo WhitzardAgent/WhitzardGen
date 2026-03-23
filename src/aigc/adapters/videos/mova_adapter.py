@@ -1,24 +1,12 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
-
-from PIL import Image
 
 from aigc.adapters.base import AdapterCapabilities, ExecutionPlan, ProgressCallback
 from aigc.adapters.videos.base import BaseVideoGenerationAdapter
 from aigc.adapters.videos.common import compute_duration_sec, resolve_video_repo_dir
-
-try:
-    from mova.datasets.transforms.custom import crop_and_resize
-    from mova.diffusion.pipelines.pipeline_mova import MOVA
-    from mova.utils.data import save_video_with_audio
-    _MOVA_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - depends on optional model env
-    crop_and_resize = None  # type: ignore[assignment]
-    MOVA = None  # type: ignore[assignment]
-    save_video_with_audio = None  # type: ignore[assignment]
-    _MOVA_IMPORT_ERROR = exc
 
 
 _DEFAULT_NEGATIVE_PROMPT = (
@@ -54,6 +42,7 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
         self._loaded_image_module: Any | None = None
         self._loaded_crop_and_resize: Any | None = None
         self._loaded_save_video_with_audio: Any | None = None
+        self._loaded_mova_class: Any | None = None
 
     def load_for_persistent_worker(self) -> None:
         self._get_or_load_pipeline()
@@ -65,6 +54,7 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
         self._loaded_image_module = None
         self._loaded_crop_and_resize = None
         self._loaded_save_video_with_audio = None
+        self._loaded_mova_class = None
 
     def prepare(
         self,
@@ -220,6 +210,7 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
             and self._loaded_image_module is not None
             and self._loaded_crop_and_resize is not None
             and self._loaded_save_video_with_audio is not None
+            and self._loaded_mova_class is not None
         ):
             return (
                 self._loaded_pipeline,
@@ -230,13 +221,6 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
                 self._loaded_save_video_with_audio,
             )
 
-        if MOVA is None or crop_and_resize is None or save_video_with_audio is None:
-            raise RuntimeError(
-                "MOVA-720p requires the `mova` Python package to be installed in the target "
-                "environment and importable directly. repo_path is no longer used to inject the "
-                "package dynamically."
-            ) from _MOVA_IMPORT_ERROR
-
         import torch
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -246,16 +230,17 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
             params.update(load_params)
 
         checkpoint_dir = self._resolve_checkpoint_dir(params)
-        print(checkpoint_dir)
+        print(checkpoint_dir, flush=True)
         repo_dir = resolve_video_repo_dir(self.model_config)
         if repo_dir and not Path(repo_dir).exists():
             raise RuntimeError(f"MOVA-720p configured repo_path does not exist: {repo_dir}")
 
-        pipe = MOVA.from_pretrained(
+        image_module, crop_and_resize, mova_class, save_video_with_audio = self._load_runtime_dependencies()
+        pipe = mova_class.from_pretrained(
             checkpoint_dir,
             torch_dtype=dtype,
         )
-        print(pipe)
+        print(pipe, flush=True)
 
         offload = str(params.get("offload", "cpu"))
         if offload == "none":
@@ -286,10 +271,11 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
         self._loaded_pipeline = pipe
         self._loaded_torch = torch
         self._loaded_device = device
-        self._loaded_image_module = Image
+        self._loaded_image_module = image_module
         self._loaded_crop_and_resize = crop_and_resize
         self._loaded_save_video_with_audio = save_video_with_audio
-        return pipe, torch, device, Image, crop_and_resize, save_video_with_audio
+        self._loaded_mova_class = mova_class
+        return pipe, torch, device, image_module, crop_and_resize, save_video_with_audio
 
     def _resolve_checkpoint_dir(self, params: dict[str, Any]) -> str:
         checkpoint_dir = params.get("checkpoint_dir")
@@ -311,3 +297,22 @@ class MOVAVideoAdapter(BaseVideoGenerationAdapter):
         if not checkpoint_path.exists():
             raise RuntimeError(f"MOVA-720p checkpoint directory does not exist: {checkpoint_path}")
         return str(checkpoint_path)
+
+    def _load_runtime_dependencies(self) -> tuple[Any, Any, Any, Any]:
+        try:
+            image_module = importlib.import_module("PIL.Image")
+            crop_resize_module = importlib.import_module("mova.datasets.transforms.custom")
+            pipeline_module = importlib.import_module("mova.diffusion.pipelines.pipeline_mova")
+            data_module = importlib.import_module("mova.utils.data")
+        except Exception as exc:  # pragma: no cover - depends on optional model env
+            raise RuntimeError(
+                "MOVA-720p requires the `mova` Python package to be installed in the target "
+                "environment and importable directly. repo_path is no longer used to inject the "
+                "package dynamically."
+            ) from exc
+        return (
+            image_module,
+            crop_resize_module.crop_and_resize,
+            pipeline_module.MOVA,
+            data_module.save_video_with_audio,
+        )

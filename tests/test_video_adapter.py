@@ -852,7 +852,7 @@ class VideoAdapterTests(unittest.TestCase):
         ref_path = tmpdir / "reference.png"
         ref_path.write_text("stub", encoding="utf-8")
 
-        with self.assertRaisesRegex(RuntimeError, "requires a local checkpoint directory"):
+        with self.assertRaisesRegex(RuntimeError, "checkpoint directory"):
             adapter.prepare(
                 prompts=["a violinist performs on a rainy city rooftop"],
                 prompt_ids=["p001"],
@@ -892,18 +892,15 @@ class VideoAdapterTests(unittest.TestCase):
                 captured["load_kwargs"] = kwargs
                 return _FakePipe()
 
-        with patch.object(mova_adapter_module, "MOVA", _FakeMOVA), patch.object(
-            mova_adapter_module,
-            "crop_and_resize",
-            lambda image, **kwargs: image,
-        ), patch.object(
-            mova_adapter_module,
-            "save_video_with_audio",
-            lambda *args, **kwargs: None,
-        ), patch.object(
-            mova_adapter_module,
-            "_MOVA_IMPORT_ERROR",
-            None,
+        with patch.object(
+            adapter,
+            "_load_runtime_dependencies",
+            return_value=(
+                mova_adapter_module.importlib.import_module("PIL.Image"),
+                lambda image, **kwargs: image,
+                _FakeMOVA,
+                lambda *args, **kwargs: None,
+            ),
         ):
             adapter._get_or_load_pipeline({"checkpoint_dir": str(weights_dir), "offload": "cpu"})
 

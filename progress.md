@@ -4,6 +4,22 @@
 - Phase 28 — Prompt Template System + Prompt Writing Style Families + Few-Shot Control
 
 ## Completed
+- 2026-03-23 02:35:00 CST
+- Fixed the MOVA worker-bootstrap stall caused by eager top-level imports in `mova_adapter.py`:
+  - heavy runtime dependencies are now imported lazily inside a helper during `_get_or_load_pipeline()`
+  - this means persistent-worker startup can now reach:
+    - `loading model...`
+    - `checkpoint_dir` debug print
+    - before the `mova` package itself is imported
+  - kept the renamed adapter module:
+    - `src/aigc/adapters/videos/mova_adapter.py`
+  - preserved the requested direct `mova` package usage pattern, but moved it to lazy import timing so worker bootstrap no longer blocks before any useful diagnostics appear
+- Updated focused MOVA tests to patch the lazy runtime-dependency loader rather than module-top globals.
+- Focused validation completed:
+  - `python3 -m py_compile src/aigc/adapters/videos/mova_adapter.py tests/test_video_adapter.py`
+  - result: passed
+  - `PYTHONPATH=src python3 -m unittest tests.test_video_adapter tests.test_registry -v`
+  - result: 35 tests passed
 - 2026-03-23 02:15:00 CST
 - Renamed the MOVA adapter module from:
   - `src/aigc/adapters/videos/mova.py`
@@ -2373,6 +2389,8 @@
 - /Users/morinop/coding/whitzardgen/envs/hunyuan_video_15/validation.json
 
 ## Current Status
+- Updated at 2026-03-23 02:35:00 CST.
+- The MOVA adapter now lazy-imports its heavy runtime dependencies, so worker bootstrap should no longer stall before `checkpoint_dir`/load diagnostics appear.
 - Updated at 2026-03-23 02:15:00 CST.
 - `MOVA-720p` now uses the renamed `mova_adapter.py` module and a direct `mova` package import path.
 - This means the target runtime environment must provide an importable `mova` package; `repo_path` is no longer used to inject the package into `sys.path` during adapter load.
@@ -2651,6 +2669,7 @@
 - The updated Wan loader now needs remote confirmation that it gets past pipeline startup and into real inference on the cluster env.
 
 ## Next Task
+- Re-run one remote MOVA worker bootstrap and confirm the `checkpoint_dir` print now appears after `loading model...`.
 - Sync this MOVA adapter rename/direct-import slice to the remote cluster and confirm the `mova` package is installed in the `mova` env before the next real run.
 - Re-run one real remote MOVA startup after syncing this slice; if it still stalls, inspect the exact contents/layout of the configured checkpoint root.
 - Verify on the remote cluster that `aigc models inspect MOVA-720p` shows the expected effective local paths before the next real MOVA run.
