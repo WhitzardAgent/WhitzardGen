@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -194,8 +195,36 @@ def _load_entrypoint_object(entrypoint: str) -> Any:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     else:
-        module = importlib.import_module(module_ref)
+        module = _import_module_with_repo_fallback(module_ref)
     try:
         return getattr(module, object_name)
     except AttributeError as exc:
         raise BenchmarkDiscoveryError(f"Entrypoint object not found: {entrypoint}") from exc
+
+
+def _import_module_with_repo_fallback(module_ref: str) -> Any:
+    try:
+        return importlib.import_module(module_ref)
+    except ModuleNotFoundError as exc:
+        if not _module_ref_can_resolve_from_repo(module_ref):
+            raise
+        repo_root_str = str(REPO_ROOT)
+        remove_after = False
+        if repo_root_str not in sys.path:
+            sys.path.insert(0, repo_root_str)
+            remove_after = True
+        try:
+            return importlib.import_module(module_ref)
+        except ModuleNotFoundError:
+            raise exc
+        finally:
+            if remove_after:
+                try:
+                    sys.path.remove(repo_root_str)
+                except ValueError:
+                    pass
+
+
+def _module_ref_can_resolve_from_repo(module_ref: str) -> bool:
+    module_path = REPO_ROOT / Path(*module_ref.split("."))
+    return module_path.with_suffix(".py").exists() or (module_path / "__init__.py").exists()

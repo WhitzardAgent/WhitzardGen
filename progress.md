@@ -47,6 +47,8 @@
 - Added current-architecture ethics evaluation docs in `docs/`:
   - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
   - [docs/ethics_benchmark_spec.md](/Users/morinop/coding/whitzardgen/docs/ethics_benchmark_spec.md)
+- Fixed remote/source-install example discovery so `examples.*` entrypoints can load even when `examples` is not installed as a site-package:
+  - [src/aigc/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/discovery.py)
 
 ## Files Added/Modified
 - Modified:
@@ -62,6 +64,7 @@
   - [src/aigc/evaluators/models.py](/Users/morinop/coding/whitzardgen/src/aigc/evaluators/models.py)
   - [src/aigc/evaluators/service.py](/Users/morinop/coding/whitzardgen/src/aigc/evaluators/service.py)
   - [src/aigc/run_flow.py](/Users/morinop/coding/whitzardgen/src/aigc/run_flow.py)
+  - [src/aigc/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/discovery.py)
   - [docs/ethics_benchmark_spec.md](/Users/morinop/coding/whitzardgen/docs/ethics_benchmark_spec.md)
   - [examples/analysis_plugins/ethics_family_consistency/plugin.py](/Users/morinop/coding/whitzardgen/examples/analysis_plugins/ethics_family_consistency/plugin.py)
   - [examples/analysis_plugins/ethics_slot_sensitivity/plugin.py](/Users/morinop/coding/whitzardgen/examples/analysis_plugins/ethics_slot_sensitivity/plugin.py)
@@ -83,12 +86,14 @@
   - examples and CLI surfaces are using V2-first names with compatibility fallbacks where needed
 - Benchmarking-focused tests and broader regression suites are passing locally.
 - `docs/` now includes a dedicated runbook for operating ethics-conflict evaluation on the current V2 architecture.
+- Example discovery is now more robust on remote machines that run from source trees or editable installs.
 
 ## Blockers
 - No confirmed blocker.
 - Remaining work is mostly polish:
   - optionally migrate more text/UI wording from `evaluator` to `scorer`
   - optionally add more V2-specific coverage around bundle compatibility readers and `ExperimentLog` semantics
+  - remote machine behavior should now be rechecked with a real `aigc benchmark build --builder ethics_sandbox ...` invocation
 
 ## Next Task
 - If we continue from here, the best next slice is post-cutover cleanup:
