@@ -16,6 +16,7 @@ from aigc.benchmarking.models import (
     NormalizedResult,
     RealizationResult,
     RealizationSpec,
+    RealizationValidationResult,
     ScoreRecord,
     TargetResult,
 )
@@ -110,6 +111,18 @@ class RealizationSynthesisBackend(ABC):
         request: BenchmarkBuildRequest,
         validation_feedback_by_case_id: dict[str, list[str]] | None = None,
     ) -> list[RealizationResult]:
+        raise NotImplementedError
+
+
+class RealizationValidator(ABC):
+    @abstractmethod
+    def validate(
+        self,
+        *,
+        specs: list[RealizationSpec],
+        results: list[RealizationResult],
+        request: BenchmarkBuildRequest,
+    ) -> list[RealizationValidationResult]:
         raise NotImplementedError
 
 

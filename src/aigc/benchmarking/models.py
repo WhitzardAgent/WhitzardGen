@@ -146,6 +146,9 @@ class RealizationResult:
     case_id: str
     source_builder: str
     synthesized_text: str
+    scene_description: str | None = None
+    structured_output: dict[str, Any] = field(default_factory=dict)
+    decision_frame: dict[str, Any] = field(default_factory=dict)
     prompt_template_name: str | None = None
     prompt_template_version: str | None = None
     synthesis_model: str | None = None
@@ -157,6 +160,21 @@ class RealizationResult:
     @property
     def is_valid(self) -> bool:
         return not self.validation_errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class RealizationValidationResult:
+    benchmark_id: str
+    case_id: str
+    valid: bool
+    issues: list[str] = field(default_factory=list)
+    feedback_for_retry: list[str] = field(default_factory=list)
+    binary_frame_assessment: dict[str, Any] = field(default_factory=dict)
+    conflict_preservation_assessment: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

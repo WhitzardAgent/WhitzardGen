@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 import urllib.error
@@ -64,6 +65,7 @@ class _FakeTokenizer:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.padding_side = "right"
 
     def apply_chat_template(self, messages, **kwargs) -> str:
         self.calls.append(
@@ -100,6 +102,10 @@ class _FakeModel:
         self.generation_kwargs = None
 
     def eval(self):
+        return self
+
+    def to(self, device: str):
+        self.device = device
         return self
 
     def generate(self, **kwargs):
@@ -161,6 +167,104 @@ class TextAdapterTests(unittest.TestCase):
             collected.batch_items[0].artifacts[0].metadata["thinking_content"],
             "draft reasoning",
         )
+
+    def test_qwen3_adapter_sets_left_padding_for_decoder_only_batches(self) -> None:
+        from aigc.adapters.texts.qwen3 import Qwen3TextAdapter
+
+        registry = load_registry()
+        adapter = Qwen3TextAdapter(model_config=registry.get_model("Qwen3-32B"))
+
+        tokenizer = _FakeTokenizer()
+
+        class _FakeAutoTokenizer:
+            @staticmethod
+            def from_pretrained(model_ref: str, trust_remote_code: bool = True):
+                del model_ref, trust_remote_code
+                return tokenizer
+
+        class _FakeAutoModelForCausalLM:
+            @staticmethod
+            def from_pretrained(model_ref: str, **kwargs):
+                del model_ref, kwargs
+                return _FakeModel()
+
+        class _FakeCuda:
+            @staticmethod
+            def is_available() -> bool:
+                return False
+
+        class _FakeTorchModule:
+            cuda = _FakeCuda()
+
+        fake_transformers = type(
+            "_FakeTransformersModule",
+            (),
+            {
+                "AutoTokenizer": _FakeAutoTokenizer,
+                "AutoModelForCausalLM": _FakeAutoModelForCausalLM,
+            },
+        )()
+
+        with patch.dict(
+            sys.modules,
+            {
+                "torch": _FakeTorchModule(),
+                "transformers": fake_transformers,
+            },
+        ):
+            adapter._get_or_load_model()  # type: ignore[attr-defined]
+
+        self.assertEqual(tokenizer.padding_side, "left")
+
+    def test_local_transformers_adapter_sets_left_padding_for_decoder_only_batches(self) -> None:
+        from aigc.adapters.texts.local_transformers import LocalTransformersTextAdapter
+
+        registry = load_registry()
+        adapter = LocalTransformersTextAdapter(model_config=registry.get_model("Qwen3-32B"))
+
+        tokenizer = _FakeTokenizer()
+
+        class _FakeAutoTokenizer:
+            @staticmethod
+            def from_pretrained(model_ref: str, trust_remote_code: bool = True):
+                del model_ref, trust_remote_code
+                return tokenizer
+
+        class _FakeAutoModelForCausalLM:
+            @staticmethod
+            def from_pretrained(model_ref: str, **kwargs):
+                del model_ref, kwargs
+                return _FakeModel()
+
+        class _FakeCuda:
+            @staticmethod
+            def is_available() -> bool:
+                return False
+
+        class _FakeTorchModule:
+            cuda = _FakeCuda()
+            bfloat16 = "bfloat16"
+            float32 = "float32"
+
+        fake_transformers = type(
+            "_FakeTransformersModule",
+            (),
+            {
+                "AutoTokenizer": _FakeAutoTokenizer,
+                "AutoModelForCausalLM": _FakeAutoModelForCausalLM,
+            },
+        )()
+
+        with patch.dict(
+            sys.modules,
+            {
+                "torch": _FakeTorchModule(),
+                "transformers": fake_transformers,
+            },
+        ):
+            adapter._get_or_load_model()  # type: ignore[attr-defined]
+
+        self.assertEqual(tokenizer.padding_side, "left")
 
     def test_openai_compatible_client_builds_chat_completions_request(self) -> None:
         captured_request = {}

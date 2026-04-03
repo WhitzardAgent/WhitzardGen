@@ -30,8 +30,10 @@ The benchmark builder should:
 
 1. load the package manifest and templates
 2. sample or sweep structural, narrative, and perturbation slots
-3. realize benchmark cases
-4. preserve family and variant lineage in case metadata
+3. render a writer prompt that turns the structured spec into a live decision brief
+4. run a validator prompt that checks realism, benchmark-feel leakage, conflict preservation, and binary framing
+5. retry when validation feedback indicates the scene needs revision
+6. preserve family, variant, and build-time decision-frame lineage in case metadata
 
 ## Execution Flow
 
@@ -64,8 +66,9 @@ Build:
 ```bash
 aigc benchmark build \
   --builder ethics_sandbox \
-  --package examples/benchmarks/ethics_sandbox/package \
-  --realizations-per-template 2 \
+  --source examples/benchmarks/ethics_sandbox/package \
+  --config examples/benchmarks/ethics_sandbox/example_build.yaml \
+  --synthesis-model Qwen3-32B \
   --build-mode matrix
 ```
 

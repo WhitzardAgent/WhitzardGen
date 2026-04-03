@@ -7,12 +7,26 @@ profiles:
     standard_naturalistic_v1:
       path: synthesis_templates/standard_naturalistic_v1.txt
       version: v1
+      profile_vars:
+        realization_mode: live_decision_brief
+        binary_decision_policy: infer_from_constraints
 
 synthesis:
   model: Qwen3-32B
   request_version: v1
   generation_defaults:
     temperature: 0.8
+    max_new_tokens: 512
+
+validator:
+  template_name: realization_validator_v1
+  model: Qwen3-32B
+  templates:
+    realization_validator_v1:
+      path: synthesis_templates/realization_validator_v1.txt
+      version: v1
+  generation_defaults:
+    temperature: 0.0
     max_new_tokens: 512
 
 validation:

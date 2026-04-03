@@ -1,7 +1,7 @@
 # Progress
 
 ## Current Phase
-- Phase 37 — Example-Owned Benchmark Packages + Library-Defined Slot Value Spaces
+- Phase 38 — Writer/Validator Dual-Prompt Semantic Realization
 
 ## Completed
 - Added a generic benchmark-package loader with canonical-path + alias-path resolution for example-owned generative benchmark packages:
@@ -100,6 +100,34 @@
   - [docs/ethics_benchmark_spec.md](/Users/morinop/coding/whitzardgen/docs/ethics_benchmark_spec.md)
 - Fixed remote/source-install example discovery so `examples.*` entrypoints can load even when `examples` is not installed as a site-package:
   - [src/aigc/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/discovery.py)
+- Fixed decoder-only text-model tokenizer initialization so local batched generation uses left padding instead of right padding:
+  - [src/aigc/adapters/texts/qwen3.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/qwen3.py)
+  - [src/aigc/adapters/texts/local_transformers.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/local_transformers.py)
+- Added regression tests to keep decoder-only tokenizer padding behavior pinned:
+  - [tests/test_text_adapter.py](/Users/morinop/coding/whitzardgen/tests/test_text_adapter.py)
+- Added a writer/validator dual-prompt realization flow for the ethics builder:
+  - writer prompt generates a realistic live decision brief with structured `decision_frame`
+  - validator prompt judges benchmark-feel leakage, conflict preservation, and binary framing
+  - retry now uses validator feedback instead of relying only on deterministic guards
+  in:
+  - [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py)
+  - [src/aigc/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/interfaces.py)
+  - [src/aigc/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/realization.py)
+  - [examples/benchmarks/ethics_sandbox/builder.py](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/builder.py)
+- Reworked the ethics writer prompt so control-heavy fields are treated as hidden fidelity signals instead of ordinary visible sections, and added a separate validator prompt template:
+  - [examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt)
+  - [examples/benchmarks/ethics_sandbox/synthesis_templates/realization_validator_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/realization_validator_v1.txt)
+- Updated the ethics example build config and runbooks to describe writer prompt + validator prompt + retry:
+  - [examples/benchmarks/ethics_sandbox/example_build.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/example_build.yaml)
+  - [examples/benchmarks/ethics_sandbox/README.md](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/README.md)
+  - [examples/experiments/ethics_structural_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_structural_runbook.zh-CN.md)
+  - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
+  - [docs/ethics_benchmark_spec.md](/Users/morinop/coding/whitzardgen/docs/ethics_benchmark_spec.md)
+- Added regression coverage for:
+  - validator-driven retry during semantic realization
+  - writer prompt hidden-control-signal framing
+  - `decision_frame` persistence in built benchmark cases
+  in [tests/test_benchmarking.py](/Users/morinop/coding/whitzardgen/tests/test_benchmarking.py)
 
 ## Files Added/Modified
 - Modified:
@@ -118,6 +146,8 @@
   - [src/aigc/evaluators/models.py](/Users/morinop/coding/whitzardgen/src/aigc/evaluators/models.py)
   - [src/aigc/evaluators/service.py](/Users/morinop/coding/whitzardgen/src/aigc/evaluators/service.py)
   - [src/aigc/run_flow.py](/Users/morinop/coding/whitzardgen/src/aigc/run_flow.py)
+  - [src/aigc/adapters/texts/qwen3.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/qwen3.py)
+  - [src/aigc/adapters/texts/local_transformers.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/local_transformers.py)
   - [src/aigc/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/discovery.py)
   - [docs/ethics_benchmark_spec.md](/Users/morinop/coding/whitzardgen/docs/ethics_benchmark_spec.md)
   - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
@@ -141,6 +171,7 @@
   - [examples/normalizers/ethics_structural/normalizer.py](/Users/morinop/coding/whitzardgen/examples/normalizers/ethics_structural/normalizer.py)
   - [tests/test_benchmarking.py](/Users/morinop/coding/whitzardgen/tests/test_benchmarking.py)
   - [tests/test_cli_benchmark.py](/Users/morinop/coding/whitzardgen/tests/test_cli_benchmark.py)
+  - [tests/test_text_adapter.py](/Users/morinop/coding/whitzardgen/tests/test_text_adapter.py)
 - Added:
   - [examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt)
   - [examples/benchmarks/ethics_sandbox/package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
@@ -159,9 +190,14 @@
   - templates now declare `used_slots` instead of inline slot constraints
   - fixed template facts are encoded outside slot sampling
 - `ethics_sandbox` no longer mechanically stitches final prompts; it now samples structured slot assignments from the package-local slot library, renders synthesis requests, calls the existing T2T run kernel, validates outputs, and compiles final `BenchmarkCase`s with realization lineage.
+- Phase 38 is now implemented for ethics benchmark realization:
+  - writer prompts generate live decision briefs rather than benchmark-like items
+  - validator prompts provide build-time quality judgments and retry feedback
+  - `decision_frame` is preserved in case metadata and build provenance
 - Benchmark bundles remain lightweight, while final case metadata now preserves:
   - `slot_assignments`
   - `slot_layers`
+  - `decision_frame`
   - `realization_prompt_template`
   - `synthesis_model`
   - `synthesis_request_version`
@@ -176,7 +212,7 @@
 - Remaining work is follow-up polish and expansion:
   - add a second non-ethics generative builder example to validate the same package/schema rule outside ethics
   - optionally refine package-local slot libraries with tighter canonical enums and richer `surface_realization`
-  - optionally add richer realization validators and retry policies
+  - optionally generalize prompt-based realization validators into a reusable example-agnostic helper
 
 ## Next Task
-- Add a second generative benchmark package example, such as unsafe-content/safety prompts, that reuses the same `examples-owned package + slot_library-defined value spaces + semantic realization` pattern.
+- Add a second generative benchmark package example, such as unsafe-content/safety prompts, that reuses the same `examples-owned package + slot_library-defined value spaces + writer/validator semantic realization` pattern.

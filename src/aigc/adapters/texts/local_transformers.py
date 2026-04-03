@@ -112,6 +112,9 @@ class LocalTransformersTextAdapter(BaseTextGenerationAdapter):
         tokenizer = AutoTokenizer.from_pretrained(model_ref, trust_remote_code=True)
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token = tokenizer.eos_token
+        # Decoder-only LLMs should left-pad batched prompts so generation starts after
+        # the real prompt tokens rather than after right-padding.
+        tokenizer.padding_side = "left"
         model = AutoModelForCausalLM.from_pretrained(
             model_ref,
             torch_dtype=dtype,

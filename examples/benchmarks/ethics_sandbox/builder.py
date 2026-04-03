@@ -15,9 +15,15 @@ from aigc.benchmarking.interfaces import (
     GroupAnalysisRequest,
     GroupAnalyzer,
     ParameterSampler,
+    RealizationValidator,
     StructureGuard,
 )
-from aigc.benchmarking.models import BenchmarkCase, RealizationResult, RealizationSpec
+from aigc.benchmarking.models import (
+    BenchmarkCase,
+    RealizationResult,
+    RealizationSpec,
+    RealizationValidationResult,
+)
 from aigc.benchmarking.packages import GenerativeBenchmarkPackage, SlotDefinition, load_generative_benchmark_package
 from aigc.benchmarking.realization import (
     SimpleTemplateRenderer,
@@ -26,6 +32,10 @@ from aigc.benchmarking.realization import (
     validate_required_value_mentions,
 )
 from aigc.benchmarking.service import load_yaml_file, slugify
+from aigc.prompts.models import PromptRecord
+from aigc.run_flow import run_single_model
+from aigc.run_store import load_run_dataset_records
+from aigc.utils.progress import NullRunProgress
 
 _DEFAULT_FORBIDDEN_TERMS = [
     "test",
@@ -43,6 +53,7 @@ class EthicsBuildConfig:
     profiles: dict[str, Any]
     synthesis: dict[str, Any]
     validation: dict[str, Any]
+    validator: dict[str, Any]
     raw: dict[str, Any]
 
 
@@ -69,7 +80,8 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
             build_config=build_config,
         )
         guard = EthicsRealizationGuard(build_config=build_config)
-        renderer = EthicsRealizationRenderer(build_config=build_config)
+        renderer = EthicsWriterRenderer(build_config=build_config)
+        validator = EthicsPromptValidator(build_config=build_config)
         compiler = EthicsCaseCompiler(
             package=package,
             build_config=build_config,
@@ -81,6 +93,7 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
             sampler=sampler,
             guard=guard,
             renderer=renderer,
+            validator=validator,
             compiler=compiler,
             max_attempts=int(build_config.validation.get("max_attempts", 1)),
         )
@@ -111,11 +124,21 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
                 "semantic_realization": {
                     "enabled": True,
                     "synthesis_model": synthesis_model or None,
-                    "prompt_templates": {
+                    "writer_templates": {
                         name: {
                             "version": str(config.get("version", "v1")),
                         }
                         for name, config in (build_config.profiles.get("templates") or {}).items()
+                    },
+                    "validator": {
+                        "template_name": str(build_config.validator.get("template_name") or ""),
+                        "template_version": _resolve_validator_template_version(build_config=build_config),
+                        "model": str(
+                            build_config.validator.get("model")
+                            or synthesis_model
+                            or ""
+                        )
+                        or None,
                     },
                     "validation": {
                         "max_attempts": int(build_config.validation.get("max_attempts", 1)),
@@ -225,6 +248,15 @@ class EthicsRealizationSampler(ParameterSampler):
                 case_id = f"{template_id}_{index + 1:03d}"
                 prompt_guidelines = dict(template.get("prompt_generation_guidelines", {}) or {})
                 scenario_premises = dict(template.get("scenario_premises", {}) or {})
+                profile_vars = _resolve_profile_vars(
+                    prompt_template_name=prompt_template_name,
+                    build_config=self.build_config,
+                )
+                decision_frame_requirements = _infer_decision_frame_requirements(
+                    template=template,
+                    prompt_guidelines=prompt_guidelines,
+                    profile_vars=profile_vars,
+                )
                 specs.append(
                     RealizationSpec(
                         benchmark_id=self.benchmark_id,
@@ -260,6 +292,7 @@ class EthicsRealizationSampler(ParameterSampler):
                             "analysis_targets": list(template.get("analysis_targets", []) or []),
                             "response_capture_contract": dict(template.get("response_capture", {}) or {}),
                             "prompt_generation_guidelines": prompt_guidelines,
+                            "decision_frame_requirements": decision_frame_requirements,
                             "source_template_ref": {
                                 "template_id": template_id,
                                 "template_title": template.get("template_title"),
@@ -289,17 +322,6 @@ class EthicsRealizationSampler(ParameterSampler):
                         prompt_context={
                             "template_title": str(template.get("template_title", "") or ""),
                             "key_moral_conflict": str(template.get("key_moral_conflict", "") or ""),
-                            "merge_rationale": str(template.get("merge_rationale", "") or ""),
-                            "source_cases_json": json.dumps(
-                                list(template.get("source_cases", []) or []),
-                                ensure_ascii=False,
-                                indent=2,
-                            ),
-                            "ethics_grounding_json": json.dumps(
-                                dict(template.get("ethics_grounding", {}) or {}),
-                                ensure_ascii=False,
-                                indent=2,
-                            ),
                             "narrative_grounding_json": json.dumps(
                                 dict(template.get("narrative_grounding", {}) or {}),
                                 ensure_ascii=False,
@@ -317,6 +339,40 @@ class EthicsRealizationSampler(ParameterSampler):
                                 list(prompt_guidelines.get("recommended_realizations", []) or [])
                             ),
                             "slot_layers_json": json.dumps(slot_layers, ensure_ascii=False, indent=2),
+                            "decision_frame_requirements_json": json.dumps(
+                                decision_frame_requirements,
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            "profile_vars_json": json.dumps(
+                                profile_vars,
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
+                            "profile_realization_mode": str(
+                                profile_vars.get("realization_mode", "live_decision_brief")
+                            ),
+                            "profile_binary_decision_policy": str(
+                                profile_vars.get("binary_decision_policy", "infer_from_constraints")
+                            ),
+                            "hidden_control_signals_json": json.dumps(
+                                {
+                                    "ethics_grounding": dict(
+                                        template.get("ethics_grounding", {}) or {}
+                                    ),
+                                    "analysis_targets": list(
+                                        template.get("analysis_targets", []) or []
+                                    ),
+                                    "response_capture_contract": dict(
+                                        template.get("response_capture", {}) or {}
+                                    ),
+                                    "source_case_references": list(
+                                        template.get("source_cases", []) or []
+                                    ),
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
                         },
                     )
                 )
@@ -377,7 +433,7 @@ class EthicsRealizationGuard(StructureGuard):
         return errors
 
 
-class EthicsRealizationRenderer(SimpleTemplateRenderer):
+class EthicsWriterRenderer(SimpleTemplateRenderer):
     def __init__(self, *, build_config: EthicsBuildConfig) -> None:
         templates = dict(build_config.profiles.get("templates", {}) or {})
         self._renderers = {
@@ -413,6 +469,184 @@ class EthicsRealizationRenderer(SimpleTemplateRenderer):
         return renderer.render(spec, validation_feedback=validation_feedback)
 
 
+class EthicsPromptValidator(RealizationValidator):
+    def __init__(self, *, build_config: EthicsBuildConfig) -> None:
+        self.build_config = build_config
+        template_name = str(build_config.validator.get("template_name") or "realization_validator_v1")
+        templates = dict(build_config.validator.get("templates", {}) or {})
+        template_config = dict(templates.get(template_name, {}) or {})
+        self.template_name = template_name
+        self.template_version = str(template_config.get("version", "v1"))
+        self.template_text = Path(str(template_config["path"])).read_text(encoding="utf-8")
+        self.renderer = SimpleTemplateRenderer(
+            template_name=self.template_name,
+            template_version=self.template_version,
+            template_text=self.template_text,
+        )
+
+    def validate(
+        self,
+        *,
+        specs: list[RealizationSpec],
+        results: list[RealizationResult],
+        request: BenchmarkBuildRequest,
+    ) -> list[RealizationValidationResult]:
+        if request.execution_mode == "mock":
+            return [
+                self._validate_mock(spec=spec, result=result)
+                for spec, result in zip(specs, results, strict=True)
+            ]
+
+        validator_model = str(
+            self.build_config.validator.get("model")
+            or request.synthesis_model
+            or request.llm_model
+            or self.build_config.synthesis.get("model")
+            or ""
+        ).strip()
+        if not validator_model:
+            raise RuntimeError("Ethics realization validator requires a validator model.")
+
+        progress = request.progress or NullRunProgress()
+        out_dir = Path(request.out_dir) if request.out_dir is not None else None
+        run_dir = out_dir / "_realization_validation" if out_dir is not None else None
+        prompts = [
+            PromptRecord(
+                prompt_id=f"validate_{index:06d}",
+                prompt=self.renderer.render(
+                    self._build_validation_spec(spec=spec, result=result)
+                ),
+                language=spec.language,
+                metadata={
+                    "benchmark_id": spec.benchmark_id,
+                    "case_id": spec.case_id,
+                    "template_id": spec.metadata.get("template_id"),
+                    "source_builder": spec.source_builder,
+                    "validator_template_name": self.template_name,
+                },
+                parameters=dict(self.build_config.validator.get("generation_defaults", {}) or {}),
+            )
+            for index, (spec, result) in enumerate(zip(specs, results, strict=True), start=1)
+        ]
+        requests_path = _write_request_prompts(
+            prompts=prompts,
+            output_path=(run_dir / "requests.jsonl") if run_dir is not None else None,
+        )
+        summary = run_single_model(
+            model_name=validator_model,
+            prompt_file=requests_path,
+            out_dir=run_dir,
+            run_name="ethics-realization-validator",
+            execution_mode=request.execution_mode,
+            progress=progress,
+        )
+        dataset_records = load_run_dataset_records(summary.run_id)
+        raw_by_prompt_id: dict[str, str] = {}
+        for record in dataset_records:
+            prompt_id = str(record.get("prompt_id", "")).strip()
+            if not prompt_id:
+                continue
+            artifact_path_value = record.get("artifact_path")
+            artifact_path = Path(str(artifact_path_value or ""))
+            if artifact_path.exists() and artifact_path.is_file():
+                raw_by_prompt_id[prompt_id] = artifact_path.read_text(encoding="utf-8")
+                continue
+            artifact_text = record.get("artifact_text")
+            if artifact_text not in (None, ""):
+                raw_by_prompt_id[prompt_id] = str(artifact_text)
+
+        validations: list[RealizationValidationResult] = []
+        for index, (spec, result) in enumerate(zip(specs, results, strict=True), start=1):
+            prompt_id = f"validate_{index:06d}"
+            validations.append(
+                _parse_validator_output(
+                    raw_text=raw_by_prompt_id.get(prompt_id, ""),
+                    spec=spec,
+                    template_name=self.template_name,
+                    template_version=self.template_version,
+                    validator_model=validator_model,
+                    run_id=summary.run_id,
+                    prompt_id=prompt_id,
+                )
+            )
+        return validations
+
+    def _build_validation_spec(self, *, spec: RealizationSpec, result: RealizationResult) -> RealizationSpec:
+        prompt_context = dict(spec.prompt_context)
+        prompt_context.update(
+            {
+                "scene_description": str(
+                    result.scene_description or result.synthesized_text or ""
+                ),
+                "decision_frame_json": json.dumps(
+                    dict(result.decision_frame or {}),
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            }
+        )
+        return RealizationSpec(
+            benchmark_id=spec.benchmark_id,
+            case_id=spec.case_id,
+            source_builder=spec.source_builder,
+            input_modality=spec.input_modality,
+            language=spec.language,
+            split=spec.split,
+            tags=list(spec.tags),
+            parameters=dict(spec.parameters),
+            metadata=dict(spec.metadata),
+            grouping=dict(spec.grouping),
+            execution_hints=dict(spec.execution_hints),
+            evaluation_hints=dict(spec.evaluation_hints),
+            expected_output_contract=spec.expected_output_contract,
+            slot_assignments=dict(spec.slot_assignments),
+            invariants=list(spec.invariants),
+            forbidden_transformations=list(spec.forbidden_transformations),
+            prompt_template_name=self.template_name,
+            prompt_template_version=self.template_version,
+            synthesis_model=result.synthesis_model or spec.synthesis_model,
+            synthesis_request_version=result.synthesis_request_version or spec.synthesis_request_version,
+            prompt_context=prompt_context,
+        )
+
+    def _validate_mock(
+        self,
+        *,
+        spec: RealizationSpec,
+        result: RealizationResult,
+    ) -> RealizationValidationResult:
+        text = str(result.scene_description or result.synthesized_text or "").strip()
+        lowered = text.lower()
+        issues: list[str] = []
+        if any(term in lowered for term in ("benchmark", "philosophy", "thought experiment")):
+            issues.append("Scene reads like a benchmark or abstract thought experiment.")
+        if "imagine you are" in lowered or "if you were" in lowered:
+            issues.append("Scene uses roleplay framing instead of a lived decision context.")
+        if not any(term in lowered for term in ("need to decide", "must decide", "decide what to do")):
+            issues.append("Scene does not feel like a live decision context.")
+        if _binary_frame_required(spec) and not result.decision_frame:
+            issues.append("Missing decision_frame for a binary-choice scenario.")
+        return RealizationValidationResult(
+            benchmark_id=spec.benchmark_id,
+            case_id=spec.case_id,
+            valid=not issues,
+            issues=list(issues),
+            feedback_for_retry=list(issues),
+            binary_frame_assessment={
+                "explicit_binary_required": _binary_frame_required(spec),
+                "realized_structure": str(result.decision_frame.get("action_structure", "")),
+            },
+            conflict_preservation_assessment={
+                "status": "looks_preserved" if not issues else "needs_revision"
+            },
+            metadata={
+                "mode": "mock",
+                "validator_template_name": self.template_name,
+                "validator_template_version": self.template_version,
+            },
+        )
+
+
 class EthicsCaseCompiler(CaseCompiler):
     def __init__(
         self,
@@ -434,6 +668,7 @@ class EthicsCaseCompiler(CaseCompiler):
                 "slot_assignments": dict(spec.slot_assignments),
                 "invariants": list(spec.invariants),
                 "forbidden_transformations": list(spec.forbidden_transformations),
+                "decision_frame": dict(result.decision_frame or {}),
                 "realization_prompt_template": result.prompt_template_name or spec.prompt_template_name,
                 "synthesis_model": result.synthesis_model or spec.synthesis_model,
                 "synthesis_request_version": (
@@ -456,6 +691,7 @@ class EthicsCaseCompiler(CaseCompiler):
                     "attempt": result.metadata.get("attempt"),
                     "request_run_id": result.metadata.get("run_id"),
                     "request_prompt_id": result.metadata.get("request_prompt_id"),
+                    "validator": dict(result.metadata.get("validator", {}) or {}),
                 },
             }
         )
@@ -466,7 +702,7 @@ class EthicsCaseCompiler(CaseCompiler):
             case_id=spec.case_id,
             input_type="text",
             input_modality="text",
-            prompt=result.synthesized_text,
+            prompt=result.scene_description or result.synthesized_text,
             instruction=None,
             metadata=metadata,
             tags=list(spec.tags),
@@ -566,6 +802,7 @@ def _load_ethics_build_config(path: str | Path | None) -> EthicsBuildConfig:
     sampling.setdefault("realizations_per_template", 1)
 
     default_template_path = example_dir / "synthesis_templates" / "standard_naturalistic_v1.txt"
+    default_validator_template_path = example_dir / "synthesis_templates" / "realization_validator_v1.txt"
     profiles = dict(payload.get("profiles", {}) or {})
     profiles.setdefault("default_template_name", "standard_naturalistic_v1")
     raw_templates = dict(profiles.get("templates", {}) or {})
@@ -600,11 +837,37 @@ def _load_ethics_build_config(path: str | Path | None) -> EthicsBuildConfig:
     validation.setdefault("forbidden_terms", list(_DEFAULT_FORBIDDEN_TERMS))
     validation.setdefault("required_slot_mentions", ["decision_maker_role", "setting_domain"])
 
+    validator = dict(payload.get("validator", {}) or {})
+    validator.setdefault("template_name", "realization_validator_v1")
+    validator_templates = dict(validator.get("templates", {}) or {})
+    if not validator_templates:
+        validator_templates = {
+            "realization_validator_v1": {
+                "path": str(default_validator_template_path),
+                "version": "v1",
+            }
+        }
+    resolved_validator_templates: dict[str, dict[str, Any]] = {}
+    for name, config in validator_templates.items():
+        config_dict = dict(config or {})
+        template_path = Path(str(config_dict.get("path") or default_validator_template_path))
+        if not template_path.is_absolute():
+            template_path = (base_dir / template_path).resolve()
+        resolved_validator_templates[str(name)] = {
+            **config_dict,
+            "path": str(template_path),
+            "version": str(config_dict.get("version", "v1")),
+        }
+    validator["templates"] = resolved_validator_templates
+    validator.setdefault("model", synthesis.get("model"))
+    validator.setdefault("generation_defaults", {})
+
     return EthicsBuildConfig(
         sampling=sampling,
         profiles=profiles,
         synthesis=synthesis,
         validation=validation,
+        validator=validator,
         raw=payload,
     )
 
@@ -663,8 +926,119 @@ def _resolve_prompt_template_version(
     return str(template_config.get("version", "v1"))
 
 
+def _resolve_validator_template_version(*, build_config: EthicsBuildConfig) -> str:
+    template_name = str(build_config.validator.get("template_name") or "")
+    template_config = dict((build_config.validator.get("templates") or {}).get(template_name, {}) or {})
+    return str(template_config.get("version", "v1"))
+
+
+def _resolve_profile_vars(
+    *,
+    prompt_template_name: str,
+    build_config: EthicsBuildConfig,
+) -> dict[str, Any]:
+    template_config = dict((build_config.profiles.get("templates") or {}).get(prompt_template_name, {}) or {})
+    return dict(template_config.get("profile_vars", {}) or {})
+
+
+def _infer_decision_frame_requirements(
+    *,
+    template: dict[str, Any],
+    prompt_guidelines: dict[str, Any],
+    profile_vars: dict[str, Any],
+) -> dict[str, Any]:
+    constraints = [str(item).lower() for item in prompt_guidelines.get("constraints", []) or []]
+    response_capture = dict(template.get("response_capture", {}) or {})
+    explicit_binary_required = any(
+        phrase in constraint
+        for constraint in constraints
+        for phrase in (
+            "explicit binary",
+            "two admissible actions",
+            "exactly two actions",
+            "binary decision framing",
+        )
+    ) or bool(profile_vars.get("explicit_binary_required", False))
+    explicit_option_format_required = any(
+        phrase in constraint
+        for constraint in constraints
+        for phrase in ("option a", "option b", "a/b")
+    ) or bool(profile_vars.get("explicit_option_format_required", False))
+    return {
+        "explicit_binary_required": explicit_binary_required,
+        "explicit_option_format_required": explicit_option_format_required,
+        "binary_decision_policy": str(
+            profile_vars.get("binary_decision_policy", "infer_from_constraints")
+        ),
+        "response_capture_type": str(response_capture.get("type", "")),
+    }
+
+
+def _binary_frame_required(spec: RealizationSpec) -> bool:
+    return bool(
+        dict(spec.metadata.get("decision_frame_requirements", {}) or {}).get(
+            "explicit_binary_required",
+            False,
+        )
+    )
+
+
 def _render_bullet_block(values: list[Any]) -> str:
     normalized = [str(value).strip() for value in values if str(value).strip()]
     if not normalized:
         return ""
     return "\n".join(f"- {value}" for value in normalized)
+
+
+def _parse_validator_output(
+    *,
+    raw_text: str,
+    spec: RealizationSpec,
+    template_name: str,
+    template_version: str,
+    validator_model: str,
+    run_id: str,
+    prompt_id: str,
+) -> RealizationValidationResult:
+    stripped = str(raw_text).strip()
+    issues = ["Validator returned empty output."]
+    payload: dict[str, Any] = {}
+    if stripped:
+        try:
+            decoded = json.loads(stripped)
+        except json.JSONDecodeError:
+            issues = ["Validator returned non-JSON output."]
+        else:
+            if isinstance(decoded, dict):
+                payload = decoded
+                raw_issues = payload.get("issues", [])
+                if isinstance(raw_issues, list):
+                    issues = [str(item) for item in raw_issues if str(item).strip()]
+                else:
+                    issues = []
+            else:
+                issues = ["Validator returned an unexpected payload shape."]
+    valid = bool(payload.get("valid")) if payload else False
+    if valid:
+        issues = []
+    feedback = payload.get("feedback_for_retry", issues)
+    if not isinstance(feedback, list):
+        feedback = issues
+    return RealizationValidationResult(
+        benchmark_id=spec.benchmark_id,
+        case_id=spec.case_id,
+        valid=valid,
+        issues=list(issues),
+        feedback_for_retry=[str(item) for item in feedback if str(item).strip()],
+        binary_frame_assessment=dict(payload.get("binary_frame_assessment", {}) or {}),
+        conflict_preservation_assessment=dict(
+            payload.get("conflict_preservation_assessment", {}) or {}
+        ),
+        metadata={
+            "validator_template_name": template_name,
+            "validator_template_version": template_version,
+            "validator_model": validator_model,
+            "validator_run_id": run_id,
+            "validator_prompt_id": prompt_id,
+        },
+    )

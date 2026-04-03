@@ -5,11 +5,25 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.benchmarking.interfaces import BenchmarkBuildRequest, CaseCompiler, ParameterSampler, StructureGuard
+from aigc.benchmarking.interfaces import (
+    BenchmarkBuildRequest,
+    CaseCompiler,
+    ParameterSampler,
+    RealizationValidator,
+    StructureGuard,
+)
 from aigc.benchmarking.discovery import discover_example_builder_specs
 from aigc.benchmarking.compiler import DefaultTaskCompiler
 from aigc.benchmarking.packages import load_generative_benchmark_package
-from aigc.benchmarking.models import BenchmarkCase, CaseSourceRef, EvalTask, RealizationResult, RealizationSpec, ScoreRecord
+from aigc.benchmarking.models import (
+    BenchmarkCase,
+    CaseSourceRef,
+    EvalTask,
+    RealizationResult,
+    RealizationSpec,
+    RealizationValidationResult,
+    ScoreRecord,
+)
 from aigc.benchmarking.realization import (
     BenchmarkBuildOutputLike,
     execute_semantic_realization_pipeline,
@@ -117,6 +131,130 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertEqual(len(output.cases), 1)
         self.assertIn("doctor", output.cases[0].prompt.lower())
 
+    def test_semantic_realization_pipeline_uses_model_validator_feedback_for_retry(self) -> None:
+        class DummySampler(ParameterSampler):
+            def sample(self, request: BenchmarkBuildRequest) -> list[RealizationSpec]:
+                return [
+                    RealizationSpec(
+                        benchmark_id="suite",
+                        case_id="case_001",
+                        source_builder="dummy",
+                        slot_assignments={"decision_maker_role": "doctor"},
+                        prompt_template_name="writer_v1",
+                        synthesis_model="Qwen3-32B",
+                    )
+                ]
+
+        class DummyGuard(StructureGuard):
+            def validate_spec(self, spec: RealizationSpec) -> list[str]:
+                return []
+
+            def validate_realization(self, spec: RealizationSpec, result: RealizationResult) -> list[str]:
+                return []
+
+        class DummyRenderer:
+            def render(self, spec: RealizationSpec, *, validation_feedback=None) -> str:
+                if validation_feedback:
+                    return "retry writer prompt"
+                return "initial writer prompt"
+
+        class DummyBackend:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def synthesize(
+                self,
+                *,
+                specs: list[RealizationSpec],
+                renderer,
+                request: BenchmarkBuildRequest,
+                validation_feedback_by_case_id: dict[str, list[str]] | None = None,
+            ) -> list[RealizationResult]:
+                self.calls += 1
+                if self.calls == 1:
+                    return [
+                        RealizationResult(
+                            benchmark_id="suite",
+                            case_id="case_001",
+                            source_builder="dummy",
+                            synthesized_text="This reads like a classroom puzzle.",
+                            scene_description="This reads like a classroom puzzle.",
+                            structured_output={"scene_description": "This reads like a classroom puzzle."},
+                        )
+                    ]
+                return [
+                    RealizationResult(
+                        benchmark_id="suite",
+                        case_id="case_001",
+                        source_builder="dummy",
+                        synthesized_text="A doctor has to decide immediately whether to disclose the risk.",
+                        scene_description="A doctor has to decide immediately whether to disclose the risk.",
+                        structured_output={
+                            "scene_description": "A doctor has to decide immediately whether to disclose the risk.",
+                            "decision_frame": {
+                                "explicit_binary_required": True,
+                                "action_structure": "implicit_binary",
+                            },
+                        },
+                        decision_frame={
+                            "explicit_binary_required": True,
+                            "action_structure": "implicit_binary",
+                        },
+                    )
+                ]
+
+        class DummyValidator(RealizationValidator):
+            def validate(
+                self,
+                *,
+                specs: list[RealizationSpec],
+                results: list[RealizationResult],
+                request: BenchmarkBuildRequest,
+            ) -> list[RealizationValidationResult]:
+                del request
+                validations: list[RealizationValidationResult] = []
+                for spec, result in zip(specs, results, strict=True):
+                    is_invalid = "classroom puzzle" in (result.scene_description or "").lower()
+                    validations.append(
+                        RealizationValidationResult(
+                            benchmark_id=spec.benchmark_id,
+                            case_id=spec.case_id,
+                            valid=not is_invalid,
+                            issues=["Scene reads like a benchmark item."] if is_invalid else [],
+                            feedback_for_retry=["Rewrite as a live decision brief, not a classroom puzzle."]
+                            if is_invalid
+                            else [],
+                        )
+                    )
+                return validations
+
+        class DummyCompiler(CaseCompiler):
+            def compile(self, spec: RealizationSpec, result: RealizationResult) -> BenchmarkCase:
+                return BenchmarkCase(
+                    benchmark_id=spec.benchmark_id,
+                    case_id=spec.case_id,
+                    input_modality="text",
+                    input_payload={"prompt": result.scene_description or result.synthesized_text},
+                    prompt=result.scene_description or result.synthesized_text,
+                    source_builder=spec.source_builder,
+                    metadata={"decision_frame": dict(result.decision_frame)},
+                )
+
+        output = execute_semantic_realization_pipeline(
+            request=BenchmarkBuildRequest(builder_name="dummy", execution_mode="mock"),
+            sampler=DummySampler(),
+            guard=DummyGuard(),
+            renderer=DummyRenderer(),
+            validator=DummyValidator(),
+            compiler=DummyCompiler(),
+            synthesis_backend=DummyBackend(),
+            max_attempts=2,
+        )
+
+        self.assertEqual(len(output.cases), 1)
+        self.assertIn("doctor", output.cases[0].prompt.lower())
+        self.assertTrue(output.build_artifacts["realization_validator_enabled"])
+
     def test_normalize_case_payload_supports_structured_v2_fields(self) -> None:
         case = normalize_case_payload(
             {
@@ -180,6 +318,19 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertNotIn("fixed_value:", raw)
         self.assertNotIn("range:", raw)
 
+    def test_writer_prompt_uses_hidden_control_signal_framing(self) -> None:
+        template_path = Path(
+            "examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt"
+        )
+        raw = template_path.read_text(encoding="utf-8")
+
+        self.assertIn("You write realistic English decision briefs.", raw)
+        self.assertIn("Use these only as hidden control signals.", raw)
+        self.assertIn("\"decision_frame\": {", raw)
+        self.assertNotIn("Analysis targets:", raw)
+        self.assertNotIn("Response capture contract:", raw)
+        self.assertNotIn("Source-case references:", raw)
+
     def test_build_ethics_example_benchmark_writes_structural_metadata(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         builder_config_path = tmpdir / "builder.yaml"
@@ -223,10 +374,12 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertIn("realization_prompt_template", first_case["metadata"])
         self.assertIn("synthesis_model", first_case["metadata"])
         self.assertIn("realization_provenance", first_case["metadata"])
+        self.assertIn("decision_frame", first_case["metadata"])
         self.assertEqual(first_case["source_builder"], "ethics_sandbox")
         manifest = json.loads(Path(summary.manifest_path).read_text(encoding="utf-8"))
         self.assertIn("build_artifacts", manifest)
         self.assertTrue(manifest["semantic_realization"]["enabled"])
+        self.assertIn("validator", manifest["semantic_realization"])
 
     def test_task_compiler_builds_execution_requests_with_lineage(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())

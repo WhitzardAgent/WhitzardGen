@@ -11,9 +11,15 @@ from aigc.benchmarking.interfaces import (
     ParameterSampler,
     RealizationSynthesisBackend,
     RealizationTemplateRenderer,
+    RealizationValidator,
     StructureGuard,
 )
-from aigc.benchmarking.models import BenchmarkCase, RealizationResult, RealizationSpec
+from aigc.benchmarking.models import (
+    BenchmarkCase,
+    RealizationResult,
+    RealizationSpec,
+    RealizationValidationResult,
+)
 from aigc.prompt_generation.config import render_instruction_template
 from aigc.prompts.models import PromptRecord
 from aigc.run_flow import run_single_model
@@ -42,6 +48,7 @@ def execute_semantic_realization_pipeline(
     renderer: RealizationTemplateRenderer,
     compiler: CaseCompiler,
     synthesis_backend: RealizationSynthesisBackend | None = None,
+    validator: RealizationValidator | None = None,
     max_attempts: int = 1,
 ) -> BenchmarkBuildOutputLike:
     progress = request.progress or NullRunProgress()
@@ -83,13 +90,43 @@ def execute_semantic_realization_pipeline(
             )
 
         next_pending: list[RealizationSpec] = []
-        for spec, result in zip(pending_specs, batch_results, strict=True):
+        validation_records: list[RealizationValidationResult] = []
+        if validator is not None:
+            validation_records = validator.validate(
+                specs=pending_specs,
+                results=batch_results,
+                request=request,
+            )
+            if len(validation_records) != len(pending_specs):
+                raise SemanticRealizationError(
+                    f"Semantic realization validator returned {len(validation_records)} results for "
+                    f"{len(pending_specs)} specs."
+                )
+        else:
+            validation_records = [
+                RealizationValidationResult(
+                    benchmark_id=spec.benchmark_id,
+                    case_id=spec.case_id,
+                    valid=True,
+                )
+                for spec in pending_specs
+            ]
+        for spec, result, validation_record in zip(
+            pending_specs,
+            batch_results,
+            validation_records,
+            strict=True,
+        ):
             result.metadata.setdefault("attempt", attempt)
+            result.metadata["validator"] = validation_record.to_dict()
             result.validation_errors = _dedupe_errors(
-                list(result.validation_errors) + list(guard.validate_realization(spec, result))
+                list(result.validation_errors)
+                + list(guard.validate_realization(spec, result))
+                + list(validation_record.issues)
             )
             if result.validation_errors and attempt < max_attempts:
-                feedback_by_case_id[spec.case_id] = list(result.validation_errors)
+                retry_feedback = list(validation_record.feedback_for_retry) or list(result.validation_errors)
+                feedback_by_case_id[spec.case_id] = _dedupe_errors(retry_feedback)
                 next_pending.append(spec)
                 continue
 
@@ -127,6 +164,7 @@ def execute_semantic_realization_pipeline(
         "realization_attempt_count": max_attempts,
         "realization_validation_failure_count": len(validation_failures),
         "realization_validation_failures": validation_failures,
+        "realization_validator_enabled": validator is not None,
     }
     return BenchmarkBuildOutputLike(cases=cases, build_artifacts=build_artifacts)
 
@@ -263,12 +301,16 @@ class RunKernelRealizationSynthesisBackend(RealizationSynthesisBackend):
             prompt_id = f"realize_{index:06d}"
             request_prompt = request_prompts[index - 1].prompt
             raw_text = text_by_prompt_id.get(prompt_id, "")
+            scene_description, structured_output, decision_frame = _parse_synthesized_output(raw_text)
             results.append(
                 RealizationResult(
                     benchmark_id=spec.benchmark_id,
                     case_id=spec.case_id,
                     source_builder=spec.source_builder,
-                    synthesized_text=_parse_synthesized_text(raw_text),
+                    synthesized_text=scene_description,
+                    scene_description=scene_description,
+                    structured_output=structured_output,
+                    decision_frame=decision_frame,
                     prompt_template_name=spec.prompt_template_name,
                     prompt_template_version=spec.prompt_template_version,
                     synthesis_model=spec.synthesis_model or synthesis_model,
@@ -313,15 +355,17 @@ def validate_required_value_mentions(text: str, values: list[str]) -> list[str]:
     return errors
 
 
-def _parse_synthesized_text(raw_text: str) -> str:
+def _parse_synthesized_output(raw_text: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
     stripped = str(raw_text).strip()
     if not stripped:
-        return ""
+        return "", {}, {}
     try:
         payload = json.loads(stripped)
     except json.JSONDecodeError:
-        return stripped
+        return stripped, {}, {}
     if isinstance(payload, dict):
+        structured_output = dict(payload)
+        decision_frame = dict(payload.get("decision_frame", {}) or {})
         for key in (
             "scene_description",
             "realized_prompt",
@@ -332,12 +376,13 @@ def _parse_synthesized_text(raw_text: str) -> str:
         ):
             value = payload.get(key)
             if value not in (None, ""):
-                return str(value).strip()
+                return str(value).strip(), structured_output, decision_frame
+        return stripped, structured_output, decision_frame
     if isinstance(payload, list) and payload:
         first = payload[0]
         if isinstance(first, str):
-            return first.strip()
-    return stripped
+            return first.strip(), {}, {}
+    return stripped, {}, {}
 
 
 def _build_mock_realization_result(*, spec: RealizationSpec, request_prompt: str) -> RealizationResult:
@@ -355,11 +400,23 @@ def _build_mock_realization_result(*, spec: RealizationSpec, request_prompt: str
         f"As the {role}, I need to decide what to do next. "
         f"{conflict}"
     ).strip()
+    decision_frame = {
+        "explicit_binary_required": bool(
+            spec.metadata.get("decision_frame_requirements", {}).get("explicit_binary_required", False)
+        ),
+        "action_structure": "implicit_binary",
+    }
     return RealizationResult(
         benchmark_id=spec.benchmark_id,
         case_id=spec.case_id,
         source_builder=spec.source_builder,
         synthesized_text=synthesized_text,
+        scene_description=synthesized_text,
+        structured_output={
+            "scene_description": synthesized_text,
+            "decision_frame": decision_frame,
+        },
+        decision_frame=decision_frame,
         prompt_template_name=spec.prompt_template_name,
         prompt_template_version=spec.prompt_template_version,
         synthesis_model=spec.synthesis_model,

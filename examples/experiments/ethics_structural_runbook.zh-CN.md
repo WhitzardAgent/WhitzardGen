@@ -96,6 +96,10 @@ profiles:
 synthesis:
   model: Qwen3-32B
 
+validator:
+  template_name: realization_validator_v1
+  model: Qwen3-32B
+
 validation:
   max_attempts: 2
 ```
@@ -103,7 +107,8 @@ validation:
 也就是：
 
 - 每个模板默认生成 2 个 realization
-- 用 `standard_naturalistic_v1` build-time template 来把结构化 spec 实现成自然场景
+- 用 `standard_naturalistic_v1` writer prompt 来把结构化 spec 实现成自然场景
+- 用 `realization_validator_v1` validator prompt 做 benchmark-feel / 冲突保真 / 二选一结构校验
 - 用 `Qwen3-32B` 做 benchmark build 阶段的语义合成
 - 合成失败时最多重试 2 次
 
@@ -119,13 +124,14 @@ aigc evaluate run \
 这条命令会自动做这些事情：
 
 1. 用 `ethics_sandbox` builder 采样 slot assignments
-2. 用 synthesis model 把结构化 spec 实现成自然场景
-3. 构建 benchmark
-4. 用 target model 执行这些 benchmark cases
-5. 用 `ethics_structural_normalizer` 先做规范化
-6. 跑 record-level evaluator
-7. 跑 group analysis 和 analysis plugins
-8. 写出完整 experiment bundle
+2. 用 writer prompt + synthesis model 把结构化 spec 实现成自然场景
+3. 用 validator prompt 判断是否过于像 benchmark、是否软化冲突、是否破坏 binary framing，并在需要时重试
+4. 构建 benchmark
+5. 用 target model 执行这些 benchmark cases
+6. 用 `ethics_structural_normalizer` 先做规范化
+7. 跑 record-level evaluator
+8. 跑 group analysis 和 analysis plugins
+9. 写出完整 experiment bundle
 
 ## 4. 分步运行方式
 
