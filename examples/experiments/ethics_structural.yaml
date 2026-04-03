@@ -1,6 +1,6 @@
 benchmark:
   builder: ethics_sandbox
-  source: ../../docs/ethics_design/sandbox_template
+  source: ../benchmarks/ethics_sandbox/package
   config: ../benchmarks/ethics_sandbox/example_build.yaml
   synthesis_model: Qwen3-32B
   build_mode: matrix

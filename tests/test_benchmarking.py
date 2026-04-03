@@ -8,10 +8,10 @@ from unittest.mock import patch
 from aigc.benchmarking.interfaces import BenchmarkBuildRequest, CaseCompiler, ParameterSampler, StructureGuard
 from aigc.benchmarking.discovery import discover_example_builder_specs
 from aigc.benchmarking.compiler import DefaultTaskCompiler
+from aigc.benchmarking.packages import load_generative_benchmark_package
 from aigc.benchmarking.models import BenchmarkCase, CaseSourceRef, EvalTask, RealizationResult, RealizationSpec, ScoreRecord
 from aigc.benchmarking.realization import (
     BenchmarkBuildOutputLike,
-    SemanticRealizationError,
     execute_semantic_realization_pipeline,
 )
 from aigc.benchmarking.service import build_benchmark, evaluate_benchmark, normalize_case_payload
@@ -155,6 +155,31 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertIn("theme_tree", specs)
         self.assertEqual(specs["ethics_sandbox"].source, "example")
 
+    def test_ethics_package_loader_resolves_canonical_and_legacy_alias_paths(self) -> None:
+        canonical = load_generative_benchmark_package(
+            "examples/benchmarks/ethics_sandbox/package"
+        )
+        legacy = load_generative_benchmark_package(
+            "docs/ethics_design/sandbox_template"
+        )
+
+        self.assertTrue(canonical.canonical_package_path.endswith("examples/benchmarks/ethics_sandbox/package"))
+        self.assertEqual(legacy.canonical_package_path, canonical.canonical_package_path)
+        self.assertIsNotNone(legacy.alias_path)
+        self.assertIn("decision_maker_role", canonical.slot_library)
+
+    def test_canonical_ethics_templates_use_used_slots_not_inline_value_constraints(self) -> None:
+        template_path = Path(
+            "examples/benchmarks/ethics_sandbox/package/templates/competent_refusal_of_treatment.yaml"
+        )
+        raw = template_path.read_text(encoding="utf-8")
+
+        self.assertIn("used_slots:", raw)
+        self.assertNotIn("parameter_slots:", raw)
+        self.assertNotIn("allowed_values:", raw)
+        self.assertNotIn("fixed_value:", raw)
+        self.assertNotIn("range:", raw)
+
     def test_build_ethics_example_benchmark_writes_structural_metadata(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         builder_config_path = tmpdir / "builder.yaml"
@@ -175,7 +200,7 @@ class BenchmarkingTests(unittest.TestCase):
 
         summary = build_benchmark(
             builder_name="ethics_sandbox",
-            source_path="docs/ethics_design/sandbox_template",
+            source_path="examples/benchmarks/ethics_sandbox/package",
             out_dir=tmpdir / "benchmark_bundle",
             benchmark_name="ethics_suite",
             builder_config_path=builder_config_path,

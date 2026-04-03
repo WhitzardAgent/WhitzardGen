@@ -15,7 +15,7 @@ class BenchmarkCliTests(unittest.TestCase):
             {
                 "benchmark_id": "ethics_suite",
                 "builder_name": "ethics_sandbox",
-                "source_path": "docs/ethics_design/sandbox_template",
+                "source_path": "examples/benchmarks/ethics_sandbox/package",
                 "case_count": 38,
                 "build_mode": "matrix",
                 "benchmark_dir": "/tmp/benchmarks/ethics_suite",
@@ -34,7 +34,7 @@ class BenchmarkCliTests(unittest.TestCase):
             (),
             {
                 "builder": "ethics_sandbox",
-                "source": "docs/ethics_design/sandbox_template",
+                "source": "examples/benchmarks/ethics_sandbox/package",
                 "package": None,
                 "entrypoint": None,
                 "builder_config": "/tmp/builder.yaml",
@@ -195,7 +195,7 @@ class BenchmarkCliTests(unittest.TestCase):
         recipe = {
             "benchmark": {
                 "builder": "ethics_sandbox",
-                "source": "../docs/ethics_design/sandbox_template",
+                "source": "../examples/benchmarks/ethics_sandbox/package",
                 "config": "../examples/benchmarks/ethics_sandbox/example_build.yaml",
                 "build_mode": "matrix",
                 "synthesis_model": "Qwen3-32B",

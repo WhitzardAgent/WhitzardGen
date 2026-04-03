@@ -18,6 +18,7 @@ from aigc.benchmarking.interfaces import (
     StructureGuard,
 )
 from aigc.benchmarking.models import BenchmarkCase, RealizationResult, RealizationSpec
+from aigc.benchmarking.packages import GenerativeBenchmarkPackage, SlotDefinition, load_generative_benchmark_package
 from aigc.benchmarking.realization import (
     SimpleTemplateRenderer,
     execute_semantic_realization_pipeline,
@@ -34,15 +35,6 @@ _DEFAULT_FORBIDDEN_TERMS = [
     "option a",
     "option b",
 ]
-
-
-@dataclass(slots=True)
-class EthicsTemplatePackage:
-    package_path: str
-    manifest: dict[str, Any]
-    slot_library: dict[str, Any]
-    analysis_codebook: dict[str, Any]
-    templates: list[dict[str, Any]]
 
 
 @dataclass(slots=True)
@@ -68,7 +60,7 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
             request.benchmark_name
             or build_config.raw.get("benchmark_name")
             or package.manifest.get("package_name")
-            or Path(package.package_path).name
+            or Path(package.canonical_package_path).name
         )
 
         sampler = EthicsRealizationSampler(
@@ -106,6 +98,10 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
                 "template_count": len(package.templates),
                 "analysis_codebook": package.analysis_codebook,
                 "source_manifest": package.manifest,
+                "package_path": package.package_path,
+                "canonical_package_path": package.canonical_package_path,
+                "alias_path": package.alias_path,
+                "schema_version": package.schema.get("sandbox_template_schema_version"),
                 "group_analyzers": [
                     {
                         "analyzer_id": "ethics_family_consistency",
@@ -187,7 +183,7 @@ class EthicsRealizationSampler(ParameterSampler):
     def __init__(
         self,
         *,
-        package: EthicsTemplatePackage,
+        package: GenerativeBenchmarkPackage,
         benchmark_id: str,
         build_config: EthicsBuildConfig,
     ) -> None:
@@ -209,10 +205,15 @@ class EthicsRealizationSampler(ParameterSampler):
             template_id = str(template.get("template_id", "template"))
             template_version = str(self.package.manifest.get("version", "1.0"))
             variant_group_id = f"{self.benchmark_id}:{template_id}"
-            sweep_count = realizations_per_template if request.build_mode == "matrix" else max(realizations_per_template, 1)
+            sweep_count = (
+                realizations_per_template
+                if request.build_mode == "matrix"
+                else max(realizations_per_template, 1)
+            )
             for index in range(sweep_count):
                 slot_assignments, slot_layers = _sample_slot_assignments(
-                    template,
+                    template=template,
+                    slot_library=self.package.slot_library,
                     random=random,
                     variant_index=index,
                 )
@@ -223,6 +224,7 @@ class EthicsRealizationSampler(ParameterSampler):
                 )
                 case_id = f"{template_id}_{index + 1:03d}"
                 prompt_guidelines = dict(template.get("prompt_generation_guidelines", {}) or {})
+                scenario_premises = dict(template.get("scenario_premises", {}) or {})
                 specs.append(
                     RealizationSpec(
                         benchmark_id=self.benchmark_id,
@@ -238,9 +240,7 @@ class EthicsRealizationSampler(ParameterSampler):
                                 *[str(item) for item in template.get("analysis_targets", []) or []],
                             }
                         ),
-                        parameters=dict(
-                            self.build_config.synthesis.get("generation_defaults", {}) or {}
-                        ),
+                        parameters=dict(self.build_config.synthesis.get("generation_defaults", {}) or {}),
                         metadata={
                             "family_id": template_id,
                             "template_id": template_id,
@@ -256,6 +256,7 @@ class EthicsRealizationSampler(ParameterSampler):
                             },
                             "key_moral_conflict": str(template.get("key_moral_conflict", "")),
                             "slot_layers": slot_layers,
+                            "used_slots": dict(template.get("used_slots", {}) or {}),
                             "analysis_targets": list(template.get("analysis_targets", []) or []),
                             "response_capture_contract": dict(template.get("response_capture", {}) or {}),
                             "prompt_generation_guidelines": prompt_guidelines,
@@ -263,9 +264,11 @@ class EthicsRealizationSampler(ParameterSampler):
                                 "template_id": template_id,
                                 "template_title": template.get("template_title"),
                                 "package_path": self.package.package_path,
+                                "canonical_package_path": self.package.canonical_package_path,
                             },
                             "ethics_grounding": dict(template.get("ethics_grounding", {}) or {}),
                             "narrative_grounding": dict(template.get("narrative_grounding", {}) or {}),
+                            "scenario_premises": scenario_premises,
                         },
                         grouping={"variant_group_id": variant_group_id, "family_id": template_id},
                         expected_output_contract=dict(template.get("response_capture", {}) or {}),
@@ -302,6 +305,11 @@ class EthicsRealizationSampler(ParameterSampler):
                                 ensure_ascii=False,
                                 indent=2,
                             ),
+                            "scenario_premises_json": json.dumps(
+                                scenario_premises,
+                                ensure_ascii=False,
+                                indent=2,
+                            ),
                             "prompt_constraints_block": _render_bullet_block(
                                 list(prompt_guidelines.get("constraints", []) or [])
                             ),
@@ -325,8 +333,11 @@ class EthicsRealizationGuard(StructureGuard):
             errors.append("Realization spec is missing case_id.")
         if not spec.metadata.get("template_id"):
             errors.append("Realization spec is missing template_id.")
-        if not spec.slot_assignments:
-            errors.append("Realization spec has no sampled slot assignments.")
+        fixed_facts = dict(
+            (dict(spec.metadata.get("scenario_premises", {}) or {})).get("fixed_facts", {}) or {}
+        )
+        if not spec.slot_assignments and not fixed_facts:
+            errors.append("Realization spec has no sampled slot assignments or fixed scenario premises.")
         if not spec.prompt_template_name:
             errors.append("Realization spec is missing prompt template name.")
         if not spec.synthesis_model:
@@ -350,15 +361,16 @@ class EthicsRealizationGuard(StructureGuard):
                 [str(item) for item in self.build_config.validation.get("forbidden_terms", []) or []],
             )
         )
+        required_value_candidates = dict(spec.slot_assignments)
         required_slot_mentions = [
             slot_name
             for slot_name in self.build_config.validation.get("required_slot_mentions", []) or []
-            if slot_name in spec.slot_assignments
+            if slot_name in required_value_candidates
         ]
         required_values = [
-            str(spec.slot_assignments[slot_name])
+            str(required_value_candidates[slot_name])
             for slot_name in required_slot_mentions
-            if spec.slot_assignments.get(slot_name) not in (None, "")
+            if required_value_candidates.get(slot_name) not in (None, "")
         ]
         if required_values:
             errors.extend(validate_required_value_mentions(text, required_values))
@@ -405,7 +417,7 @@ class EthicsCaseCompiler(CaseCompiler):
     def __init__(
         self,
         *,
-        package: EthicsTemplatePackage,
+        package: GenerativeBenchmarkPackage,
         build_config: EthicsBuildConfig,
         build_mode: str,
         seed: int,
@@ -439,6 +451,8 @@ class EthicsCaseCompiler(CaseCompiler):
                     "synthesis_request_version": (
                         result.synthesis_request_version or spec.synthesis_request_version
                     ),
+                    "package_path": self.package.package_path,
+                    "canonical_package_path": self.package.canonical_package_path,
                     "attempt": result.metadata.get("attempt"),
                     "request_run_id": result.metadata.get("run_id"),
                     "request_prompt_id": result.metadata.get("request_prompt_id"),
@@ -470,44 +484,34 @@ class EthicsCaseCompiler(CaseCompiler):
         )
 
 
-def load_ethics_template_package(package_path: str | Path) -> EthicsTemplatePackage:
-    target = Path(package_path)
-    if not target.exists():
-        raise RuntimeError(f"Ethics sandbox package path does not exist: {target}")
-    manifest = load_yaml_file(target / "manifest.yaml")
-    slot_library = load_yaml_file(target / "slot_library.yaml")
-    analysis_codebook = load_yaml_file(target / "analysis_codebook.yaml")
-    templates_dir = target / "templates"
-    if not templates_dir.exists():
-        raise RuntimeError(f"Ethics sandbox package is missing templates/: {templates_dir}")
-    templates = [load_yaml_file(path) for path in sorted(templates_dir.glob("*.yaml"))]
-    return EthicsTemplatePackage(
-        package_path=str(target),
-        manifest=manifest,
-        slot_library=slot_library,
-        analysis_codebook=analysis_codebook,
-        templates=templates,
-    )
+def load_ethics_template_package(package_path: str | Path) -> GenerativeBenchmarkPackage:
+    return load_generative_benchmark_package(package_path)
 
 
 def _sample_slot_assignments(
-    template: dict[str, Any],
     *,
+    template: dict[str, Any],
+    slot_library: dict[str, SlotDefinition],
     random: Random,
     variant_index: int,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     slot_assignments: dict[str, Any] = {}
     slot_layers: dict[str, str] = {}
-    parameter_slots = dict(template.get("parameter_slots", {}) or {})
+    used_slots = dict(template.get("used_slots", {}) or {})
     for layer_name in ("structural", "narrative", "perturbation"):
-        for slot in parameter_slots.get(layer_name, []) or []:
-            slot_id = str(slot.get("slot_id", "")).strip()
+        for entry in used_slots.get(layer_name, []) or []:
+            slot_id = str((entry or {}).get("slot_id") if isinstance(entry, dict) else entry).strip()
             if not slot_id:
                 continue
+            try:
+                slot_definition = slot_library[slot_id]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"Template {template.get('template_id', 'template')} references unknown slot: {slot_id}"
+                ) from exc
             slot_layers[slot_id] = layer_name
-            constraints = dict(slot.get("constraints", {}) or {})
             slot_assignments[slot_id] = _sample_slot_value(
-                constraints=constraints,
+                slot_definition=slot_definition,
                 random=random,
                 variant_index=variant_index,
             )
@@ -516,21 +520,40 @@ def _sample_slot_assignments(
 
 def _sample_slot_value(
     *,
-    constraints: dict[str, Any],
+    slot_definition: SlotDefinition,
     random: Random,
     variant_index: int,
 ) -> Any:
-    if "fixed_value" in constraints:
-        return constraints["fixed_value"]
-    values = constraints.get("allowed_values") or constraints.get("values")
-    if values:
-        normalized_values = list(values)
-        return normalized_values[variant_index % len(normalized_values)]
-    range_values = constraints.get("range")
-    if isinstance(range_values, list) and len(range_values) == 2:
-        start, end = int(range_values[0]), int(range_values[1])
+    value_space = dict(slot_definition.value_space or {})
+    kind = str(value_space.get("kind") or "enum")
+    if kind == "boolean":
+        values = list(value_space.get("values", [False, True]) or [False, True])
+        return values[variant_index % len(values)]
+    if kind == "integer_range":
+        start = int(value_space.get("min", 0))
+        end = int(value_space.get("max", start))
         return start if start == end else start + (variant_index % (end - start + 1))
-    return random.choice(["low", "medium", "high"])
+    if kind == "float_range":
+        start = float(value_space.get("min", 0.0))
+        end = float(value_space.get("max", start))
+        if start == end:
+            return start
+        return random.uniform(start, end)
+    if kind == "enum":
+        normalized_values = [_normalize_value_entry(item) for item in value_space.get("values", []) or []]
+        if not normalized_values:
+            return None
+        return normalized_values[variant_index % len(normalized_values)]
+    return None
+
+
+def _normalize_value_entry(value: Any) -> Any:
+    if isinstance(value, dict):
+        if "id" in value:
+            return value["id"]
+        if "value" in value:
+            return value["value"]
+    return value
 
 
 def _load_ethics_build_config(path: str | Path | None) -> EthicsBuildConfig:

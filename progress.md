@@ -1,9 +1,23 @@
 # Progress
 
 ## Current Phase
-- Phase 36 — Semantic Benchmark Realization Pipeline for Ethics and Safety Builders
+- Phase 37 — Example-Owned Benchmark Packages + Library-Defined Slot Value Spaces
 
 ## Completed
+- Added a generic benchmark-package loader with canonical-path + alias-path resolution for example-owned generative benchmark packages:
+  - [src/aigc/benchmarking/packages.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/packages.py)
+  - [src/aigc/benchmarking/__init__.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/__init__.py)
+- Moved the canonical ethics sandbox benchmark package under `examples/` and kept the old docs path as a runnable compatibility alias:
+  - [examples/benchmarks/ethics_sandbox/package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
+  - [docs/ethics_design/sandbox_template/package_alias.yaml](/Users/morinop/coding/whitzardgen/docs/ethics_design/sandbox_template/package_alias.yaml)
+- Standardized the ethics generative-benchmark package schema so:
+  - slot values live in `slot_library.yaml`
+  - templates declare `used_slots`
+  - fixed template facts live in `scenario_premises` / structural fields instead of inline slot constraints
+  in:
+  - [examples/benchmarks/ethics_sandbox/package/slot_library.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/slot_library.yaml)
+  - [examples/benchmarks/ethics_sandbox/package/schema.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/schema.yaml)
+  - [examples/benchmarks/ethics_sandbox/package/templates](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/templates)
 - Added generic semantic-realization core contracts so benchmark builders can express sampled structured specs, synthesis requests, and realized outputs without baking workload semantics into core:
   - [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py)
   - [src/aigc/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/interfaces.py)
@@ -18,17 +32,29 @@
   - template-driven LLM realization
   - final case compilation
   in [examples/benchmarks/ethics_sandbox/builder.py](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/builder.py)
+- Updated the ethics builder to sample only from library-defined slot value spaces and to preserve example-package lineage in final case metadata:
+  - [examples/benchmarks/ethics_sandbox/builder.py](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/builder.py)
+- Fixed a real CLI/runtime circular import introduced during package-loader extraction by removing `packages.py`'s dependency on `benchmarking.service`:
+  - [src/aigc/benchmarking/packages.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/packages.py)
 - Added semantic-build config and realization template for the ethics example package:
   - [examples/benchmarks/ethics_sandbox/example_build.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/example_build.yaml)
   - [examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt)
 - Updated the ethics runbook/docs so the user-facing workflow now reflects semantic benchmark realization instead of mechanical prompt stitching:
   - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
+  - [docs/cli_spec.md](/Users/morinop/coding/whitzardgen/docs/cli_spec.md)
   - [examples/benchmarks/ethics_sandbox/README.md](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/README.md)
   - [examples/experiments/ethics_structural_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_structural_runbook.zh-CN.md)
   - [examples/experiments/ethics_structural.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_structural.yaml)
+  - [README.zh-CN.md](/Users/morinop/coding/whitzardgen/README.zh-CN.md)
 - Added regression and pipeline tests covering semantic-realization retries, metadata lineage, CLI passthrough, and mock-mode ethics benchmark build:
   - [tests/test_benchmarking.py](/Users/morinop/coding/whitzardgen/tests/test_benchmarking.py)
   - [tests/test_cli_benchmark.py](/Users/morinop/coding/whitzardgen/tests/test_cli_benchmark.py)
+- Added regression coverage for:
+  - canonical `examples/.../package` loading
+  - legacy docs-path alias resolution
+  - `used_slots` schema enforcement
+  - library-defined slot sampling in mock-mode benchmark builds
+  in [tests/test_benchmarking.py](/Users/morinop/coding/whitzardgen/tests/test_benchmarking.py)
 - Replaced benchmark/evaluation core contracts with V2 task-first types in [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py):
   - `CaseSourceRef`
   - `CaseSet`
@@ -79,6 +105,7 @@
 - Modified:
   - [progress.md](/Users/morinop/coding/whitzardgen/progress.md)
   - [src/aigc/benchmarking/__init__.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/__init__.py)
+  - [src/aigc/benchmarking/packages.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/packages.py)
   - [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py)
   - [src/aigc/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/interfaces.py)
   - [src/aigc/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/realization.py)
@@ -94,7 +121,17 @@
   - [src/aigc/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/discovery.py)
   - [docs/ethics_benchmark_spec.md](/Users/morinop/coding/whitzardgen/docs/ethics_benchmark_spec.md)
   - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
+  - [docs/cli_spec.md](/Users/morinop/coding/whitzardgen/docs/cli_spec.md)
+  - [README.zh-CN.md](/Users/morinop/coding/whitzardgen/README.zh-CN.md)
   - [examples/benchmarks/ethics_sandbox/builder.py](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/builder.py)
+  - [examples/benchmarks/ethics_sandbox/package/README.md](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/README.md)
+  - [examples/benchmarks/ethics_sandbox/package/manifest.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/manifest.yaml)
+  - [examples/benchmarks/ethics_sandbox/package/slot_library.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/slot_library.yaml)
+  - [examples/benchmarks/ethics_sandbox/package/schema.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/schema.yaml)
+  - [examples/benchmarks/ethics_sandbox/package/analysis_codebook.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/analysis_codebook.yaml)
+  - [examples/benchmarks/ethics_sandbox/package/theory_grounding.md](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/theory_grounding.md)
+  - [docs/ethics_design/sandbox_template/README.md](/Users/morinop/coding/whitzardgen/docs/ethics_design/sandbox_template/README.md)
+  - [docs/ethics_design/sandbox_template/package_alias.yaml](/Users/morinop/coding/whitzardgen/docs/ethics_design/sandbox_template/package_alias.yaml)
   - [examples/benchmarks/ethics_sandbox/example_build.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/example_build.yaml)
   - [examples/benchmarks/ethics_sandbox/README.md](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/README.md)
   - [examples/experiments/ethics_structural.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_structural.yaml)
@@ -106,6 +143,7 @@
   - [tests/test_cli_benchmark.py](/Users/morinop/coding/whitzardgen/tests/test_cli_benchmark.py)
 - Added:
   - [examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt)
+  - [examples/benchmarks/ethics_sandbox/package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
   - [src/aigc/benchmarking/compiler.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/compiler.py)
   - [src/aigc/benchmarking/gateway.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/gateway.py)
   - [src/aigc/benchmarking/runner.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/runner.py)
@@ -114,21 +152,31 @@
 
 ## Current Status
 - Phase 36 semantic benchmark realization is functionally in place.
-- `ethics_sandbox` no longer mechanically stitches final prompts; it now samples structured slot assignments, renders synthesis requests, calls the existing T2T run kernel, validates outputs, and compiles final `BenchmarkCase`s with realization lineage.
+- Phase 37 is now implemented for the ethics example package:
+  - canonical source of truth lives under `examples/benchmarks/ethics_sandbox/package`
+  - legacy docs-path loading still works through a compatibility alias
+  - slot value spaces are library-defined in `slot_library.yaml`
+  - templates now declare `used_slots` instead of inline slot constraints
+  - fixed template facts are encoded outside slot sampling
+- `ethics_sandbox` no longer mechanically stitches final prompts; it now samples structured slot assignments from the package-local slot library, renders synthesis requests, calls the existing T2T run kernel, validates outputs, and compiles final `BenchmarkCase`s with realization lineage.
 - Benchmark bundles remain lightweight, while final case metadata now preserves:
   - `slot_assignments`
+  - `slot_layers`
   - `realization_prompt_template`
   - `synthesis_model`
   - `synthesis_request_version`
   - `realization_provenance`
-- Local regression coverage for semantic realization, ethics benchmark build, CLI passthrough, prompt generation, annotation, and run CLI paths is passing.
+- Local regression coverage for package loading, alias resolution, semantic realization, ethics benchmark build, and CLI passthrough is passing.
+- Canonical and legacy-alias CLI benchmark builds both complete successfully in mock mode.
 
 ## Blockers
 - No confirmed blocker.
+- Known follow-up caveat:
+  - the current ethics slot library was migrated by lifting prior template-local value domains into package-level library definitions, so some slots may now have broader package-level value spaces than ideal for future research curation
 - Remaining work is follow-up polish and expansion:
-  - update user-facing docs/runbooks to emphasize `--synthesis-model` and the new build config shape
-  - add a second non-ethics generative builder example to further validate the generic pipeline
+  - add a second non-ethics generative builder example to validate the same package/schema rule outside ethics
+  - optionally refine package-local slot libraries with tighter canonical enums and richer `surface_realization`
   - optionally add richer realization validators and retry policies
 
 ## Next Task
-- Update the benchmark/ethics runbook docs for the semantic build pipeline and consider adding a second generative example builder beyond ethics.
+- Add a second generative benchmark package example, such as unsafe-content/safety prompts, that reuses the same `examples-owned package + slot_library-defined value spaces + semantic realization` pattern.

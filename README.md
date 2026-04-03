@@ -48,7 +48,7 @@ Use this when you want to compare target models on the same case set.
 ```bash
 aigc benchmark build \
   --builder ethics_sandbox \
-  --source docs/ethics_design/sandbox_template \
+  --source examples/benchmarks/ethics_sandbox/package \
   --config examples/benchmarks/ethics_sandbox/example_build.yaml \
   --build-mode matrix
 

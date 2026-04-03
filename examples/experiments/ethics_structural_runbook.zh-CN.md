@@ -48,6 +48,10 @@ aigc models inspect Qwen3-32B
 
 默认示例包位置：
 
+- [package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
+
+旧路径仍然保留兼容 alias：
+
 - [docs/ethics_design/sandbox_template](/Users/morinop/coding/whitzardgen/docs/ethics_design/sandbox_template)
 
 这个包至少应包含：
@@ -66,7 +70,7 @@ aigc models inspect Qwen3-32B
 它定义了：
 
 - benchmark builder：`ethics_sandbox`
-- source package：`docs/ethics_design/sandbox_template`
+- source package：`examples/benchmarks/ethics_sandbox/package`
 - builder config：`examples/benchmarks/ethics_sandbox/example_build.yaml`
 - synthesis model：`Qwen3-32B`
 - target model：`Qwen3-32B`
@@ -132,7 +136,7 @@ aigc evaluate run \
 ```bash
 aigc benchmark build \
   --builder ethics_sandbox \
-  --source docs/ethics_design/sandbox_template \
+  --source examples/benchmarks/ethics_sandbox/package \
   --config examples/benchmarks/ethics_sandbox/example_build.yaml \
   --synthesis-model Qwen3-32B \
   --build-mode matrix
@@ -204,6 +208,7 @@ sampling:
 如果你要改伦理冲突结构、slot library、analysis codebook，请修改：
 
 - [docs/ethics_design/sandbox_template](/Users/morinop/coding/whitzardgen/docs/ethics_design/sandbox_template)
+- [package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
 
 建议优先改这些内容：
 

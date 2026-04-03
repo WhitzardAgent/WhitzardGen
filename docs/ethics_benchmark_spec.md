@@ -4,7 +4,7 @@
 
 This document describes one example benchmark family built on the generic framework: structural ethics scenario packages such as:
 
-- [docs/ethics_design/sandbox_template](/Users/morinop/coding/whitzardgen/docs/ethics_design/sandbox_template)
+- [package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
 - [examples/benchmarks/ethics_sandbox](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox)
 
 These packages are not ordinary QA datasets. They encode:
@@ -64,7 +64,7 @@ Build:
 ```bash
 aigc benchmark build \
   --builder ethics_sandbox \
-  --package docs/ethics_design/sandbox_template \
+  --package examples/benchmarks/ethics_sandbox/package \
   --realizations-per-template 2 \
   --build-mode matrix
 ```

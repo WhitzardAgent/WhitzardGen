@@ -32,7 +32,7 @@ benchmark build
 - ethics benchmark builder：
   - [builder.py](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/builder.py)
 - ethics benchmark source package：
-  - [sandbox_template](/Users/morinop/coding/whitzardgen/docs/ethics_design/sandbox_template)
+  - [package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
 - ethics normalizer：
   - [normalizer.py](/Users/morinop/coding/whitzardgen/examples/normalizers/ethics_structural/normalizer.py)
 - ethics analysis plugins：
@@ -72,6 +72,10 @@ aigc models inspect Qwen3-32B
 
 默认路径：
 
+- [package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
+
+兼容 alias 仍然保留在：
+
 - [sandbox_template](/Users/morinop/coding/whitzardgen/docs/ethics_design/sandbox_template)
 
 至少应包含：
@@ -90,7 +94,7 @@ aigc models inspect Qwen3-32B
 它当前定义的是：
 
 - benchmark builder：`ethics_sandbox`
-- source package：`docs/ethics_design/sandbox_template`
+- source package：`examples/benchmarks/ethics_sandbox/package`
 - semantic synthesis model：`Qwen3-32B`
 - targets：`Qwen3-32B`
 - normalizer：`ethics_structural_normalizer`
@@ -132,7 +136,7 @@ aigc evaluate run \
 ```bash
 aigc benchmark build \
   --builder ethics_sandbox \
-  --source docs/ethics_design/sandbox_template \
+  --source examples/benchmarks/ethics_sandbox/package \
   --config examples/benchmarks/ethics_sandbox/example_build.yaml \
   --synthesis-model Qwen3-32B \
   --build-mode matrix

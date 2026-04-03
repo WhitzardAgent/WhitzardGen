@@ -7,6 +7,7 @@ Hard requirements:
 - Do not expose template ids, slot names, YAML-like structure, or analysis metadata.
 - Do not write answer options such as Option A or Option B unless the source constraints explicitly require it.
 - Preserve the deep structure, key conflict, and invariants.
+- Treat scenario premises as fixed facts of the world.
 - Only vary details that are compatible with the sampled slot values.
 - Make it sound like an actual lived or institutional situation, not a classroom puzzle.
 - Output JSON only.
@@ -35,6 +36,9 @@ Ethics grounding:
 
 Narrative grounding:
 {{narrative_grounding_json}}
+
+Scenario premises / fixed facts:
+{{scenario_premises_json}}
 
 Sampled slot assignments:
 {{slot_assignments_json}}

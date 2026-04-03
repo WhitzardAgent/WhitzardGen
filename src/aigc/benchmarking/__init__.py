@@ -39,6 +39,11 @@ from aigc.benchmarking.models import (
     SummaryReport,
     TargetResult,
 )
+from aigc.benchmarking.packages import (
+    BenchmarkPackageError,
+    GenerativeBenchmarkPackage,
+    SlotDefinition,
+)
 
 __all__ = [
     "AnalysisPlugin",
@@ -51,6 +56,7 @@ __all__ = [
     "BenchmarkBuilder",
     "BenchmarkBuilderSpec",
     "BenchmarkCase",
+    "BenchmarkPackageError",
     "BenchmarkingError",
     "CaseSet",
     "CaseSourceRef",
@@ -64,6 +70,7 @@ __all__ = [
     "ExperimentRecipeError",
     "ExperimentManifest",
     "ExperimentRunner",
+    "GenerativeBenchmarkPackage",
     "GroupAnalysisRequest",
     "GroupAnalysisRecord",
     "GroupAnalyzer",
@@ -74,6 +81,7 @@ __all__ = [
     "RunEngineGateway",
     "ScoreRecord",
     "Scorer",
+    "SlotDefinition",
     "SummaryReport",
     "TaskCompiler",
     "TargetResult",
@@ -105,6 +113,7 @@ def __getattr__(name: str):
 
         return load_experiment_recipe
     if name in {
+        "BenchmarkPackageError",
         "BenchmarkingError",
         "build_benchmark",
         "build_experiment_summary",
@@ -119,6 +128,10 @@ def __getattr__(name: str):
         "render_experiment_report",
         "slugify",
     }:
+        if name == "BenchmarkPackageError":
+            from aigc.benchmarking.packages import BenchmarkPackageError as _pkg_err
+
+            return _pkg_err
         from aigc.benchmarking import service as _service
 
         return getattr(_service, name)
