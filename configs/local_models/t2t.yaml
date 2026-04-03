@@ -1,5 +1,15 @@
 # Optional local model overrides for t2t models.
 
+Qwen2.5-32B-Instruct:
+  weights_path: /inspire/hdd/global_public/public_models/Qwen/Qwen2.5-32B-Instruct
+  hf_cache_dir: /inspire/hdd/global_public/public_models/Qwen/Qwen2.5-32B-Instruct
+  # Example:
+  # conda_env_name: zimage_cluster
+  # max_gpus: 8
+  # generation_defaults:
+  #   max_new_tokens: 1024
+  #   system_prompt: "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+
 Qwen3-32B:
   weights_path: /inspire/hdd/global_public/model/Qwen3-32B
   hf_cache_dir: /inspire/hdd/global_public/model/Qwen3-32B

@@ -105,6 +105,18 @@
   - [src/aigc/adapters/texts/local_transformers.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/local_transformers.py)
 - Added regression tests to keep decoder-only tokenizer padding behavior pinned:
   - [tests/test_text_adapter.py](/Users/morinop/coding/whitzardgen/tests/test_text_adapter.py)
+- Added `Qwen2.5-32B-Instruct` as a first-class local `t2t` model with an instruct-style chat-template adapter:
+  - [src/aigc/adapters/texts/qwen25_instruct.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/qwen25_instruct.py)
+  - [src/aigc/adapters/texts/__init__.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/__init__.py)
+  - [src/aigc/adapters/__init__.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/__init__.py)
+  - [configs/models/t2t.yaml](/Users/morinop/coding/whitzardgen/configs/models/t2t.yaml)
+  - [configs/local_models/t2t.yaml](/Users/morinop/coding/whitzardgen/configs/local_models/t2t.yaml)
+- Added regression coverage for:
+  - registry exposure of `Qwen2.5-32B-Instruct`
+  - instruct-style `system + user + apply_chat_template` execution behavior
+  in:
+  - [tests/test_registry.py](/Users/morinop/coding/whitzardgen/tests/test_registry.py)
+  - [tests/test_text_adapter.py](/Users/morinop/coding/whitzardgen/tests/test_text_adapter.py)
 - Added a writer/validator dual-prompt realization flow for the ethics builder:
   - writer prompt generates a realistic live decision brief with structured `decision_frame`
   - validator prompt judges benchmark-feel leakage, conflict preservation, and binary framing

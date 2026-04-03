@@ -168,6 +168,53 @@ class TextAdapterTests(unittest.TestCase):
             "draft reasoning",
         )
 
+    def test_qwen25_instruct_adapter_uses_system_and_user_chat_template(self) -> None:
+        from aigc.adapters.texts.qwen25_instruct import Qwen25InstructTextAdapter
+
+        registry = load_registry()
+        adapter = Qwen25InstructTextAdapter(
+            model_config=registry.get_model("Qwen2.5-32B-Instruct")
+        )
+        tokenizer = _FakeTokenizer()
+        model = _FakeModel()
+        adapter._get_or_load_model = lambda: (tokenizer, model, _FakeTorch())  # type: ignore[attr-defined]
+        adapter._input_device = "cuda:0"  # type: ignore[attr-defined]
+
+        captured_messages = []
+
+        def fake_apply_chat_template(messages, **kwargs) -> str:
+            captured_messages.append({"messages": messages, "kwargs": kwargs})
+            return f"chat::{messages[-1]['content']}"
+
+        tokenizer.apply_chat_template = fake_apply_chat_template  # type: ignore[method-assign]
+
+        plan = adapter.prepare(
+            prompts=["Give me a short introduction to large language model."],
+            prompt_ids=["p001"],
+            params={"_runtime_config": {}},
+            workdir=tempfile.mkdtemp(),
+        )
+        result = adapter.execute(
+            plan=plan,
+            prompts=["Give me a short introduction to large language model."],
+            params={"system_prompt": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
+            workdir=tempfile.mkdtemp(),
+        )
+
+        self.assertEqual(len(captured_messages), 1)
+        self.assertEqual(captured_messages[0]["messages"][0]["role"], "system")
+        self.assertEqual(captured_messages[0]["messages"][1]["role"], "user")
+        self.assertEqual(
+            captured_messages[0]["messages"][0]["content"],
+            "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+        )
+        self.assertEqual(
+            captured_messages[0]["messages"][1]["content"],
+            "Give me a short introduction to large language model.",
+        )
+        self.assertTrue(captured_messages[0]["kwargs"]["add_generation_prompt"])
+        self.assertIn("p001", result.outputs)
+
     def test_qwen3_adapter_sets_left_padding_for_decoder_only_batches(self) -> None:
         from aigc.adapters.texts.qwen3 import Qwen3TextAdapter
 

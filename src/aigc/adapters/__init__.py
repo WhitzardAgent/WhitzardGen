@@ -22,6 +22,7 @@ from aigc.adapters.stubs import (
 from aigc.adapters.texts import (
     LocalTransformersTextAdapter,
     OpenAICompatibleTextAdapter,
+    Qwen25InstructTextAdapter,
     Qwen3TextAdapter,
 )
 
@@ -41,6 +42,7 @@ ADAPTER_REGISTRY = {
     "HunyuanVideo15Adapter": HunyuanVideo15Adapter,
     "EchoTestAdapter": EchoTestAdapter,
     "LocalTransformersTextAdapter": LocalTransformersTextAdapter,
+    "Qwen25InstructTextAdapter": Qwen25InstructTextAdapter,
     "Qwen3TextAdapter": Qwen3TextAdapter,
     "OpenAICompatibleTextAdapter": OpenAICompatibleTextAdapter,
 }
