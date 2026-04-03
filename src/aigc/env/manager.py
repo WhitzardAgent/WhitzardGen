@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +55,7 @@ class EnvironmentRecord:
     associated_models: list[str]
     local_paths: dict[str, Any]
     path_checks: dict[str, dict[str, Any]]
+    provider_checks: dict[str, dict[str, Any]]
     last_validation: dict[str, Any]
     error: str | None = None
 
@@ -267,6 +270,8 @@ class EnvManager:
         error = metadata.get("error")
         last_validation = dict(metadata.get("last_validation", {}))
         validation_error = last_validation.get("error")
+        provider_checks = self._build_provider_checks(model)
+        provider_valid = all(bool(info.get("ok", False)) for info in provider_checks.values()) if provider_checks else True
 
         if conda_available:
             exists, env_path = self.environment_exists(env_id)
@@ -297,10 +302,12 @@ class EnvManager:
         if not conda_available:
             state = "missing"
             error = error or "Conda is not available."
-        elif exists and validation_passed:
+        elif exists and validation_passed and provider_valid:
             state = "ready"
-        elif exists and not validation_passed:
+        elif exists and (not validation_passed or not provider_valid):
             state = "invalid"
+            if provider_checks:
+                error = error or self._provider_error(provider_checks)
         else:
             state = "missing"
             error = error or f"Required conda env {spec.conda_env_name} was not found."
@@ -319,6 +326,7 @@ class EnvManager:
             associated_models=sorted(set(metadata_models + [model.name])),
             local_paths=dict(model.local_paths),
             path_checks=self._build_path_checks(model),
+            provider_checks=provider_checks,
             last_validation=last_validation,
             error=error,
         )
@@ -427,6 +435,8 @@ class EnvManager:
     def _build_path_checks(self, model: Any) -> dict[str, dict[str, Any]]:
         checks: dict[str, dict[str, Any]] = {}
         for field, value in sorted(model.local_paths.items()):
+            if field == "provider":
+                continue
             if value in (None, ""):
                 continue
             target = Path(str(value))
@@ -436,6 +446,91 @@ class EnvManager:
                 "kind": "directory" if target.is_dir() else "file" if target.is_file() else "missing",
             }
         return checks
+
+    def _build_provider_checks(self, model: Any) -> dict[str, dict[str, Any]]:
+        provider = dict(getattr(model, "provider", {}) or {})
+        if not provider:
+            return {}
+
+        provider_type = str(provider.get("type") or "").strip()
+        request_api = str(provider.get("request_api") or "").strip()
+        base_url = str(provider.get("base_url") or "").strip()
+        model_name = str(provider.get("model_name") or "").strip()
+        api_key_env = str(provider.get("api_key_env") or "").strip()
+        api_key_value = os.environ.get(api_key_env) if api_key_env else None
+
+        checks: dict[str, dict[str, Any]] = {
+            "type": {"value": provider_type or None, "ok": bool(provider_type)},
+            "request_api": {
+                "value": request_api or None,
+                "ok": request_api in {"chat_completions", "responses"},
+            },
+            "base_url": {"value": base_url or None, "ok": bool(base_url)},
+            "model_name": {"value": model_name or None, "ok": bool(model_name)},
+            "api_key_env": {
+                "value": api_key_env or None,
+                "ok": bool(api_key_env and api_key_value),
+                "present": bool(api_key_value),
+            },
+        }
+        if (
+            provider_type == "openai_compatible"
+            and base_url
+            and api_key_env
+            and api_key_value
+        ):
+            checks["healthcheck"] = self._probe_openai_compatible_endpoint(
+                base_url=base_url,
+                api_key=api_key_value,
+                timeout_sec=float(provider.get("timeout_sec", 10.0) or 10.0),
+            )
+        return checks
+
+    def _probe_openai_compatible_endpoint(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        timeout_sec: float,
+    ) -> dict[str, Any]:
+        probe_url = base_url.rstrip("/") + "/models"
+        request = urllib.request.Request(
+            probe_url,
+            method="GET",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_sec) as response:
+                status = int(getattr(response, "status", 200))
+                return {
+                    "value": probe_url,
+                    "ok": 200 <= status < 300,
+                    "status_code": status,
+                }
+        except urllib.error.HTTPError as exc:
+            return {
+                "value": probe_url,
+                "ok": False,
+                "status_code": int(exc.code),
+                "error": str(exc),
+            }
+        except Exception as exc:  # pragma: no cover - defensive
+            return {
+                "value": probe_url,
+                "ok": False,
+                "error": str(exc),
+            }
+
+    def _provider_error(self, provider_checks: dict[str, dict[str, Any]]) -> str | None:
+        failed = [
+            key for key, info in provider_checks.items() if not bool(info.get("ok", False))
+        ]
+        if not failed:
+            return None
+        return "Remote provider validation failed: " + ", ".join(failed)
 
     def _list_conda_env_prefixes(self) -> list[str]:
         result = subprocess.run(

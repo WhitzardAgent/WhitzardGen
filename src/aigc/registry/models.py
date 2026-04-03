@@ -14,6 +14,7 @@ class ModelInfo:
     capabilities: dict[str, Any]
     runtime: dict[str, Any]
     weights: dict[str, Any]
+    provider: dict[str, Any] = field(default_factory=dict)
     generation_defaults: dict[str, Any] = field(default_factory=dict)
     local_paths: dict[str, Any] = field(default_factory=dict)
     registry_source: str | None = None
@@ -59,4 +60,18 @@ class ModelInfo:
         raw = self.runtime.get("max_gpus")
         if raw in (None, ""):
             return None
+        return max(int(raw), 1)
+
+    @property
+    def gpu_required(self) -> bool:
+        raw = self.runtime.get("gpu_required")
+        if raw in (None, ""):
+            return True
+        return bool(raw)
+
+    @property
+    def replica_count(self) -> int:
+        raw = self.runtime.get("replica_count")
+        if raw in (None, ""):
+            return 1
         return max(int(raw), 1)

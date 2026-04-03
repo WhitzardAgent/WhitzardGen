@@ -1,0 +1,7 @@
+normalizers:
+  basic_text_extraction:
+    version: v1
+    type: text_extraction
+    description: Generic text response normalization for decision/refusal/confidence extraction.
+    accepted_input_types: [text]
+    config: {}

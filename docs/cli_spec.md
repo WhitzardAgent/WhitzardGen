@@ -2,97 +2,47 @@
 
 ## 1. Purpose
 
-The **CLI** is the primary user interface for the framework.
+The CLI is the primary interface for running benchmark construction, target execution, evaluation, and lower-level generation workflows.
 
-It must provide a consistent and ergonomic way to:
+The top-level product view is now benchmark-centric:
 
-- inspect available models
-- run generation jobs
-- manage runs
-- export datasets
-- inspect failures
-- interact with the environment manager indirectly
-
-The CLI should be:
-
-- composable
-- script-friendly
-- deterministic
-- stable across releases
-- aligned with the system specs
-
-This document defines:
-
-- command groups
-- command syntax
-- argument conventions
-- output expectations
-- MVP command scope
-
----
-
-# 2. Design Principles
-
-The CLI must follow these principles.
-
-## 2.1 Job-oriented
-
-The CLI should focus on **running jobs**, not forcing the user to manually invoke individual model scripts.
-
-Preferred:
-
-```bash
-aigc run --models Z-Image,FLUX.1-dev --prompts prompts.jsonl
-````
-
-Not preferred:
-
-```bash
-python model_a.py ...
-python model_b.py ...
+```text
+aigc benchmark ...
+aigc evaluate ...
+aigc experiments ...
 ```
 
----
+The legacy/kernel-oriented commands remain available:
 
-## 2.2 Scriptable
+```text
+aigc prompts ...
+aigc run ...
+aigc annotate ...
+aigc runs ...
+aigc export ...
+```
 
-All commands must be usable from shell scripts and automation pipelines.
+## 2. Design Principles
 
-Requirements:
+The CLI must be:
 
-* machine-readable output option
-* predictable exit codes
-* no unnecessary interactive prompts
+- scriptable
+- deterministic
+- explicit about inputs and outputs
+- stable enough for long-running experiment automation
+- able to expose both high-level benchmark workflows and low-level runtime utilities
 
----
+## 3. Top-Level Groups
 
-## 2.3 Stable
-
-Command names and flags should remain stable once published.
-
-Breaking changes should be minimized.
-
----
-
-## 2.4 Explicit
-
-The CLI should make execution scope obvious.
-
-Users should be able to clearly see:
-
-* which models are used
-* which prompt dataset is used
-* where outputs go
-* what run ID is assigned
-
----
-
-# 3. Top-Level Command Structure
-
-The CLI is organized into command groups.
+Current command groups:
 
 ```text
 aigc
+ ├── benchmark
+ ├── evaluate
+ ├── experiments
+ ├── prompts
+ ├── annotate
  ├── models
  ├── run
  ├── runs
@@ -101,668 +51,137 @@ aigc
  └── version
 ```
 
-MVP scope:
+Recommended user workflow starts with `benchmark`, `evaluate`, and `experiments`.
 
-* `models`
-* `run`
-* `runs`
-* `export`
-* `doctor`
-* `version`
+## 4. Benchmark-Centric Commands
 
----
+### 4.1 `aigc benchmark list`
 
-# 4. Global Conventions
+Lists supported benchmark builders discovered from the core and `examples/`.
 
-## 4.1 Binary Name
+Current sources:
 
-The CLI executable is:
+- core generic builders such as `static_jsonl`
+- example builders such as `theme_tree` and `ethics_sandbox`
 
-```text
-aigc
-```
+### 4.2 `aigc benchmark build`
 
----
+Builds a benchmark bundle.
 
-## 4.2 Global Flags
-
-All commands may support:
-
-```text
---help
---verbose
---quiet
---output [text|json]
-```
-
-### Meanings
-
-* `--help`: show command help
-* `--verbose`: show more logs
-* `--quiet`: suppress non-essential output
-* `--output json`: emit machine-readable structured output
-
-Example:
+Current supported shape:
 
 ```bash
-aigc models list --output json
+aigc benchmark build \
+  --builder ethics_sandbox \
+  --source docs/ethics_design/sandbox_template \
+  --config examples/benchmarks/ethics_sandbox/example_build.yaml \
+  --build-mode matrix
 ```
 
----
+Current outputs:
 
-## 4.3 Exit Codes
+- `cases.jsonl`
+- `benchmark_manifest.json`
+- `stats.json`
 
-Recommended exit code behavior:
+### 4.3 `aigc benchmark inspect`
 
-| Exit Code | Meaning                    |
-| --------- | -------------------------- |
-| 0         | success                    |
-| 1         | general error              |
-| 2         | invalid arguments          |
-| 3         | missing config/resource    |
-| 4         | run failed                 |
-| 5         | partial success / warnings |
+Inspects a benchmark bundle and reports:
 
----
+- benchmark id
+- builder
+- source package
+- case count
+- counts by family
+- counts by split
 
-# 5. models Command Group
+## 5. Evaluation Commands
 
-The `models` group is used for model discovery and inspection.
+### 5.1 `aigc evaluate run`
 
-## 5.1 models list
+Runs one benchmark across one or more target models and optionally applies:
 
-List all registered models.
+- normalizers
+- record evaluators
+- analysis plugins
+- recipe-driven wiring for all of the above
 
-### Syntax
+Current shape:
 
 ```bash
-aigc models list
+aigc evaluate run \
+  --recipe examples/experiments/ethics_structural.yaml
 ```
 
-### Optional Flags
+Behavior:
 
-```text
---modality [image|video|audio|text]
---task-type [t2i|t2v|t2a|t2t|i2v]
---output [text|json]
-```
+1. load benchmark cases
+2. run each target model through the existing execution kernel
+3. optionally normalize target outputs
+4. run record-level evaluation
+5. aggregate generic group-level analyses
+6. run plugin-style comparative analysis
+7. write an experiment bundle
 
-### Examples
+Current bundle outputs:
 
-```bash
-aigc models list
-aigc models list --modality image
-aigc models list --task-type t2v --output json
-```
+- `cases.jsonl`
+- `target_results.jsonl`
+- `normalized_results.jsonl`
+- `evaluator_results.jsonl`
+- `group_analyses.jsonl`
+- `analysis_plugin_results.jsonl`
+- `experiment_manifest.json`
+- `summary.json`
+- `report.md`
+- `failures.json`
 
-### Text Output Example
+### 5.2 `aigc experiments list`
 
-```text
-MODEL              MODALITY   TASK_TYPE   EXECUTION_MODE
-Z-Image            image      t2i         in_process
-FLUX.1-dev         image      t2i         in_process
-LongCat-Video      video      t2v         external_process
-```
+Lists recorded experiment bundles.
 
----
+### 5.3 `aigc experiments report`
 
-## 5.2 models inspect
+Prints experiment manifest and summary information and points to the generated report.
 
-Show detailed information for one model.
+## 6. Kernel-Oriented Commands
 
-### Syntax
+These commands remain supported because they expose useful lower-level workflow components.
 
-```bash
-aigc models inspect <model_name>
-```
+### 6.1 `aigc prompts ...`
 
-### Example
+Prompt/theme-tree generation remains available, but it should be understood as a benchmark/scenario builder path rather than the primary product concept.
 
-```bash
-aigc models inspect Z-Image
-```
+### 6.2 `aigc run ...`
 
-### Example Output
+The low-level multimodal execution kernel remains available for direct model runs.
 
-```text
-Model: Z-Image
-Version: 1.0
-Modality: image
-Task Type: t2i
-Adapter: ZImageAdapter
-Execution Mode: in_process
-Batch Support: yes
-Max Batch Size: 8
-HF Repo: Tongyi-MAI/Z-Image
-```
+### 6.3 `aigc annotate ...`
 
----
+Annotation remains available and now acts as the reusable record-evaluator path behind higher-level evaluation workflows.
 
-## 5.3 models canary
+### 6.4 `aigc export ...`
 
-Run a small one-model validation job using the normal run flow.
+Dataset export remains a lower-level result/export layer and is still useful for dataset production workflows.
 
-### Syntax
+## 7. Output Modes
 
-```bash
-aigc models canary <model_name>
-```
+Every major command should support:
 
-### Optional Flags
+- `--output text`
+- `--output json`
 
-```text
---prompt-file <path>
---out <path>
---mock
---execution-mode [mock|real]
---output [text|json]
-```
+`text` is for operators.
 
-### Examples
+`json` is for automation and pipelines.
 
-```bash
-aigc models canary Z-Image --mock
-aigc models canary Wan2.2-T2V-A14B-Diffusers
-```
+## 8. Future Direction
 
-Behavior notes:
+The CLI should keep moving toward:
 
-- resolves the model from the registry
-- chooses a default canary prompt file by modality when `--prompt-file` is omitted
-- reuses the standard run flow instead of introducing a separate execution path
+- benchmark builders as first-class workflows
+- experiment config files
+- reusable normalizer / evaluator / analysis-plugin sets
+- stronger multi-target / multi-evaluator reporting
 
----
-
-## 5.4 models matrix
-
-Render a capability summary for all registered models.
-
-### Syntax
-
-```bash
-aigc models matrix
-```
-
-### Optional Flags
-
-```text
---write-docs
---docs-dir <path>
---output [text|json]
-```
-
-### Examples
-
-```bash
-aigc models matrix
-aigc models matrix --write-docs
-```
-
-When `--write-docs` is provided, the CLI refreshes:
-
-- `docs/model_capability_matrix.md`
-- `docs/model_capability_matrix.json`
-
----
-
-# 6. run Command
-
-The `run` command starts a generation run.
-
-This is the most important CLI entrypoint.
-
-## 6.1 run
-
-### Syntax
-
-```bash
-aigc run --models <model_list> --prompts <prompt_file>
-```
-
-### Required Flags
-
-```text
---models
---prompts
-```
-
-### Optional Flags
-
-```text
---run-name <name>
---out <output_dir>
---batch-limit <int>
---max-workers <int>
---retry-limit <int>
---fail-on-invalid-prompts
---output [text|json]
-```
-
-### Flag Descriptions
-
-* `--models`: comma-separated model names
-* `--prompts`: path to prompt dataset JSONL
-* `--run-name`: optional user-friendly run name
-* `--out`: output directory
-* `--batch-limit`: upper bound on batch size
-* `--max-workers`: maximum concurrent tasks
-* `--retry-limit`: retry limit per task
-* `--fail-on-invalid-prompts`: abort if any prompt is invalid
-
-### Examples
-
-```bash
-aigc run --models Z-Image,FLUX.1-dev --prompts prompts/image_prompts.jsonl
-```
-
-```bash
-aigc run \
-  --models LongCat-Video,Wan2.2-T2V-A14B-Diffusers \
-  --prompts prompts/video_prompts.jsonl \
-  --run-name video_mvp \
-  --out runs/video_mvp \
-  --max-workers 2
-```
-
-### Example Success Output
-
-```text
-Run created: run_001
-Prompt file: prompts/image_prompts.jsonl
-Models: Z-Image, FLUX.1-dev
-Output dir: runs/run_001
-Tasks scheduled: 120
-```
-
-### JSON Output Example
-
-```json
-{
-  "run_id": "run_001",
-  "models": ["Z-Image", "FLUX.1-dev"],
-  "prompt_file": "prompts/image_prompts.jsonl",
-  "tasks_scheduled": 120,
-  "output_dir": "runs/run_001"
-}
-```
-
----
-
-# 7. runs Command Group
-
-The `runs` group manages previously created runs.
-
-## 7.1 runs list
-
-List all runs.
-
-### Syntax
-
-```bash
-aigc runs list
-```
-
-### Optional Flags
-
-```text
---status [running|success|failed|partial_success]
---output [text|json]
-```
-
-### Example
-
-```bash
-aigc runs list
-```
-
-### Example Output
-
-```text
-RUN_ID    STATUS    TASKS    CREATED_AT
-run_001   success   120      2026-03-16T10:00:00Z
-run_002   running   84       2026-03-16T11:10:00Z
-```
-
----
-
-## 7.2 runs inspect
-
-Show detailed information about one run.
-
-### Syntax
-
-```bash
-aigc runs inspect <run_id>
-```
-
-### Example
-
-```bash
-aigc runs inspect run_001
-```
-
-### Example Output
-
-```text
-Run ID: run_001
-Status: success
-Prompt File: prompts/image_prompts.jsonl
-Models: Z-Image, FLUX.1-dev
-Tasks: 120
-Succeeded: 118
-Failed: 2
-Output Dir: runs/run_001
-```
-
----
-
-## 7.3 runs retry
-
-Retry failed tasks in a run.
-
-### Syntax
-
-```bash
-aigc runs retry <run_id>
-```
-
-### Optional Flags
-
-```text
---failed-only
---task-id <task_id>
---max-workers <int>
-```
-
-### Examples
-
-```bash
-aigc runs retry run_001 --failed-only
-```
-
-```bash
-aigc runs retry run_001 --task-id task_0042
-```
-
-### Behavior
-
-* retries only failed tasks by default when `--failed-only` is provided
-* preserves original run metadata
-* records retry attempts in runtime state
-
----
-
-## 7.4 runs resume
-
-Resume an interrupted run.
-
-### Syntax
-
-```bash
-aigc runs resume <run_id>
-```
-
-### Example
-
-```bash
-aigc runs resume run_002
-```
-
-### Behavior
-
-* skips completed tasks
-* continues pending tasks
-* may retry interrupted tasks depending on policy
-
----
-
-## 7.5 runs failures
-
-List failed tasks for a run.
-
-### Syntax
-
-```bash
-aigc runs failures <run_id>
-```
-
-### Optional Flags
-
-```text
---output [text|json]
-```
-
-### Example
-
-```bash
-aigc runs failures run_001
-```
-
-### Example Output
-
-```text
-TASK_ID      MODEL            ERROR
-task_0042    Z-Image          CUDA OOM
-task_0057    FLUX.1-dev       artifact missing
-```
-
----
-
-# 8. export Command Group
-
-The `export` group exports dataset records from a run.
-
-## 8.1 export dataset
-
-### Syntax
-
-```bash
-aigc export dataset <run_id>
-```
-
-### Optional Flags
-
-```text
---format [jsonl|parquet]
---out <file_path>
---view [full|minimal]
---only-success
-```
-
-### Examples
-
-```bash
-aigc export dataset run_001 --format jsonl --out exports/run_001.jsonl
-```
-
-```bash
-aigc export dataset run_001 --format parquet --view full
-```
-
-### Output Example
-
-```text
-Dataset exported:
-Run ID: run_001
-Format: jsonl
-Path: exports/run_001.jsonl
-Records: 118
-```
-
----
-
-# 9. doctor Command Group
-
-The `doctor` command checks runtime readiness.
-
-This is especially useful because the framework relies on:
-
-* conda environments
-* model dependencies
-* GPU availability
-* file paths
-
-## 9.1 doctor
-
-### Syntax
-
-```bash
-aigc doctor
-```
-
-### Optional Flags
-
-```text
---model <model_name>
---output [text|json]
-```
-
-### Examples
-
-```bash
-aigc doctor
-aigc doctor --model Z-Image
-```
-
-### Example Output
-
-```text
-Environment Check: OK
-GPU Check: OK
-Registry Check: OK
-Model Z-Image: OK
-Model LongCat-Video: missing environment
-```
-
----
-
-# 10. version Command
-
-Show CLI/framework version.
-
-### Syntax
-
-```bash
-aigc version
-```
-
-### Example Output
-
-```text
-aigc 0.1.0
-```
-
----
-
-# 11. Output Style
-
-## 11.1 Text Output
-
-Default human-readable format.
-
-Should be:
-
-* concise
-* aligned
-* stable
-* not overly verbose
-
----
-
-## 11.2 JSON Output
-
-Used for scripting and tooling integration.
-
-Example:
-
-```bash
-aigc runs inspect run_001 --output json
-```
-
-Example result:
-
-```json
-{
-  "run_id": "run_001",
-  "status": "success",
-  "tasks_total": 120,
-  "tasks_success": 118,
-  "tasks_failed": 2
-}
-```
-
----
-
-# 12. MVP Command Scope
-
-The MVP should support the following commands only:
-
-```text
-aigc models list
-aigc models inspect <model_name>
-
-aigc run --models ... --prompts ...
-
-aigc runs list
-aigc runs inspect <run_id>
-aigc runs retry <run_id>
-aigc runs resume <run_id>
-aigc runs failures <run_id>
-
-aigc export dataset <run_id>
-
-aigc doctor
-aigc version
-```
-
-This is sufficient to support:
-
-* model discovery
-* run creation
-* run management
-* dataset export
-* environment debugging
-
----
-
-# 13. Non-Goals
-
-The CLI does not define:
-
-* scheduler internals
-* pipeline DAG logic
-* adapter behavior
-* model registry storage
-* environment manager implementation details
-
-These belong to other specifications.
-
----
-
-# 14. Future Extensions
-
-Possible future CLI additions:
-
-* `aigc prompts ...`
-* `aigc labels ...`
-* `aigc env ...` (if direct env ops are ever exposed)
-* `aigc eval ...`
-* `aigc config ...`
-
-These are not part of MVP.
-
----
-
-# 15. Summary
-
-The CLI provides the main operational interface for the generation framework.
-
-It is designed to support:
-
-* model inspection
-* job execution
-* run lifecycle management
-* dataset export
-* runtime diagnostics
-
-This command structure is intentionally minimal, stable, and aligned with the MVP architecture.
+But it should do so without hiding or breaking the lower-level runtime controls that make the framework operationally useful.

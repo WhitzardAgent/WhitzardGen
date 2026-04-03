@@ -1,0 +1,14 @@
+entity: AnalysisResult
+required:
+  - analysis_id
+  - response_id
+  - analysis_policy_id
+fields:
+  analysis_id: string
+  response_id: string
+  analysis_policy_id: string
+  judge_model_alias: string|null
+  parsed_principles: array|null
+  value_preference_labels: array|null
+  consistency_features: object|null
+  judge_output_json: object|null

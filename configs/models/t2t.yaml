@@ -12,6 +12,8 @@ models:
       supports_seed: false
       output_types: [text]
       supported_languages: [en, zh]
+      supports_structured_json_output: true
+      accepted_annotation_source_artifact_types: [text, image, video, audio]
     runtime:
       execution_mode: in_process
       gpu_required: true
@@ -30,3 +32,69 @@ models:
       enable_thinking: true
     weights:
       hf_repo: Qwen/Qwen3-32B
+  OpenAI-Compatible-Chat:
+    version: "v1"
+    adapter: OpenAICompatibleTextAdapter
+    modality: text
+    task_type: t2t
+    capabilities:
+      supports_batch_prompts: true
+      max_batch_size: 16
+      preferred_batch_size: 4
+      supports_negative_prompt: false
+      supports_seed: false
+      output_types: [text]
+      supported_languages: [en, zh]
+      supports_structured_json_output: true
+      accepted_annotation_source_artifact_types: [text, image, video, audio]
+    runtime:
+      execution_mode: in_process
+      gpu_required: false
+      env_spec: api_client
+      worker_strategy: persistent_worker
+      replica_count: 1
+      supports_multi_replica: true
+    generation_defaults:
+      max_new_tokens: 2048
+      temperature: 0.7
+      top_p: 0.95
+    provider:
+      type: openai_compatible
+      request_api: chat_completions
+      model_name: openai-compatible-chat-model
+      timeout_sec: 60
+      max_retries: 3
+      initial_backoff_sec: 1.0
+  OpenAI-Compatible-Responses:
+    version: "v1"
+    adapter: OpenAICompatibleTextAdapter
+    modality: text
+    task_type: t2t
+    capabilities:
+      supports_batch_prompts: true
+      max_batch_size: 16
+      preferred_batch_size: 4
+      supports_negative_prompt: false
+      supports_seed: false
+      output_types: [text]
+      supported_languages: [en, zh]
+      supports_structured_json_output: true
+      accepted_annotation_source_artifact_types: [text, image, video, audio]
+    runtime:
+      execution_mode: in_process
+      gpu_required: false
+      env_spec: api_client
+      worker_strategy: persistent_worker
+      replica_count: 1
+      supports_multi_replica: true
+    generation_defaults:
+      max_new_tokens: 2048
+      temperature: 0.7
+      top_p: 0.95
+    provider:
+      type: openai_compatible
+      request_api: responses
+      model_name: openai-compatible-responses-model
+      timeout_sec: 60
+      max_retries: 3
+      initial_backoff_sec: 1.0

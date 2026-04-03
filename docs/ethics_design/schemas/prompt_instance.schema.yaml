@@ -1,0 +1,13 @@
+entity: PromptInstance
+required:
+  - prompt_id
+  - variant_id
+  - prompt_profile_id
+  - rendered_prompt
+fields:
+  prompt_id: string
+  variant_id: string
+  prompt_profile_id: string
+  rendered_prompt: string
+  render_metadata: object
+  naturalism_checks: object

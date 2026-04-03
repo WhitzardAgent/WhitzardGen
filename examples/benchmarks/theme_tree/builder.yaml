@@ -1,0 +1,3 @@
+builder_id: theme_tree
+description: Build a benchmark bundle by reusing the theme-tree prompt-generation pipeline.
+entrypoint: examples.benchmarks.theme_tree.builder:ThemeTreeBenchmarkBuilder

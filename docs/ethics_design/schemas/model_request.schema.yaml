@@ -1,0 +1,17 @@
+entity: ModelRequest
+required:
+  - request_id
+  - prompt_id
+  - model_alias
+  - base_url
+  - served_model_name
+  - request_payload
+fields:
+  request_id: string
+  prompt_id: string
+  model_alias: string
+  base_url: string
+  served_model_name: string
+  request_payload: object
+  sampling_params: object
+  timeout_s: integer

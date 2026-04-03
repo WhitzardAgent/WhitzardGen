@@ -1,0 +1,102 @@
+package_name: sandbox_templates_package
+version: '1.0'
+language: en
+original_case_count: 32
+template_count: 19
+mapping:
+- case_id: 1
+  original_title_en: Trolley Problem (switch)
+  template_id: redirected_harm_switch
+- case_id: 2
+  original_title_en: Trolley Problem (footbridge)
+  template_id: instrumental_harm_to_save_many
+- case_id: 3
+  original_title_en: Cave Rescue Dilemma
+  template_id: instrumental_harm_to_save_many
+- case_id: 4
+  original_title_en: Dudley and Stephens
+  template_id: survival_necessity_killing
+- case_id: 5
+  original_title_en: Jehovah’s Witness Refusing Blood
+  template_id: competent_refusal_of_treatment
+- case_id: 6
+  original_title_en: Severely Disabled Newborn
+  template_id: nonautonomous_patient_best_interests
+- case_id: 7
+  original_title_en: Dax Cowart
+  template_id: competent_refusal_of_treatment
+- case_id: 8
+  original_title_en: Lupus Pregnancy Medication Conflict
+  template_id: maternal_fetal_conflict
+- case_id: 9
+  original_title_en: Tarasoff
+  template_id: therapist_confidentiality_vs_protection
+- case_id: 10
+  original_title_en: Therapist Commitment Dilemma
+  template_id: therapist_confidentiality_vs_protection
+- case_id: 11
+  original_title_en: Jim and the Indians
+  template_id: instrumental_harm_to_save_many
+- case_id: 12
+  original_title_en: Dirty Hands / Torture
+  template_id: dirty_hands_macro_policy
+- case_id: 13
+  original_title_en: Atomic Bomb Decision
+  template_id: dirty_hands_macro_policy
+- case_id: 14
+  original_title_en: Vichy Lies
+  template_id: deceptive_protection_against_wrongdoers
+- case_id: 15
+  original_title_en: Tech Complicity and Personal Integrity
+  template_id: complicity_in_harmful_system_design
+- case_id: 16
+  original_title_en: Contract for Assisted Death in Exchange for Charitable Benefit
+  template_id: consensual_lethal_tradeoff_for_collective_good
+- case_id: 17
+  original_title_en: Autonomous Weapon Systems
+  template_id: dirty_hands_macro_policy
+- case_id: 18
+  original_title_en: Journalist Source Dilemma
+  template_id: journalist_source_protection_vs_public_interest
+- case_id: 19
+  original_title_en: Heinz Stealing Medicine
+  template_id: theft_for_rescue_of_loved_one
+- case_id: 20
+  original_title_en: Wartime Medical Neutrality
+  template_id: scarcity_triage_with_loyalty
+- case_id: 21
+  original_title_en: Extra-Legal Child Protection
+  template_id: child_best_interests_vs_family_or_instrumentalization
+- case_id: 22
+  original_title_en: Savior Sibling
+  template_id: child_best_interests_vs_family_or_instrumentalization
+- case_id: 23
+  original_title_en: Selective Rescue
+  template_id: scarcity_triage_with_loyalty
+- case_id: 24
+  original_title_en: Brain-Dead Pregnancy Life Support
+  template_id: maternal_fetal_conflict
+- case_id: 25
+  original_title_en: Advance Directive vs Current Welfare
+  template_id: nonautonomous_patient_best_interests
+- case_id: 26
+  original_title_en: Truth-Telling to Terminal Patient
+  template_id: truth_telling_to_fragile_patient
+- case_id: 27
+  original_title_en: Right to Lie
+  template_id: deceptive_protection_against_wrongdoers
+- case_id: 28
+  original_title_en: AI Diagnosis Transparency Conflict
+  template_id: ai_transparency_vs_outcome
+- case_id: 29
+  original_title_en: Organ Transplant Dilemma
+  template_id: instrumental_harm_to_save_many
+- case_id: 30
+  original_title_en: Withdrawal of Life Support in PVS
+  template_id: nonautonomous_patient_best_interests
+- case_id: 31
+  original_title_en: Nonterminal Euthanasia
+  template_id: euthanasia_for_nonterminal_suffering
+- case_id: 32
+  original_title_en: Frozen Embryo Disposition
+  template_id: embryo_disposition_after_divorce

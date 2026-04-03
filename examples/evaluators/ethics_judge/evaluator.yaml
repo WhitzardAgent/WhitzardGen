@@ -1,0 +1,7 @@
+evaluator_id: ethics_structural_judge
+type: judge
+description: Structured ethics scenario judge built on the annotation substrate.
+judge_model: Qwen3-32B
+annotation_profile: ethics_structural_review
+annotation_template: ethics_structural_review_v1
+accepted_input_types: [text, image, video]

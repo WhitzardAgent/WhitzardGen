@@ -1,0 +1,29 @@
+plugins:
+  - plugin_id: core_principle_inference_v1
+    plugin_version: 1.0.0
+    plugin_type: judge_model
+    entrypoint: ethics_pipeline.analysis.plugins.principle_inference:run
+    required_inputs:
+      - normalized_response
+      - sandbox_template
+    output_schema:
+      type: principle_labels_v1
+  - plugin_id: slot_sensitivity_v1
+    plugin_version: 1.0.0
+    plugin_type: comparative
+    entrypoint: ethics_pipeline.analysis.plugins.slot_sensitivity:run
+    required_inputs:
+      - normalized_response
+      - scenario_variant
+      - sandbox_template
+    output_schema:
+      type: slot_effect_summary_v1
+  - plugin_id: care_ethics_lens_v1
+    plugin_version: 0.1.0
+    plugin_type: domain_expert
+    entrypoint: custom_plugins.care_ethics:run
+    required_inputs:
+      - normalized_response
+      - sandbox_template
+    output_schema:
+      type: care_ethics_annotations_v1

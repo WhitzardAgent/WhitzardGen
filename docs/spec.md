@@ -1,618 +1,250 @@
-# AIGC Multimodal Data Generation Framework
-# System Specification (spec.md)
+# WhitzardGen System Specification
 
-## 1. Introduction
+## 1. Positioning
 
-This project implements a **multimodal AIGC data generation framework** designed to generate **large-scale synthetic datasets** using a diverse set of open-source generative models.
+WhitzardGen is a **benchmark-centric multimodal evaluation framework** built on top of a reusable generation/runtime kernel.
 
-The system orchestrates multiple models to generate:
+It supports two complementary product views:
 
-- images
-- videos
-- audio
-- text
+- **benchmark/evaluation framework**
+  - build benchmark cases
+  - execute one or more target models
+  - run rule-based or model-based evaluators
+  - aggregate structured experiment results
+- **generation/data-production kernel**
+  - prompt generation
+  - multimodal model execution
+  - artifact collection
+  - dataset export
 
-The primary goal is to produce **high-quality, diverse, labeled synthetic datasets** for downstream applications such as **AIGC safety detection and evaluation**.
+The framework is therefore dual-use, but the primary user-facing abstraction is now:
 
-The framework focuses on:
-
-- scalable dataset generation
-- multi-model orchestration
-- reproducibility
-- prompt traceability
-- modular model integration
-
----
-
-# 2. Project Goals
-
-The system aims to produce:
-
+```text
+benchmark -> target execution -> evaluation -> experiment report
 ```
 
-1M+ synthetic samples
+## 2. Core Objectives
 
-```
+The system is designed to support:
 
-Characteristics:
+- static QA-style benchmarks
+- synthetic slot/template benchmarks
+- multimodal model benchmarking across `t2t`, `t2i`, and `t2v`
+- scalable local multi-GPU execution
+- reproducible case generation and evaluation lineage
+- structured analysis bundles rather than only raw generated media
 
-- high diversity
-- multi-model generation
-- structured metadata
-- reproducible prompts
-- traceable artifacts
+Representative workloads include:
 
-Primary dataset types:
+- unsafe prompt benchmark evaluation for image/video models
+- LLM benchmark execution with structured output analysis
+- structural ethics benchmark generation from example scenario-template packages
+- cross-model comparison with per-family and per-group consistency analysis
 
-| Modality | Task |
-|--------|--------|
-Image | text-to-image |
-Video | text-to-video |
-Audio | text-to-audio |
-Text | text-to-text |
+## 3. Top-Level Architecture
 
----
+The system is organized into five logical layers:
 
-# 3. System Architecture
-
-The system consists of several major components.
-
-```
-
+```text
 CLI
-↓
-Scheduler / Engine
-↓
-Pipeline Execution
-↓
-Model Registry
-↓
-Model Adapter
-↓
-Model Execution
-↓
-Artifact Storage
-
+  ↓
+Benchmark / Experiment Orchestrator
+  ↓
+Execution Kernel
+  ↓
+Evaluator Layer
+  ↓
+Bundles / Reports / Exports
 ```
 
-Major components:
+Main subsystems:
 
-1. CLI interface
-2. Prompt dataset loader
-3. Scheduler / execution engine
-4. Model registry
-5. Model adapters
-6. Execution environment manager
-7. Artifact storage system
+1. **Benchmark builders**
+   - core generic sources such as static JSONL
+   - example builders such as theme-tree and structural ethics packages
+2. **Execution kernel**
+   - model registry
+   - adapters
+   - runtime scheduling
+   - persistent workers
+   - recovery
+3. **Evaluators**
+   - rule-based evaluators
+   - LLM-as-a-judge evaluators
+   - VLM-as-a-judge evaluators
+4. **Experiment aggregation**
+   - record-level evaluation outputs
+   - group-level consistency / sensitivity analyses
+   - reports and summaries
+5. **Lower-level data-production outputs**
+   - run ledgers
+   - dataset export bundles
+   - recovery artifacts
 
----
+## 4. Canonical Concepts
 
-# 4. Core Concepts
+### 4.1 Benchmark
 
-## 4.1 Prompt
-
-A **prompt** is the fundamental generation input.
-
-Prompts are defined using the schema in:
-
-```
-
-prompt_spec.md
-
-````
-
-Each prompt must include:
-
-- prompt_id
-- prompt text
-- language
-- optional parameters
-
-Example:
-
-```json
-{
-  "prompt_id": "p001",
-  "prompt": "a futuristic cyberpunk city",
-  "language": "en"
-}
-````
-
----
-
-## 4.2 Task
-
-A **task** represents the execution of one model on a batch of prompts.
-
-Task definition:
-
-```
-task = (model, prompt_batch, parameters)
-```
-
-Example:
-
-```
-task_001:
-  model: Z-Image
-  prompts: [p001, p002, p003]
-```
-
----
-
-## 4.3 Artifact
-
-An **artifact** is generated content.
+A **benchmark** is a named collection of canonical cases plus provenance and metadata.
 
 Examples:
 
-| Type  | Example |
-| ----- | ------- |
-| Image | PNG     |
-| Video | MP4     |
-| Audio | WAV     |
+- static JSONL prompt benchmarks
+- theme-tree prompt bundles used as benchmark inputs
+- example structural scenario packages realized into benchmark cases
 
-Artifacts must be linked to:
+### 4.2 Benchmark Case
 
-```
-prompt_id
-model
-run_id
-```
+A **benchmark case** is one execution unit for target models.
 
----
+Each case must be traceable and analysis-ready. In addition to prompt text, cases may carry:
 
-# 5. Pipeline Overview
+- `benchmark_id`
+- `case_id`
+- `family_id` / `template_id`
+- `variant_group_id`
+- `input_type`
+- `metadata`
+- `tags`
+- `split`
 
-The generation pipeline contains four stages.
+Structural scenario workloads additionally preserve:
 
-```
-Prompt Load
- ↓
-Prompt Preprocessing
- ↓
-Model Execution
- ↓
-Artifact Collection
-```
+- deep conflict structure
+- slot assignments
+- invariants
+- forbidden transformations
+- analysis targets
+- response capture contract
 
-MVP **does NOT include labeling**.
+### 4.3 Target Execution
 
----
+A **target execution** is one model-under-test applied to one or more benchmark cases through the existing run kernel.
 
-## 5.1 Prompt Loading
+This layer reuses:
 
-Prompts are loaded from a dataset.
+- registry resolution
+- batching
+- persistent workers
+- recovery
+- telemetry
+- run manifests and logs
 
-Supported formats:
+### 4.4 Evaluator
 
-```
-JSONL
-```
+An **evaluator** transforms target outputs into analysis-ready results.
 
-Example dataset:
+Two evaluator levels are first-class:
 
-```json
-{"prompt_id":"p1","prompt":"a cat","language":"en"}
-{"prompt_id":"p2","prompt":"一只猫","language":"zh"}
-```
+- **record evaluator**
+  - evaluates one target output at a time
+  - extracts labels, scores, rationales, or structured judgments
+- **group evaluator**
+  - analyzes multiple sibling outputs together
+  - measures consistency, robustness, stability, and sensitivity
 
----
+### 4.5 Experiment
 
-## 5.2 Prompt Preprocessing
+An **experiment** is one run of:
 
-Preprocessing includes:
-
-* language adaptation
-* prompt normalization
-* prompt batching
-
-Language translation occurs when the model does not support the prompt language.
-
----
-
-## 5.3 Model Execution
-
-Execution is handled by the **adapter + executor**.
-
-Models fall into two categories:
-
-### In-process models
-
-Examples:
-
-* Diffusers pipelines
-* Transformers generation APIs
-
-Execution occurs inside the framework process.
-
----
-
-### External-process models
-
-Examples:
-
-* repository demo scripts
-* torchrun pipelines
-
-Execution occurs via subprocess.
-
----
-
-# 6. Model Registry
-
-All models are registered in the **Model Registry**.
-
-Defined in:
-
-```
-model_registry_spec.md
+```text
+benchmark x target_models x evaluators
 ```
 
-The registry defines:
+An experiment produces a standalone result bundle with:
 
-* model name
-* adapter class
-* capabilities
-* runtime requirements
-* weights location
+- raw target results
+- record-level evaluations
+- group-level analyses
+- manifest
+- summary
+- report
+- failures
 
-Example:
+## 5. Mapping from Existing Subsystems
 
-```yaml
-Z-Image:
-  adapter: ZImageAdapter
-  modality: image
-  task_type: t2i
-```
+The existing subsystems remain important, but their product meaning changes:
 
----
+- `prompt generation` -> **benchmark / scenario builder internals**
+- `run` -> **execution kernel**
+- `annotate` -> **record evaluator path**
+- `export dataset` -> **lower-level result/export layer**
 
-# 7. Model Adapters
+This means older commands remain useful, but the higher-level workflow is now benchmark-centric.
 
-Adapters translate framework tasks into model-specific execution.
+## 6. Core vs Examples
 
-Defined in:
+The benchmark core must remain workload-agnostic.
 
-```
-model_adapter_spec.md
-```
+Core responsibilities:
 
-Adapters handle:
+- canonical schemas
+- builder/evaluator/analyzer interfaces
+- benchmark and experiment bundle I/O
+- orchestration across target and evaluator planes
+- reuse of the execution kernel
 
-* input preparation
-* execution configuration
-* artifact collection
-* metadata extraction
+Concrete workload families belong in `examples/`, not in core package types.
 
----
+## 7. Structural Scenario Example Support
 
-# 8. Prompt Batching
+Structural ethics scenario packages are implemented as an example benchmark-builder family.
 
-Many models support batch inference.
+The framework must preserve that these workloads are not plain QA prompts. Each realized case belongs to a scenario family and retains:
 
-Examples:
+- template family identity
+- structural / narrative / perturbation slot assignments
+- invariant constraints
+- forbidden transformations
+- analysis targets
 
-* Diffusers pipelines
-* transformer generation models
+This enables:
 
-The scheduler groups prompts into batches based on adapter capabilities.
+- scenario realization from reusable template packages
+- target-model execution on naturalistic prompts
+- record-level extraction of decisions and reasoning signals
+- group-level comparison across sibling variants
 
-```
-batch_size = min(adapter.max_batch_size, scheduler_limit)
-```
+For this example benchmark family, the framework must support:
 
----
+- controlled realization from template packages
+- traceable case grouping
+- cross-variant aggregation
+- consistency and sensitivity reporting
 
-# 9. Scheduler / Engine
+## 8. Outputs
 
-The scheduler manages:
+The framework now has two major artifact families.
 
-* task creation
-* prompt batching
-* model execution
-* retries
-* concurrency
+### 7.1 Run Artifacts
 
-Responsibilities:
+Produced by the execution kernel:
 
-| Responsibility | Description          |
-| -------------- | -------------------- |
-| Batching       | group prompts        |
-| Scheduling     | assign tasks         |
-| Retries        | retry failed prompts |
-| Concurrency    | GPU utilization      |
+- `run_manifest.json`
+- `samples.jsonl`
+- `runtime_status.json`
+- `failures.json`
+- dataset export files
 
----
+### 7.2 Experiment Artifacts
 
-# 10. Execution Environment
+Produced by benchmark/evaluation workflows:
 
-Models may require different dependencies.
+- `cases.jsonl`
+- `target_results.jsonl`
+- `evaluator_results.jsonl`
+- `group_analyses.jsonl`
+- `experiment_manifest.json`
+- `summary.json`
+- `report.md`
+- `failures.json`
 
-The framework manages environments using:
+## 9. Scope Boundaries
 
-```
-conda environments
-```
+This framework is not trying to be:
 
-Each model specifies:
+- a generic hosted model-serving platform
+- a full distributed orchestration stack
+- a free-form notebook analysis environment
 
-```
-environment.yaml
-```
-
-Example:
-
-```
-envs/
-  zimage_env.yml
-  longcat_env.yml
-```
-
-The environment manager:
-
-* creates environments automatically
-* activates correct env for execution
-
----
-
-# 11. Artifact Storage
-
-Artifacts are stored in structured directories.
-
-Example:
-
-```
-runs/
-  run_001/
-    Z-Image/
-      p001.png
-      p002.png
-    LongCatVideo/
-      p001.mp4
-```
-
-Artifacts must include metadata linking to prompts.
-
----
-
-# 12. Dataset Export
-
-Generated results can be exported as datasets.
-
-Supported formats:
-
-```
-JSONL
-Parquet
-```
-
-Example record:
-
-```json
-{
-  "prompt_id": "p001",
-  "model": "Z-Image",
-  "artifact": "runs/run1/zimage/p001.png"
-}
-```
-
----
-
-# 13. CLI Interface
-
-CLI provides the primary user interface.
-
-Example commands:
-
-### Run generation
-
-```
-aigc run \
-  --models Z-Image,LongCat-Video \
-  --prompts prompts.jsonl
-```
-
-### List models
-
-```
-aigc models list
-```
-
-### Inspect model
-
-```
-aigc models inspect Z-Image
-```
-
----
-
-# 14. Error Handling
-
-Common failure cases:
-
-* CUDA OOM
-* model crash
-* artifact missing
-
-Retries:
-
-```
-max_retries = 3
-```
-
-Failed prompts are logged and may be retried.
-
----
-
-# 15. Non-Goals (MVP)
-
-The MVP **does not include**:
-
-* automated safety labeling
-* distributed cluster scheduling
-* web UI
-* remote model APIs
-
-These may be added later.
-
----
-
-# 16. Future Extensions
-
-Planned improvements:
-
-* automatic prompt generation using LLMs
-* safety labeling pipeline
-* distributed GPU execution
-* dataset evaluation tools
-* prompt diversity metrics
-
----
-
-# 17. Summary
-
-This framework provides a scalable system for generating multimodal synthetic datasets using heterogeneous generative models.
-
-Key features:
-
-* modular model adapters
-* dynamic model registry
-* prompt traceability
-* batch-aware execution
-* structured artifact storage
-
-```
-
----
-
-# What Documentation Should Come Next (Before Implementation)
-
-You are **very close** to being ready for implementation. However a few **critical docs are still missing**.
-
-These are the final pieces needed to avoid architecture drift during coding.
-
----
-
-# 1️⃣ CLI Specification (VERY IMPORTANT)
-
-You already referenced CLI commands, but you need a **real CLI spec**.
-
-Create:
-
-```
-
-cli_spec.md
-
-```
-
-It should define:
-
-- commands
-- flags
-- examples
-- expected outputs
-
-Example sections:
-
-```
-
-run
-models list
-models inspect
-runs list
-runs inspect
-resume
-retry
-
-```
-
-This prevents CLI chaos during development.
-
----
-
-# 2️⃣ Scheduler / Engine Spec
-
-Right now the scheduler is only briefly mentioned.
-
-You should define:
-
-```
-
-scheduler_spec.md
-
-```
-
-It should specify:
-
-- task creation
-- batching logic
-- concurrency control
-- retry logic
-- run state tracking
-
-This is **one of the most complex parts of the system**.
-
----
-
-# 3️⃣ Artifact & Dataset Schema
-
-Right now artifacts are loosely defined.
-
-Create:
-
-```
-
-dataset_schema.md
-
-```
-
-Define:
-
-```
-
-artifact record
-dataset record
-run metadata
-model metadata
-
-```
-
-This avoids breaking dataset compatibility later.
-
----
-
-# 4️⃣ Environment Manager Spec
-
-Since you're using **conda**, define:
-
-```
-
-env_manager_spec.md
-
-```
-
-Describe:
-
-- environment creation
-- caching
-- activation strategy
-- dependency conflicts
-
----
-
-# Final Recommended Doc List
-
-Your documentation set should be:
-
-```
-
-spec.md
-prompt_spec.md
-pipeline_dag_spec.md
-model_adapter_spec.md
-model_registry_spec.md
-cli_spec.md
-scheduler_spec.md
-dataset_schema.md
-env_manager_spec.md
+It is a structured local/cluster evaluation framework with a strong execution kernel and traceable experiment bundles.

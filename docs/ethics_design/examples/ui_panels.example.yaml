@@ -1,0 +1,9 @@
+panels:
+  - run_launcher
+  - live_run_monitor
+  - prompt_browser
+  - response_explorer
+  - model_comparison
+  - template_slot_sensitivity
+  - analysis_workbench
+  - export_panel

@@ -1,6 +1,6 @@
 # WhitzardGen
 
-Multimodal synthetic data generation framework for image and video collection.
+Benchmark-centric multimodal evaluation framework with a reusable generation/runtime kernel.
 
 This repository is designed for:
 
@@ -14,32 +14,74 @@ Chinese documentation: [README.zh-CN.md](/Users/morinop/coding/whitzardgen/READM
 
 ## What This Project Does
 
-WhitzardGen is a dataset-generation framework, not a model-serving platform.
+WhitzardGen now has two layers:
 
-The framework turns:
+- **benchmark/evaluation layer**
+  - build or load benchmark cases
+  - execute one or more target models
+  - run rule-based or model-based evaluators
+  - write experiment bundles and reports
+- **runtime/data-production kernel**
+  - prompt/scenario generation
+  - multimodal model execution
+  - run manifests, ledgers, recovery, and exports
 
-- prompt files
-- selected models
-- cluster-local model/repo/env configuration
+This means the project can support both:
 
-into:
+- benchmark-style model evaluation
+- dataset-production workflows
 
-- generated image/video artifacts
-- per-run manifests and logs
-- prompt-level ledgers
-- recovery-capable run metadata
-- organized dataset export bundles
+The current product-facing workflow is benchmark-centric:
 
-Current focus:
+```text
+benchmark build -> target execution -> evaluation -> experiment report
+```
 
-- image and video generation
-- prompt generation on top of a local T2T backend
-- single-machine multi-GPU execution
-- persistent workers for heavy models
-- dataset-oriented export and organization
+The older command families remain available because they are still the kernel that powers the higher-level workflows.
+
+## Primary Workflows
+
+### 1. Benchmark / Experiment Workflow
+
+Use this when you want to compare target models on the same case set.
+
+```bash
+aigc benchmark build \
+  --builder ethics_sandbox \
+  --source docs/ethics_design/sandbox_template \
+  --config examples/benchmarks/ethics_sandbox/example_build.yaml \
+  --build-mode matrix
+
+aigc evaluate run \
+  --benchmark runs/benchmarks/<bundle_id> \
+  --targets Qwen3-32B \
+  --evaluator-model Qwen3-32B \
+  --evaluator-profile ethics_structural_review \
+  --evaluator-template ethics_structural_review_v1
+
+aigc experiments report <experiment_id>
+```
+
+### 2. Kernel-Oriented Workflow
+
+Use this when you want lower-level control over generation/data-production:
+
+- `aigc prompts ...`
+- `aigc run ...`
+- `aigc annotate ...`
+- `aigc export ...`
 
 ## Current Capabilities
 
+- Benchmark features:
+  - benchmark bundle build and inspect
+  - experiment bundle build and report
+  - example benchmark builder discovery
+  - reusable normalizer stage before record evaluation
+  - structural ethics sandbox example ingestion
+  - per-record judge extraction via `annotate` reuse
+  - group-level analysis via generic aggregation plus example analyzers/plugins
+  - recipe-driven experiment runs
 - Prompt input:
   - `.txt`
   - `.csv`
@@ -74,15 +116,41 @@ Current focus:
   - model-filtered export
   - `link` / `copy` artifact materialization
 
+## Concept Mapping
+
+The old subsystem names still matter, but their meaning in the product has shifted:
+
+- `prompt generation` -> benchmark/scenario builder internals
+- `run` -> target execution kernel
+- `annotate` -> record evaluator path
+- `export dataset` -> lower-level artifact export layer
+
+This is especially important for structural benchmark examples such as the ethics sandbox package, where a case is not just a prompt. It carries:
+
+- family/template identity
+- variant group identity
+- structural / narrative / perturbation slot assignments
+- invariants and forbidden transformations
+- analysis targets
+
 ## Repository Layout
 
 Key directories:
 
 - [src/aigc](/Users/morinop/coding/whitzardgen/src/aigc): framework source code
+- [src/aigc/benchmarking](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking): generic benchmark/build/evaluate core
+- [src/aigc/normalizers](/Users/morinop/coding/whitzardgen/src/aigc/normalizers): generic normalization substrate
+- [src/aigc/analysis](/Users/morinop/coding/whitzardgen/src/aigc/analysis): generic analysis-plugin substrate
+- [examples/benchmarks](/Users/morinop/coding/whitzardgen/examples/benchmarks): concrete benchmark-builder examples such as `ethics_sandbox` and `theme_tree`
+- [examples/evaluators](/Users/morinop/coding/whitzardgen/examples/evaluators): concrete evaluator presets layered on the generic evaluator substrate
+- [examples/normalizers](/Users/morinop/coding/whitzardgen/examples/normalizers): concrete domain-specific normalizers layered on the generic normalization substrate
+- [examples/analysis_plugins](/Users/morinop/coding/whitzardgen/examples/analysis_plugins): concrete comparative/post-processing plugins layered on the generic analysis substrate
+- [examples/experiments](/Users/morinop/coding/whitzardgen/examples/experiments): example experiment recipes that wire builders, targets, normalizers, evaluators, and plugins
 - [configs/models](/Users/morinop/coding/whitzardgen/configs/models): canonical model registry split by task type (`t2i` / `t2v` / `t2t` / `t2a`)
 - [configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models): machine-local model overrides split by task type
 - [configs/local_runtime.yaml](/Users/morinop/coding/whitzardgen/configs/local_runtime.yaml): machine-local runtime/output defaults
 - [configs/run_profiles](/Users/morinop/coding/whitzardgen/configs/run_profiles): reusable run profiles
+- [configs/annotation](/Users/morinop/coding/whitzardgen/configs/annotation): record-evaluator profiles and templates
 - [prompts](/Users/morinop/coding/whitzardgen/prompts): sample and canary prompt files
 - [envs](/Users/morinop/coding/whitzardgen/envs): per-model env specs and validation metadata
 - [docs](/Users/morinop/coding/whitzardgen/docs): architecture and subsystem specs
@@ -199,6 +267,62 @@ Recommended rule:
 - `configs/models/` defines the model
 - `configs/local_models/` defines machine-local deployment details
 
+Remote API text models follow the same split:
+
+- keep provider-safe defaults in `configs/models/t2t.yaml`
+- keep machine-local endpoint/auth overrides in `configs/local_models/t2t.yaml`
+- store secrets in environment variables, not in repo config
+
+Example remote registry entry:
+
+```yaml
+OpenAI-Compatible-Chat:
+  version: "v1"
+  adapter: OpenAICompatibleTextAdapter
+  modality: text
+  task_type: t2t
+  runtime:
+    execution_mode: in_process
+    gpu_required: false
+    env_spec: api_client
+    worker_strategy: persistent_worker
+    replica_count: 1
+    supports_multi_replica: true
+  provider:
+    type: openai_compatible
+    request_api: chat_completions
+    model_name: gpt-4.1-mini
+    timeout_sec: 60
+    max_retries: 3
+    initial_backoff_sec: 1.0
+```
+
+Example local override:
+
+```yaml
+OpenAI-Compatible-Chat:
+  provider:
+    base_url: https://your-endpoint.example/v1
+    api_key_env: OPENAI_API_KEY
+    model_name: your-deployed-model-name
+```
+
+After that, the same model can be used in existing flows:
+
+- `aigc run`
+- `aigc annotate`
+- `aigc evaluate run`
+- prompt generation / prompt rewrite when a `t2t` model is selected
+
+Useful checks:
+
+```bash
+aigc models inspect OpenAI-Compatible-Chat
+aigc doctor --model OpenAI-Compatible-Chat
+```
+
+For remote models, `models inspect` redacts sensitive provider headers, and `doctor` validates provider fields, required env vars, and a lightweight OpenAI-compatible `/models` endpoint probe.
+
 Example:
 
 ```yaml
@@ -222,6 +346,8 @@ CogVideoX-5B:
 This controls machine-local runtime defaults such as:
 
 - default run output root
+- default benchmark bundle root
+- default experiment bundle root
 - optional global default seed
 
 Example:
@@ -229,6 +355,8 @@ Example:
 ```yaml
 paths:
   runs_root: /shared/aigc_runs
+  benchmarks_root: /shared/aigc_runs/benchmarks
+  experiments_root: /shared/aigc_runs/experiments
 
 generation:
   default_seed: 12345

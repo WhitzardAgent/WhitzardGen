@@ -203,6 +203,67 @@ class RunsCliTests(unittest.TestCase):
         self.assertEqual(payload["run_id"], "canary-helios")
         self.assertEqual(payload["status"], "completed")
 
+    def test_handle_annotate_uses_requested_profile_and_model(self) -> None:
+        from aigc.cli.main import handle_annotate
+
+        summary = type(
+            "Summary",
+            (),
+            {
+                "bundle_dir": "/tmp/annotation_bundle",
+                "source_run_id": "run_001",
+                "annotator_model": "Qwen3-32B",
+                "annotation_profile": "default_review",
+                "annotation_template": "source_record_review_v1",
+                "annotated_count": 12,
+                "skipped_count": 2,
+                "failed_count": 1,
+                "annotations_path": "/tmp/annotation_bundle/annotations.jsonl",
+                "manifest_path": "/tmp/annotation_bundle/annotation_manifest.json",
+                "to_dict": lambda self: {
+                    "bundle_dir": "/tmp/annotation_bundle",
+                    "source_run_id": "run_001",
+                    "annotator_model": "Qwen3-32B",
+                    "annotation_profile": "default_review",
+                    "annotation_template": "source_record_review_v1",
+                    "annotated_count": 12,
+                    "skipped_count": 2,
+                    "failed_count": 1,
+                },
+            },
+        )()
+        args = type(
+            "Args",
+            (),
+            {
+                "run_id": "run_001",
+                "profile": "default_review",
+                "model": "Qwen3-32B",
+                "template": "source_record_review_v1",
+                "out": "/tmp/annotation_bundle",
+                "mock": True,
+                "execution_mode": None,
+                "output": "json",
+            },
+        )()
+
+        def fake_annotate_run(run_id, **kwargs):
+            self.assertEqual(run_id, "run_001")
+            self.assertEqual(kwargs["annotation_profile"], "default_review")
+            self.assertEqual(kwargs["annotator_model"], "Qwen3-32B")
+            self.assertEqual(kwargs["template_name"], "source_record_review_v1")
+            self.assertEqual(kwargs["out_dir"], "/tmp/annotation_bundle")
+            self.assertEqual(kwargs["execution_mode"], "mock")
+            return summary
+
+        with patch("aigc.cli.main.annotate_run", side_effect=fake_annotate_run):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_annotate(args), 0)
+            payload = json.loads(stream.getvalue())
+
+        self.assertEqual(payload["source_run_id"], "run_001")
+        self.assertEqual(payload["annotator_model"], "Qwen3-32B")
+
     def test_handle_models_matrix_can_write_docs(self) -> None:
         from aigc.cli.main import handle_models_matrix
 

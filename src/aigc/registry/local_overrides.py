@@ -23,6 +23,7 @@ LOCAL_RUNTIME_OVERRIDE_FIELDS = (
 )
 LOCAL_NESTED_OVERRIDE_FIELDS = (
     "generation_defaults",
+    "provider",
 )
 
 
@@ -150,8 +151,20 @@ def summarize_local_path_overrides(overrides: dict[str, Any]) -> list[str]:
         value = overrides.get(field)
         if value:
             lines.append(f"{field}: {value}")
+    provider = overrides.get("provider")
+    if isinstance(provider, dict):
+        for key, value in sorted(provider.items()):
+            if value in (None, ""):
+                continue
+            if key == "default_headers" and isinstance(value, dict):
+                lines.append(
+                    f"provider.{key}: "
+                    + str({str(header): "<redacted>" for header in value})
+                )
+                continue
+            lines.append(f"provider.{key}: {value}")
     for field, value in sorted(overrides.items()):
-        if field in LOCAL_OVERRIDE_FIELDS or value in (None, ""):
+        if field in LOCAL_OVERRIDE_FIELDS or field == "provider" or value in (None, ""):
             continue
         lines.append(f"{field}: {value}")
     return lines

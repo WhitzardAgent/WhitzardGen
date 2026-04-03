@@ -1,0 +1,14 @@
+entity: ScenarioVariant
+required:
+  - variant_id
+  - template_id
+  - slot_values
+  - seed
+  - invariant_check_passed
+fields:
+  variant_id: string
+  template_id: string
+  slot_values: object
+  seed: integer
+  variant_policy_id: string|null
+  invariant_check_passed: boolean

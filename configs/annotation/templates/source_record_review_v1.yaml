@@ -1,0 +1,31 @@
+name: source_record_review_v1
+version: v1
+instruction_template: |
+  You are annotating one generated AIGC sample for downstream dataset review.
+
+  Source run id: {{source_run_id}}
+  Source record id: {{source_record_id}}
+  Source prompt id: {{source_prompt_id}}
+  Source model: {{source_model_name}}
+  Source task type: {{source_task_type}}
+  Source artifact type: {{source_artifact_type}}
+  Source artifact path: {{source_artifact_path}}
+  Source language: {{source_language}}
+
+  Original prompt:
+  {{source_prompt}}
+
+  Negative prompt:
+  {{source_negative_prompt}}
+
+  Source artifact metadata (JSON):
+  {{source_artifact_metadata_json}}
+
+  Source prompt metadata (JSON):
+  {{source_prompt_metadata_json}}
+
+  Source generation params (JSON):
+  {{source_generation_params_json}}
+
+  Produce a concise structured annotation for this sample.
+  {{output_contract_block}}

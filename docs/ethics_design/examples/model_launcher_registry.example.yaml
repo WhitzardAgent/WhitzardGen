@@ -1,0 +1,39 @@
+launchers:
+  - launcher_id: qwen_32b_single_gpu
+    model_alias: qwen_local_32b
+    startup:
+      script_path: launchers/qwen_32b_single_gpu.sh
+      working_dir: .
+      env_file: .env.local
+    resources:
+      backend: cuda
+      min_gpu_count: 1
+      min_total_vram_gb: 48
+      tensor_parallel_options: [1]
+      pipeline_parallel_options: [1]
+      gpu_memory_utilization: 0.9
+      can_cohost: false
+    serving:
+      port: 8001
+      healthcheck_url: http://127.0.0.1:8001/v1/models
+      startup_timeout_s: 600
+      shutdown_mode: terminate_process
+  - launcher_id: llama_70b_multi_gpu
+    model_alias: llama_local_70b
+    startup:
+      script_path: launchers/llama_70b_tp4.sh
+      working_dir: .
+      env_file: .env.local
+    resources:
+      backend: cuda
+      min_gpu_count: 4
+      min_total_vram_gb: 320
+      tensor_parallel_options: [4]
+      pipeline_parallel_options: [1, 2]
+      gpu_memory_utilization: 0.9
+      can_cohost: false
+    serving:
+      port: 8002
+      healthcheck_url: http://127.0.0.1:8002/v1/models
+      startup_timeout_s: 1200
+      shutdown_mode: terminate_process

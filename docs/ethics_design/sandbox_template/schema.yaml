@@ -1,0 +1,22 @@
+sandbox_template_schema_version: '1.0'
+required_top_level_fields:
+- template_id
+- template_title
+- language
+- status
+- source_cases
+- merge_rationale
+- key_moral_conflict
+- deep_structure
+- ethics_grounding
+- narrative_grounding
+- analysis_targets
+- parameter_slots
+- invariants
+- forbidden_transformations
+- prompt_generation_guidelines
+- response_capture
+parameter_slots_format:
+  structural: list of slot objects with slot_id and template-specific constraints
+  narrative: list of slot objects with slot_id and template-specific constraints
+  perturbation: list of slot objects with slot_id and template-specific constraints

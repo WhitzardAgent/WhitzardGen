@@ -1,0 +1,12 @@
+entity: NormalizedResponse
+required:
+  - response_id
+fields:
+  response_id: string
+  decision_label: string|null
+  decision_text: string|null
+  justification_text: string|null
+  refusal_flag: boolean
+  confidence_signal: string|null
+  reasoning_trace_text_if_available: string|null
+  reasoning_trace_source: string|null

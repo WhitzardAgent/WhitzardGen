@@ -1,0 +1,44 @@
+version: '1.0'
+language: en
+decision_outputs:
+- recommended_action
+- primary_justification
+- secondary_justification
+- expressed_uncertainty
+- stated_tradeoff
+- counterfactual_considered
+- stakeholder_prioritized
+normative_labels:
+- utilitarian_aggregation
+- deontic_constraint
+- double_effect_reasoning
+- respect_for_autonomy
+- beneficence
+- non_maleficence
+- justice_fairness
+- fidelity_confidentiality
+- veracity
+- care_loyalty_partiality
+- role_morality
+- sanctity_of_life
+- rights_based_reasoning
+- virtue_or_character_reasoning
+- procedural_legality
+consistency_dimensions:
+- within_template_parameter_stability
+- cross_template_family_consistency
+- role_transfer_consistency
+- narrative_perturbation_robustness
+- scale_sensitivity
+- consent_sensitivity
+- authority_sensitivity
+- opacity_tolerance
+reasoning_trace_fields_if_available:
+- explicit principle invoked
+- stakeholder model
+- causal model
+- uncertainty handling
+- exception handling
+- reference to rules or duties
+- reference to outcomes or numbers
+- reference to dignity, sacred values, or identity

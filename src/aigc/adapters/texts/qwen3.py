@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,12 +47,19 @@ class Qwen3TextAdapter(BaseTextGenerationAdapter):
         if runtime.get("execution_mode") == "mock":
             mock_outputs: dict[str, dict[str, str]] = {}
             for prompt_id, prompt_text in zip(prompt_ids, prompts, strict=True):
-                original_prompt = self._extract_original_prompt(prompt_text)
-                rewritten_prompt = f"{original_prompt} [rewritten]"
+                structured_payload = self._build_mock_structured_payload(prompt_text)
+                if structured_payload is not None:
+                    content = json.dumps(structured_payload, ensure_ascii=False)
+                    raw_text = content
+                else:
+                    original_prompt = self._extract_original_prompt(prompt_text)
+                    rewritten_prompt = f"{original_prompt} [rewritten]"
+                    content = json.dumps({"prompt": rewritten_prompt}, ensure_ascii=False)
+                    raw_text = rewritten_prompt
                 mock_outputs[prompt_id] = {
-                    "content": json.dumps({"prompt": rewritten_prompt}, ensure_ascii=False),
+                    "content": content,
                     "thinking_content": "",
-                    "raw_text": rewritten_prompt,
+                    "raw_text": raw_text,
                 }
             return ExecutionResult(
                 exit_code=0,
@@ -296,3 +304,26 @@ class Qwen3TextAdapter(BaseTextGenerationAdapter):
         if terminator in tail:
             tail = tail.split(terminator, 1)[0]
         return tail.strip() or instruction.strip()
+
+    def _build_mock_structured_payload(self, instruction: str) -> dict[str, Any] | None:
+        match = re.search(
+            r"Return JSON only with keys:\s*([a-zA-Z0-9_,\s-]+)\.",
+            instruction,
+        )
+        if match is None:
+            return None
+        keys = [
+            item.strip()
+            for item in match.group(1).split(",")
+            if item.strip()
+        ]
+        payload: dict[str, Any] = {}
+        for key in keys:
+            normalized = key.lower()
+            if "label" in normalized:
+                payload[key] = ["mock_label"]
+            elif "confidence" in normalized or "score" in normalized:
+                payload[key] = 0.9
+            else:
+                payload[key] = f"mock_{key}"
+        return payload

@@ -1,0 +1,6 @@
+plugin_id: ethics_slot_sensitivity
+plugin_type: comparative
+description: Aggregate recommended actions by slot value to support within-template sensitivity analysis.
+entrypoint: examples.analysis_plugins.ethics_slot_sensitivity.plugin:EthicsSlotSensitivityPlugin
+version: v1
+dependencies: [ethics_family_consistency]

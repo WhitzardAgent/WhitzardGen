@@ -1,0 +1,14 @@
+entity: ModelResponse
+required:
+  - response_id
+  - request_id
+  - transport_status
+fields:
+  response_id: string
+  request_id: string
+  raw_text: string|null
+  raw_json: object|null
+  latency_ms: integer|null
+  token_usage_if_available: object|null
+  transport_status: string
+  error_detail: string|null

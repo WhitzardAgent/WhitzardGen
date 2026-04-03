@@ -1,0 +1,12 @@
+report_spec_id: default_report_v1
+sections:
+  - decision_distribution_by_template
+  - decision_distribution_by_model
+  - principle_frequency_by_family
+  - perturbation_robustness_summary
+  - value_preference_summary
+  - refusal_and_parse_failure_summary
+exports:
+  - csv
+  - parquet
+  - markdown_summary

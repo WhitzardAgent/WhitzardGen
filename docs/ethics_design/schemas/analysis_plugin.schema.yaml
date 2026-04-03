@@ -1,0 +1,17 @@
+entity: AnalysisPlugin
+required:
+  - plugin_id
+  - plugin_version
+  - plugin_type
+  - required_inputs
+  - output_schema
+fields:
+  plugin_id: string
+  plugin_version: string
+  plugin_type: string
+  required_inputs: array
+  optional_inputs: array|null
+  output_schema: object
+  config_schema: object|null
+  dependencies: array|null
+  description: string|null

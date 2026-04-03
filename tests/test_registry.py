@@ -127,13 +127,15 @@ class RegistryTests(unittest.TestCase):
     def test_registry_loads_all_target_models(self) -> None:
         registry = load_registry()
         names = [model.name for model in registry.list_models()]
-        self.assertEqual(len(names), 15)
+        self.assertEqual(len(names), 17)
         self.assertIn("Helios", names)
         self.assertIn("HunyuanVideo-1.5-Diffusers-720p_t2v", names)
         self.assertIn("Qwen3-32B", names)
         self.assertIn("Z-Image", names)
         self.assertIn("Wan2.2-T2V-A14B-Diffusers", names)
         self.assertIn("CogVideoX-5B", names)
+        self.assertIn("OpenAI-Compatible-Chat", names)
+        self.assertIn("OpenAI-Compatible-Responses", names)
 
     def test_registry_resolves_adapter_class(self) -> None:
         registry = load_registry()
@@ -213,6 +215,97 @@ class RegistryTests(unittest.TestCase):
             False,
         )
 
+    def test_registry_merges_remote_provider_overrides(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        local_models_path = tmpdir / "local_models.yaml"
+        local_models_path.write_text(
+            json.dumps(
+                {
+                    "OpenAI-Compatible-Chat": {
+                        "provider": {
+                            "base_url": "https://example.test/v1",
+                            "api_key_env": "OPENAI_API_KEY",
+                            "model_name": "example-chat-model",
+                            "default_headers": {
+                                "X-Api-Secret": "super-secret",
+                            },
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        registry = load_registry(local_models_path=local_models_path)
+        model = registry.get_model("OpenAI-Compatible-Chat")
+
+        self.assertEqual(model.provider["type"], "openai_compatible")
+        self.assertEqual(model.provider["request_api"], "chat_completions")
+        self.assertEqual(model.provider["base_url"], "https://example.test/v1")
+        self.assertEqual(model.provider["api_key_env"], "OPENAI_API_KEY")
+        self.assertEqual(model.provider["model_name"], "example-chat-model")
+        self.assertEqual(
+            model.provider["default_headers"]["X-Api-Secret"],
+            "super-secret",
+        )
+        self.assertEqual(
+            model.local_paths["provider"]["base_url"],
+            "https://example.test/v1",
+        )
+        self.assertEqual(model.local_override_source, str(local_models_path))
+
+    def test_models_inspect_json_redacts_provider_headers(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        local_models_path = tmpdir / "local_models.yaml"
+        local_models_path.write_text(
+            json.dumps(
+                {
+                    "OpenAI-Compatible-Chat": {
+                        "provider": {
+                            "base_url": "https://example.test/v1",
+                            "api_key_env": "OPENAI_API_KEY",
+                            "default_headers": {
+                                "X-Api-Secret": "super-secret",
+                                "Authorization": "Bearer test",
+                            },
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-m", "aigc", "models", "inspect", "OpenAI-Compatible-Chat", "--output", "json"],
+            cwd=ROOT,
+            env={
+                "PYTHONPATH": str(ROOT / "src"),
+                "AIGC_LOCAL_MODELS_FILE": str(local_models_path),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["provider"]["base_url"], "https://example.test/v1")
+        self.assertEqual(payload["provider"]["api_key_env"], "OPENAI_API_KEY")
+        self.assertEqual(
+            payload["provider"]["default_headers"],
+            {
+                "X-Api-Secret": "<redacted>",
+                "Authorization": "<redacted>",
+            },
+        )
+        self.assertEqual(
+            payload["local_paths"]["provider"]["default_headers"],
+            {
+                "X-Api-Secret": "<redacted>",
+                "Authorization": "<redacted>",
+            },
+        )
+
     def test_registry_ignores_redundant_local_override_values(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         local_models_path = tmpdir / "local_models.yaml"
@@ -244,7 +337,7 @@ class RegistryTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
-        self.assertEqual(len(payload), 15)
+        self.assertEqual(len(payload), 17)
 
     def test_models_inspect_text_output(self) -> None:
         result = subprocess.run(

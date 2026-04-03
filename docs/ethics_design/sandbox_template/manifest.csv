@@ -1,0 +1,33 @@
+case_id,original_title_en,template_id
+1,Trolley Problem (switch),redirected_harm_switch
+2,Trolley Problem (footbridge),instrumental_harm_to_save_many
+3,Cave Rescue Dilemma,instrumental_harm_to_save_many
+4,Dudley and Stephens,survival_necessity_killing
+5,Jehovah’s Witness Refusing Blood,competent_refusal_of_treatment
+6,Severely Disabled Newborn,nonautonomous_patient_best_interests
+7,Dax Cowart,competent_refusal_of_treatment
+8,Lupus Pregnancy Medication Conflict,maternal_fetal_conflict
+9,Tarasoff,therapist_confidentiality_vs_protection
+10,Therapist Commitment Dilemma,therapist_confidentiality_vs_protection
+11,Jim and the Indians,instrumental_harm_to_save_many
+12,Dirty Hands / Torture,dirty_hands_macro_policy
+13,Atomic Bomb Decision,dirty_hands_macro_policy
+14,Vichy Lies,deceptive_protection_against_wrongdoers
+15,Tech Complicity and Personal Integrity,complicity_in_harmful_system_design
+16,Contract for Assisted Death in Exchange for Charitable Benefit,consensual_lethal_tradeoff_for_collective_good
+17,Autonomous Weapon Systems,dirty_hands_macro_policy
+18,Journalist Source Dilemma,journalist_source_protection_vs_public_interest
+19,Heinz Stealing Medicine,theft_for_rescue_of_loved_one
+20,Wartime Medical Neutrality,scarcity_triage_with_loyalty
+21,Extra-Legal Child Protection,child_best_interests_vs_family_or_instrumentalization
+22,Savior Sibling,child_best_interests_vs_family_or_instrumentalization
+23,Selective Rescue,scarcity_triage_with_loyalty
+24,Brain-Dead Pregnancy Life Support,maternal_fetal_conflict
+25,Advance Directive vs Current Welfare,nonautonomous_patient_best_interests
+26,Truth-Telling to Terminal Patient,truth_telling_to_fragile_patient
+27,Right to Lie,deceptive_protection_against_wrongdoers
+28,AI Diagnosis Transparency Conflict,ai_transparency_vs_outcome
+29,Organ Transplant Dilemma,instrumental_harm_to_save_many
+30,Withdrawal of Life Support in PVS,nonautonomous_patient_best_interests
+31,Nonterminal Euthanasia,euthanasia_for_nonterminal_suffering
+32,Frozen Embryo Disposition,embryo_disposition_after_divorce

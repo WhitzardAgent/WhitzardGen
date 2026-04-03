@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -270,3 +271,77 @@ Z-Image:
         self.assertEqual(record.state, "ready")
         self.assertEqual(manager.validate_calls, 1)
 
+    def test_inspect_model_environment_validates_remote_provider_config(self) -> None:
+        local_models_path = self.tmpdir / "local_models.yaml"
+        local_models_path.write_text(
+            """
+OpenAI-Compatible-Chat:
+  provider:
+    base_url: https://example.test/v1
+    api_key_env: OPENAI_API_KEY
+    model_name: example-chat-model
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        registry = load_registry(local_models_path=local_models_path)
+        manager = FakeManualEnvManager(
+            metadata_path=self.tmpdir / "env_metadata.json",
+            registry=registry,
+            env_prefixes=["/opt/conda/envs/api_client"],
+            validation_result=(True, None),
+        )
+
+        class _FakeResponse(BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                del exc_type, exc, tb
+                return False
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=False):
+            with patch(
+                "aigc.env.manager.urllib.request.urlopen",
+                return_value=_FakeResponse(b'{"data": []}'),
+            ):
+                record = manager.inspect_model_environment("OpenAI-Compatible-Chat")
+
+        self.assertEqual(record.conda_env_name, "api_client")
+        self.assertEqual(record.state, "ready")
+        self.assertTrue(record.provider_checks["api_key_env"]["ok"])
+        self.assertTrue(record.provider_checks["healthcheck"]["ok"])
+        self.assertEqual(
+            record.provider_checks["healthcheck"]["value"],
+            "https://example.test/v1/models",
+        )
+
+    def test_inspect_model_environment_reports_missing_remote_api_key(self) -> None:
+        local_models_path = self.tmpdir / "local_models.yaml"
+        local_models_path.write_text(
+            """
+OpenAI-Compatible-Chat:
+  provider:
+    base_url: https://example.test/v1
+    api_key_env: OPENAI_API_KEY
+    model_name: example-chat-model
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        registry = load_registry(local_models_path=local_models_path)
+        manager = FakeManualEnvManager(
+            metadata_path=self.tmpdir / "env_metadata.json",
+            registry=registry,
+            env_prefixes=["/opt/conda/envs/api_client"],
+            validation_result=(True, None),
+        )
+
+        with patch.dict("os.environ", {}, clear=False):
+            record = manager.inspect_model_environment("OpenAI-Compatible-Chat")
+
+        self.assertEqual(record.state, "invalid")
+        self.assertFalse(record.provider_checks["api_key_env"]["ok"])
+        self.assertIn("Remote provider validation failed", record.error or "")

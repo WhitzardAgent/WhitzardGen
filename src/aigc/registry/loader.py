@@ -89,6 +89,7 @@ def load_registry(
         )
         weights = dict(config.get("weights", {}))
         runtime = dict(config.get("runtime", {}))
+        provider = dict(config.get("provider", {}))
         generation_defaults = dict(config.get("generation_defaults", {}))
         weights.update(
             {
@@ -107,6 +108,9 @@ def load_registry(
         nested_override = local_paths.get("generation_defaults")
         if isinstance(nested_override, dict):
             generation_defaults.update(nested_override)
+        provider_override = local_paths.get("provider")
+        if isinstance(provider_override, dict):
+            provider.update(provider_override)
         model = ModelInfo(
             name=name,
             version=str(config.get("version", "")),
@@ -116,6 +120,7 @@ def load_registry(
             capabilities=dict(config.get("capabilities", {})),
             runtime=runtime,
             weights=weights,
+            provider=provider,
             generation_defaults=generation_defaults,
             local_paths=local_paths,
             registry_source=str(registry_source),
@@ -247,6 +252,8 @@ def _validate_model_info(model: ModelInfo) -> None:
         raise RegistryError(f"Model {model.name} is missing runtime.execution_mode")
     if "env_spec" not in model.runtime:
         raise RegistryError(f"Model {model.name} is missing runtime.env_spec")
+    if not isinstance(model.provider, dict):
+        raise RegistryError(f"Model {model.name} has invalid provider config")
 
 
 def _prune_redundant_local_overrides(

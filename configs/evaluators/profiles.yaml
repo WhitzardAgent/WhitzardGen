@@ -1,0 +1,8 @@
+evaluators:
+  default_judge:
+    type: judge
+    description: Generic structured LLM-as-a-judge evaluator.
+    judge_model: Qwen3-32B
+    annotation_profile: default_review
+    annotation_template: source_record_review_v1
+    accepted_input_types: [text, image, video]

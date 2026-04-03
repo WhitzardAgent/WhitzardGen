@@ -1,0 +1,3 @@
+builder_id: ethics_sandbox
+description: Build a benchmark bundle from a structural ethics sandbox template package.
+entrypoint: examples.benchmarks.ethics_sandbox.builder:EthicsSandboxBuilder

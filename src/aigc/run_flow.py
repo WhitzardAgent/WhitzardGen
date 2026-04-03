@@ -748,7 +748,7 @@ def run_recovery_plan(
         per_model_summary = _build_per_model_summary(
             models=models,
             all_records=all_records,
-            task_results=primary_task_results,
+            task_results=task_results,
             worker_strategies=worker_strategies,
             replica_plans_by_model=replica_plans_by_model,
             runtime_metrics=runtime_metrics,
@@ -2661,13 +2661,19 @@ def _plan_replicas_for_model(
     prepared_tasks: list[PreparedTask],
     execution_mode: str,
 ) -> list[ReplicaPlan]:
-    available_gpus = _limit_available_gpus_for_model(_resolve_available_gpus(), model)
+    available_gpus = (
+        _limit_available_gpus_for_model(_resolve_available_gpus(), model)
+        if model.gpu_required
+        else []
+    )
     replica_count = _calculate_replica_count(
         total_available_gpus=len(available_gpus),
         gpus_per_replica=model.gpus_per_replica,
         supports_multi_replica=model.supports_multi_replica,
         execution_mode=execution_mode,
         task_count=len(prepared_tasks),
+        gpu_required=model.gpu_required,
+        configured_replica_count=model.replica_count,
     )
     gpu_assignments = _assign_gpus_to_replicas(
         available_gpus=available_gpus,
@@ -2706,9 +2712,15 @@ def _calculate_replica_count(
     supports_multi_replica: bool,
     execution_mode: str,
     task_count: int,
+    gpu_required: bool = True,
+    configured_replica_count: int = 1,
 ) -> int:
     if task_count <= 0:
         return 0
+    if not gpu_required:
+        if not supports_multi_replica:
+            return 1
+        return max(1, min(max(configured_replica_count, 1), task_count))
     if execution_mode == "mock":
         if total_available_gpus <= 0:
             return 1
@@ -2798,10 +2810,15 @@ def _log_replica_plan(
     model: ModelInfo,
     replica_plans: list[ReplicaPlan],
 ) -> None:
-    available_gpus = _limit_available_gpus_for_model(_resolve_available_gpus(), model)
+    available_gpus = (
+        _limit_available_gpus_for_model(_resolve_available_gpus(), model)
+        if model.gpu_required
+        else []
+    )
     progress.env_message(f"[run][{model.name}] available_gpus={available_gpus}")
     if model.max_gpus is not None:
         progress.env_message(f"[run][{model.name}] max_gpus={model.max_gpus}")
+    progress.env_message(f"[run][{model.name}] gpu_required={model.gpu_required}")
     progress.env_message(f"[run][{model.name}] gpus_per_replica={model.gpus_per_replica}")
     progress.env_message(f"[run][{model.name}] starting {len(replica_plans)} replicas")
     for replica_plan in replica_plans:

@@ -1,0 +1,13 @@
+run_id: sample_run_001
+seed: 42
+template_selection:
+  include_families:
+    - instrumental_sacrifice
+    - autonomy_vs_beneficence
+variants_per_template: 20
+prompt_profile_id: default_naturalistic_v1
+models:
+  - qwen_local_32b
+  - llama_local_70b
+analysis_policy_id: default_analysis_v1
+resume: true

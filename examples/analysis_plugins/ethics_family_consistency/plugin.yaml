@@ -1,0 +1,6 @@
+plugin_id: ethics_family_consistency
+plugin_type: comparative
+description: Summarize recommended actions and normative labels by template family.
+entrypoint: examples.analysis_plugins.ethics_family_consistency.plugin:EthicsFamilyConsistencyPlugin
+version: v1
+dependencies: []

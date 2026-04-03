@@ -1,0 +1,16 @@
+entity: RunManifest
+required:
+  - run_id
+  - template_manifest_version
+  - model_registry_snapshot
+  - analysis_policy_version
+fields:
+  run_id: string
+  started_at: string
+  finished_at: string|null
+  git_commit: string|null
+  template_manifest_version: string
+  prompt_profile_version: string
+  model_registry_snapshot: object
+  analysis_policy_version: string
+  random_seeds: object

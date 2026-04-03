@@ -80,6 +80,32 @@ class RunFlowTests(unittest.TestCase):
             1,
         )
 
+    def test_replica_count_calculation_supports_non_gpu_remote_models(self) -> None:
+        self.assertEqual(
+            _calculate_replica_count(
+                total_available_gpus=0,
+                gpus_per_replica=1,
+                supports_multi_replica=True,
+                execution_mode="real",
+                task_count=10,
+                gpu_required=False,
+                configured_replica_count=3,
+            ),
+            3,
+        )
+        self.assertEqual(
+            _calculate_replica_count(
+                total_available_gpus=8,
+                gpus_per_replica=1,
+                supports_multi_replica=False,
+                execution_mode="real",
+                task_count=10,
+                gpu_required=False,
+                configured_replica_count=4,
+            ),
+            1,
+        )
+
     def test_gpu_assignment_and_task_sharding_are_deterministic(self) -> None:
         self.assertEqual(
             _assign_gpus_to_replicas(
@@ -220,6 +246,33 @@ class RunFlowTests(unittest.TestCase):
         self.assertEqual(
             manifest["per_model_summary"]["CogVideoX-5B"]["worker_strategy"],
             "persistent_worker",
+        )
+
+    def test_remote_text_model_runs_in_mock_mode_without_gpu_assignment(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        prompts_path = tmpdir / "remote_text.txt"
+        prompts_path.write_text("Return JSON only with keys: summary, labels.\n", encoding="utf-8")
+
+        summary = run_single_model(
+            model_name="OpenAI-Compatible-Chat",
+            prompt_file=prompts_path,
+            out_dir=tmpdir / "runs" / "remote_text_mock",
+            execution_mode="mock",
+            env_manager=FakeEnvManager(),
+        )
+
+        manifest = json.loads((Path(summary.output_dir) / "run_manifest.json").read_text(encoding="utf-8"))
+        per_model = manifest["per_model_summary"]["OpenAI-Compatible-Chat"]
+        self.assertEqual(per_model["worker_strategy"], "persistent_worker")
+        self.assertEqual(per_model["conda_env_name"], "api_client")
+        self.assertEqual(per_model["replica_count"], 1)
+
+        running_log_text = (Path(summary.output_dir) / "running.log").read_text(encoding="utf-8")
+        self.assertIn("[run][OpenAI-Compatible-Chat] available_gpus=[]", running_log_text)
+        self.assertIn("[run][OpenAI-Compatible-Chat] gpu_required=False", running_log_text)
+        self.assertIn(
+            "[worker][OpenAI-Compatible-Chat][replica=0] GPUs=[] starting persistent worker",
+            running_log_text,
         )
 
     def test_selected_wan_video_model_uses_persistent_worker_strategy_in_mock_mode(self) -> None:

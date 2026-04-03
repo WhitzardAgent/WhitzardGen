@@ -306,6 +306,93 @@ class PromptGenerationTests(unittest.TestCase):
         self.assertTrue(all(prompt["metadata"]["llm_model"] == "Qwen3-32B" for prompt in prompts))
         self.assertTrue(all(prompt["negative_prompt"] for prompt in prompts))
 
+    def test_generate_prompt_bundle_can_use_remote_llm_model_through_same_kernel_path(self) -> None:
+        tree_path = self._write_file(
+            "theme_tree.yaml",
+            """
+            version: v1
+            name: realistic_image_prompts
+            defaults:
+              generation_profile: photorealistic
+              language: en
+              intended_modality: image
+            categories:
+              - name: Nature
+                count: 1
+                children:
+                  - name: Mountains
+                    children:
+                      - name: Sunrise
+                        children:
+                          - name: Foggy valley overlook
+            """,
+        )
+        out_dir = Path(tempfile.mkdtemp()) / "prompt_bundle"
+
+        def fake_run_single_model(**kwargs):
+            self.assertEqual(kwargs["model_name"], "OpenAI-Compatible-Chat")
+            llm_run_dir = Path(kwargs["out_dir"])
+            exports_dir = llm_run_dir / "exports"
+            artifacts_dir = llm_run_dir / "artifacts"
+            exports_dir.mkdir(parents=True, exist_ok=True)
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            request = json.loads(
+                Path(kwargs["prompt_file"]).read_text(encoding="utf-8").splitlines()[0]
+            )
+            artifact_path = artifacts_dir / f"{request['prompt_id']}.txt"
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "prompt": "Photorealistic mountain sunrise above a foggy valley",
+                        "negative_prompt": "anime, stylized",
+                        "annotation_hints": {"scene_category": "Nature"},
+                        "tags": ["nature", "mountain"],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            dataset_path = exports_dir / "dataset.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "record_id": "rec_00000001",
+                        "prompt_id": request["prompt_id"],
+                        "artifact_path": str(artifact_path),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return type(
+                "Summary",
+                (),
+                {
+                    "run_id": "remote_llm_run_001",
+                    "export_path": str(dataset_path),
+                },
+            )()
+
+        with patch("aigc.prompt_generation.service.run_single_model", side_effect=fake_run_single_model):
+            summary = generate_prompt_bundle(
+                tree_path=tree_path,
+                out_dir=out_dir,
+                llm_model="OpenAI-Compatible-Chat",
+                execution_mode="real",
+                seed=13,
+            )
+
+        prompts = [
+            json.loads(line)
+            for line in Path(summary.prompts_path).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(summary.llm_model, "OpenAI-Compatible-Chat")
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(prompts[0]["metadata"]["llm_model"], "OpenAI-Compatible-Chat")
+        self.assertEqual(prompts[0]["negative_prompt"], "anime, stylized")
+
     def test_generate_prompt_bundle_uses_profile_default_llm_model_when_cli_omitted(self) -> None:
         tree_path = self._write_file(
             "theme_tree.yaml",

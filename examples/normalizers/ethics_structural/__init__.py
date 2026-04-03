@@ -1,0 +1,1 @@
+"""Ethics structural normalizer example."""

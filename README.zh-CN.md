@@ -1,6 +1,6 @@
 # WhitzardGen
 
-面向图像与视频合成数据采集的多模态生成框架。
+以 benchmark / experiment 为中心的多模态评测框架，同时保留可复用的生成运行内核。
 
 英文版文档： [README.md](/Users/morinop/coding/whitzardgen/README.md)
 
@@ -8,26 +8,70 @@
 
 ## 项目定位
 
-WhitzardGen 主要解决的是下面这类问题：
+WhitzardGen 现在有两层能力：
 
-- 给一批 prompts
-- 选择多个图像/视频模型
-- 在单机多卡环境上高效跑推理
-- 把结果组织成结构化 run 产物和 dataset bundle
-- 支持中断恢复、失败重试和后续数据整理
+- **benchmark / evaluation 层**
+  - 构造或加载 benchmark cases
+  - 跑一个或多个 target models
+  - 做 rule-based 或 model-based evaluator
+  - 输出 experiment bundle 和 report
+- **runtime / data-production 内核层**
+  - prompt / scenario generation
+  - 多模态模型执行
+  - run manifest、ledger、recovery、export
 
-当前重点是：
+因此它既能做：
 
-- 图像和视频生成
-- 基于本地 T2T 后端的 prompt generation
-- persistent worker
-- 多 replica 调度
-- prompt 级别 ledger
-- recovery
-- 数据集导出与整理
+- 模型 benchmark 评测
+- 数据生产 / 数据集导出
+
+当前主叙事已经切到：
+
+```text
+benchmark build -> target execution -> evaluation -> experiment report
+```
+
+### 主要工作流
+
+#### 1. Benchmark / Experiment 工作流
+
+```bash
+aigc benchmark build \
+  --builder ethics_sandbox \
+  --source docs/ethics_design/sandbox_template \
+  --config examples/benchmarks/ethics_sandbox/example_build.yaml \
+  --build-mode matrix
+
+aigc evaluate run \
+  --benchmark runs/benchmarks/<bundle_id> \
+  --targets Qwen3-32B \
+  --evaluator-model Qwen3-32B \
+  --evaluator-profile ethics_structural_review \
+  --evaluator-template ethics_structural_review_v1
+
+aigc experiments report <experiment_id>
+```
+
+#### 2. Kernel 直连工作流
+
+当你想直接控制底层生成/导出链路时，仍然使用：
+
+- `aigc prompts ...`
+- `aigc run ...`
+- `aigc annotate ...`
+- `aigc export ...`
 
 ## 当前能力
 
+- Benchmark 能力：
+  - benchmark bundle 构建与 inspect
+  - experiment bundle 与 report
+  - example benchmark builder 自动发现
+  - record evaluator 前的可复用 normalizer stage
+  - structural ethics sandbox 示例包加载
+  - 基于 `annotate` 复用的 record-level judge
+  - 通用 group aggregation 与 example analyzer / plugin 组合分析
+  - recipe 驱动的一键 experiment 运行
 - Prompt 输入格式：
   - `.txt`
   - `.csv`
@@ -62,15 +106,41 @@ WhitzardGen 主要解决的是下面这类问题：
   - 按 model 过滤
   - `link` / `copy` 两种物化模式
 
+## 概念映射
+
+旧子系统没有消失，但产品语义发生了变化：
+
+- `prompt generation` -> benchmark / scenario builder 内部能力
+- `run` -> target execution kernel
+- `annotate` -> record evaluator 路径
+- `export dataset` -> 更底层的 artifact export 层
+
+这对伦理冲突这种 structural benchmark 特别重要，因为一个 case 不只是一个 prompt，它还要保留：
+
+- family/template 身份
+- variant group 身份
+- structural / narrative / perturbation slots
+- invariants 和 forbidden transformations
+- analysis targets
+
 ## 目录说明
 
 关键目录：
 
 - [src/aigc](/Users/morinop/coding/whitzardgen/src/aigc)：框架源码
+- [src/aigc/benchmarking](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking)：通用 benchmark/build/evaluate core
+- [src/aigc/normalizers](/Users/morinop/coding/whitzardgen/src/aigc/normalizers)：通用 normalization substrate
+- [src/aigc/analysis](/Users/morinop/coding/whitzardgen/src/aigc/analysis)：通用 analysis-plugin substrate
+- [examples/benchmarks](/Users/morinop/coding/whitzardgen/examples/benchmarks)：具体 benchmark builder 示例，如 `ethics_sandbox`、`theme_tree`
+- [examples/evaluators](/Users/morinop/coding/whitzardgen/examples/evaluators)：构建在通用 evaluator substrate 之上的具体 evaluator 示例
+- [examples/normalizers](/Users/morinop/coding/whitzardgen/examples/normalizers)：构建在通用 normalization substrate 之上的具体领域 normalizer 示例
+- [examples/analysis_plugins](/Users/morinop/coding/whitzardgen/examples/analysis_plugins)：构建在通用 analysis substrate 之上的具体 comparative/post-processing plugin 示例
+- [examples/experiments](/Users/morinop/coding/whitzardgen/examples/experiments)：把 builder、targets、normalizers、evaluators、plugins 组合起来的 experiment recipe 示例
 - [configs/models](/Users/morinop/coding/whitzardgen/configs/models)：按 `t2i` / `t2v` / `t2t` / `t2a` 拆分的模型注册表
 - [configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models)：按任务类型拆分的本机/集群本地模型覆盖配置
 - [configs/local_runtime.yaml](/Users/morinop/coding/whitzardgen/configs/local_runtime.yaml)：本地运行默认项
 - [configs/run_profiles](/Users/morinop/coding/whitzardgen/configs/run_profiles)：可复用运行配置
+- [configs/annotation](/Users/morinop/coding/whitzardgen/configs/annotation)：record evaluator profile 与 template
 - [prompts](/Users/morinop/coding/whitzardgen/prompts)：示例 prompt 文件
 - [envs](/Users/morinop/coding/whitzardgen/envs)：每个模型对应的 env 规范与 validation 元数据
 - [docs](/Users/morinop/coding/whitzardgen/docs)：架构和子系统文档
@@ -182,6 +252,62 @@ aigc doctor --model Z-Image
 - `configs/models/` 负责模型定义
 - `configs/local_models/` 负责机器本地部署覆盖
 
+远程 API 文本模型也遵循这套拆分：
+
+- `configs/models/t2t.yaml` 里保留可提交的 provider 默认项
+- `configs/local_models/t2t.yaml` 里写当前机器的 endpoint / auth 覆盖
+- 真正的密钥只通过环境变量引用，不直接写进仓库配置
+
+远程模型定义示例：
+
+```yaml
+OpenAI-Compatible-Chat:
+  version: "v1"
+  adapter: OpenAICompatibleTextAdapter
+  modality: text
+  task_type: t2t
+  runtime:
+    execution_mode: in_process
+    gpu_required: false
+    env_spec: api_client
+    worker_strategy: persistent_worker
+    replica_count: 1
+    supports_multi_replica: true
+  provider:
+    type: openai_compatible
+    request_api: chat_completions
+    model_name: gpt-4.1-mini
+    timeout_sec: 60
+    max_retries: 3
+    initial_backoff_sec: 1.0
+```
+
+本地覆盖示例：
+
+```yaml
+OpenAI-Compatible-Chat:
+  provider:
+    base_url: https://your-endpoint.example/v1
+    api_key_env: OPENAI_API_KEY
+    model_name: your-deployed-model-name
+```
+
+配置完成后，它就可以直接复用现有命令：
+
+- `aigc run`
+- `aigc annotate`
+- `aigc evaluate run`
+- prompt generation / prompt rewrite 中选择 `t2t` 模型的路径
+
+推荐检查命令：
+
+```bash
+aigc models inspect OpenAI-Compatible-Chat
+aigc doctor --model OpenAI-Compatible-Chat
+```
+
+对于远程模型，`models inspect` 会对敏感 provider headers 做脱敏展示，`doctor` 会校验 provider 必填字段、API key 环境变量，以及一个轻量的 OpenAI-compatible `/models` 健康探测。
+
 示例：
 
 ```yaml
@@ -205,6 +331,8 @@ CogVideoX-5B:
 主要控制：
 
 - 默认 run 输出根目录
+- 默认 benchmark bundle 根目录
+- 默认 experiment bundle 根目录
 - 全局默认 seed
 
 示例：
@@ -212,6 +340,8 @@ CogVideoX-5B:
 ```yaml
 paths:
   runs_root: /shared/aigc_runs
+  benchmarks_root: /shared/aigc_runs/benchmarks
+  experiments_root: /shared/aigc_runs/experiments
 
 generation:
   default_seed: 12345

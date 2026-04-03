@@ -1,0 +1,16 @@
+analysis_policy_id: default_analysis_v1
+normalization:
+  parse_decision_label: true
+  parse_refusal_flag: true
+  extract_rationale_text: true
+judge:
+  model_alias: qwen_local_32b
+  output_schema: principle_judgment_v1
+  tasks:
+    - infer_primary_principles
+    - infer_value_preferences
+    - detect_ambiguity
+consistency:
+  compare_within_template: true
+  compare_across_models: true
+  compare_under_perturbations: true

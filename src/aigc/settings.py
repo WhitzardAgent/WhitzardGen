@@ -20,6 +20,8 @@ class RuntimeSettingsError(ValueError):
 class RuntimeSettings:
     runs_root: Path
     prompt_runs_root: Path
+    benchmarks_root: Path
+    experiments_root: Path
     default_seed: int | None = None
     config_path: Path | None = None
 
@@ -31,6 +33,8 @@ def load_runtime_settings(path: str | Path | None = None) -> RuntimeSettings:
         return RuntimeSettings(
             runs_root=default_runs_root,
             prompt_runs_root=default_runs_root / "prompt_runs",
+            benchmarks_root=default_runs_root / "benchmarks",
+            experiments_root=default_runs_root / "experiments",
             default_seed=None,
             config_path=config_path,
         )
@@ -53,22 +57,54 @@ def load_runtime_settings(path: str | Path | None = None) -> RuntimeSettings:
 
     configured_root = paths_payload.get("runs_root") or paths_payload.get("output_root")
     configured_prompt_root = paths_payload.get("prompt_runs_root")
+    configured_benchmarks_root = paths_payload.get("benchmarks_root")
+    configured_experiments_root = paths_payload.get("experiments_root")
     if configured_root in (None, ""):
+        resolved_prompt_root = (
+            Path(str(configured_prompt_root)).expanduser()
+            if configured_prompt_root not in (None, "")
+            else default_runs_root / "prompt_runs"
+        )
+        resolved_benchmarks_root = (
+            Path(str(configured_benchmarks_root)).expanduser()
+            if configured_benchmarks_root not in (None, "")
+            else default_runs_root / "benchmarks"
+        )
+        resolved_experiments_root = (
+            Path(str(configured_experiments_root)).expanduser()
+            if configured_experiments_root not in (None, "")
+            else default_runs_root / "experiments"
+        )
         return RuntimeSettings(
             runs_root=default_runs_root,
-            prompt_runs_root=Path(str(configured_prompt_root)).expanduser()
-            if configured_prompt_root not in (None, "")
-            else default_runs_root / "prompt_runs",
+            prompt_runs_root=resolved_prompt_root,
+            benchmarks_root=resolved_benchmarks_root,
+            experiments_root=resolved_experiments_root,
             default_seed=parsed_seed,
             config_path=config_path,
         )
 
     resolved_runs_root = Path(str(configured_root)).expanduser()
+    resolved_prompt_root = (
+        Path(str(configured_prompt_root)).expanduser()
+        if configured_prompt_root not in (None, "")
+        else resolved_runs_root / "prompt_runs"
+    )
+    resolved_benchmarks_root = (
+        Path(str(configured_benchmarks_root)).expanduser()
+        if configured_benchmarks_root not in (None, "")
+        else resolved_runs_root / "benchmarks"
+    )
+    resolved_experiments_root = (
+        Path(str(configured_experiments_root)).expanduser()
+        if configured_experiments_root not in (None, "")
+        else resolved_runs_root / "experiments"
+    )
     return RuntimeSettings(
         runs_root=resolved_runs_root,
-        prompt_runs_root=Path(str(configured_prompt_root)).expanduser()
-        if configured_prompt_root not in (None, "")
-        else resolved_runs_root / "prompt_runs",
+        prompt_runs_root=resolved_prompt_root,
+        benchmarks_root=resolved_benchmarks_root,
+        experiments_root=resolved_experiments_root,
         default_seed=parsed_seed,
         config_path=config_path,
     )
@@ -84,6 +120,14 @@ def get_default_seed(path: str | Path | None = None) -> int | None:
 
 def get_prompt_runs_root(path: str | Path | None = None) -> Path:
     return load_runtime_settings(path).prompt_runs_root
+
+
+def get_benchmarks_root(path: str | Path | None = None) -> Path:
+    return load_runtime_settings(path).benchmarks_root
+
+
+def get_experiments_root(path: str | Path | None = None) -> Path:
+    return load_runtime_settings(path).experiments_root
 
 
 def _resolve_runtime_settings_path(path: str | Path | None) -> Path | None:

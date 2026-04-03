@@ -9,3 +9,17 @@ Qwen3-32B:
   # generation_defaults:
   #   max_new_tokens: 2048
   #   enable_thinking: false
+
+# Example remote API overrides.
+#
+# OpenAI-Compatible-Chat:
+#   provider:
+#     base_url: https://your-openai-compatible-endpoint/v1
+#     api_key_env: OPENAI_API_KEY
+#     model_name: your-remote-chat-model
+#
+# OpenAI-Compatible-Responses:
+#   provider:
+#     base_url: https://your-openai-compatible-endpoint/v1
+#     api_key_env: OPENAI_API_KEY
+#     model_name: your-remote-responses-model

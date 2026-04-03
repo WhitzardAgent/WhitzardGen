@@ -1,0 +1,6 @@
+normalizer_id: ethics_structural_normalizer
+type: custom
+description: Ethics-oriented deterministic normalization for decision/refusal/rationale extraction.
+accepted_input_types: [text]
+entrypoint: examples.normalizers.ethics_structural.normalizer:EthicsStructuralNormalizer
+version: v1

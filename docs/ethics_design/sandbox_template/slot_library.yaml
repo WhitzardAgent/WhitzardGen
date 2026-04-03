@@ -1,0 +1,429 @@
+package_version: '1.0'
+language: en
+slots:
+- slot_id: decision_maker_role
+  layer: structural
+  type: enum
+  description: Institutional or social role of the focal decision-maker.
+  analysis_contribution:
+  - role-sensitivity
+  - consistency across professions
+  - role morality vs ordinary morality
+  theoretical_grounding:
+  - role morality
+  - narrative actant role
+- slot_id: beneficiaries_count
+  layer: structural
+  type: integer
+  description: Number of people expected to benefit if the intervention is taken.
+  analysis_contribution:
+  - aggregation thresholds
+  - utilitarian weighting
+  - scale sensitivity
+  theoretical_grounding:
+  - consequentialism
+  - 'structural opposition: one/few vs many'
+- slot_id: victims_count
+  layer: structural
+  type: integer
+  description: Number of people expected to be harmed if the intervention is taken.
+  analysis_contribution:
+  - proportionality
+  - sacrifice threshold estimation
+  theoretical_grounding:
+  - consequentialism
+  - deontic side-constraints
+- slot_id: harm_type
+  layer: structural
+  type: enum
+  description: Primary kind of harm at stake.
+  analysis_contribution:
+  - value hierarchy
+  - comparative moral weighting of death, pain, disability, dignity loss, and rights violations
+  theoretical_grounding:
+  - non-maleficence
+  - value pluralism
+- slot_id: harm_directness
+  layer: structural
+  type: enum
+  description: Whether the decision-maker causes harm directly, indirectly, or by omission.
+  analysis_contribution:
+  - doing vs allowing
+  - causal distance sensitivity
+  - double-effect sensitivity
+  theoretical_grounding:
+  - doctrine of double effect
+  - narrative causality
+- slot_id: intentionality_of_harm
+  layer: structural
+  type: enum
+  description: Whether harm is intended as an end, intended as a means, merely foreseen, or unintended.
+  analysis_contribution:
+  - means-side effect distinction
+  - deontological boundary detection
+  theoretical_grounding:
+  - doctrine of double effect
+- slot_id: victim_used_as_means
+  layer: structural
+  type: boolean
+  description: Whether the harmed person is instrumentally used to achieve the good outcome.
+  analysis_contribution:
+  - instrumentalization sensitivity
+  - Kantian vs outcome-driven reasoning
+  theoretical_grounding:
+  - Kantian ethics
+- slot_id: doing_vs_allowing
+  layer: structural
+  type: enum
+  description: Whether the key contrast is between acting and refraining, or between two positive acts.
+  analysis_contribution:
+  - omission bias
+  - commission bias
+  theoretical_grounding:
+  - doing/allowing doctrine
+- slot_id: outcome_certainty
+  layer: structural
+  type: float_or_enum
+  description: How certain the major outcomes are.
+  analysis_contribution:
+  - risk sensitivity
+  - expected-value reasoning
+  - ambiguity aversion
+  theoretical_grounding:
+  - decision theory
+- slot_id: time_pressure
+  layer: structural
+  type: enum
+  description: How much time is available to decide.
+  analysis_contribution:
+  - fast vs slow moral reasoning
+  - urgency effects
+  - heuristic reliance
+  theoretical_grounding:
+  - narrative temporality
+  - bounded rationality
+- slot_id: alternative_options
+  layer: structural
+  type: enum_or_list
+  description: Availability of meaningful alternatives beyond the focal choice.
+  analysis_contribution:
+  - necessity claims
+  - search for compromise
+  - innovation vs forced-choice reasoning
+  theoretical_grounding:
+  - practical reason
+  - narrative branching
+- slot_id: consent_status
+  layer: structural
+  type: enum
+  description: Whether the primary person harmed or burdened consents, refuses, cannot consent, or is of unclear status.
+  analysis_contribution:
+  - autonomy sensitivity
+  - voluntariness effects
+  - legitimacy of paternalism
+  theoretical_grounding:
+  - respect for autonomy
+- slot_id: decision_capacity
+  layer: structural
+  type: enum
+  description: Whether the relevant party has decisional capacity.
+  analysis_contribution:
+  - capacity-threshold sensitivity
+  - surrogate decision weighting
+  theoretical_grounding:
+  - 'bioethics: autonomy and substituted judgment'
+- slot_id: prior_directive_strength
+  layer: structural
+  type: enum
+  description: How explicit and authoritative a past directive or prior preference is.
+  analysis_contribution:
+  - precedent autonomy
+  - past-self vs present-self weighting
+  theoretical_grounding:
+  - precedent autonomy
+- slot_id: professional_confidentiality_duty
+  layer: structural
+  type: enum
+  description: Strength of the professional duty to maintain confidentiality.
+  analysis_contribution:
+  - fidelity vs protection trade-offs
+  - professional norm adherence
+  theoretical_grounding:
+  - fidelity
+  - professional ethics
+- slot_id: truthfulness_duty
+  layer: structural
+  type: enum
+  description: Strength of the truth-telling norm in the scenario.
+  analysis_contribution:
+  - deontic commitment to veracity
+  - lying aversion
+  theoretical_grounding:
+  - veracity
+  - Kantian ethics
+- slot_id: third_party_risk_severity
+  layer: structural
+  type: enum
+  description: Severity of risk to persons other than the direct interlocutor.
+  analysis_contribution:
+  - duty to warn
+  - protection of others
+  - public-interest weighting
+  theoretical_grounding:
+  - harm principle
+- slot_id: source_vulnerability
+  layer: structural
+  type: enum
+  description: How vulnerable a whistleblower, patient, or informant is to retaliation or loss.
+  analysis_contribution:
+  - care vs publicity trade-offs
+  - source-protection commitments
+  theoretical_grounding:
+  - care ethics
+  - journalistic ethics
+- slot_id: role_norm
+  layer: structural
+  type: enum_or_list
+  description: Role-specific norm or institutional duty governing the agent.
+  analysis_contribution:
+  - institutional alignment
+  - role morality
+  - rule-governed variance
+  theoretical_grounding:
+  - role morality
+  - institutional ethics
+- slot_id: loyalty_tie
+  layer: structural
+  type: enum
+  description: Whether the candidate beneficiaries or victims are strangers, teammates, kin, citizens, etc.
+  analysis_contribution:
+  - partiality
+  - care/loyalty effects
+  - in-group bias
+  theoretical_grounding:
+  - care ethics
+  - partiality debates
+- slot_id: resource_scarcity
+  layer: structural
+  type: enum
+  description: Degree to which life-saving resources or rescue capacity are scarce.
+  analysis_contribution:
+  - triage logic
+  - scarcity-induced value ordering
+  theoretical_grounding:
+  - justice
+  - triage ethics
+- slot_id: survival_probability_distribution
+  layer: structural
+  type: object
+  description: Relative probabilities that each candidate survives under each option.
+  analysis_contribution:
+  - expected-value reasoning
+  - fairness vs efficiency
+  - rescue-probability weighting
+  theoretical_grounding:
+  - decision theory
+  - triage ethics
+- slot_id: legal_constraint
+  layer: structural
+  type: enum_or_list
+  description: Relevant law, policy, or treaty constraint.
+  analysis_contribution:
+  - law-morality divergence
+  - institutional obedience
+  theoretical_grounding:
+  - legal positivism vs moral override
+- slot_id: self_risk
+  layer: structural
+  type: enum
+  description: Risk to the decision-maker if they comply or resist.
+  analysis_contribution:
+  - moral courage
+  - self-sacrifice thresholds
+  theoretical_grounding:
+  - virtue ethics
+- slot_id: future_person_status
+  layer: structural
+  type: enum
+  description: Moral and legal salience of a fetus, embryo, or future child.
+  analysis_contribution:
+  - future-person weighting
+  - reproductive ethics
+  - personhood assumptions
+  theoretical_grounding:
+  - future persons
+  - reproductive ethics
+- slot_id: surrogate_conflict
+  layer: structural
+  type: enum
+  description: Degree of disagreement among family, surrogate, clinicians, or court.
+  analysis_contribution:
+  - conflict resolution patterns
+  - authority preference
+  theoretical_grounding:
+  - substituted judgment
+  - best interests
+- slot_id: suffering_intensity
+  layer: structural
+  type: enum
+  description: How intense and prolonged the suffering is.
+  analysis_contribution:
+  - compassion weighting
+  - sanctity-of-life vs suffering relief
+  theoretical_grounding:
+  - beneficence
+  - care ethics
+- slot_id: reversibility
+  layer: structural
+  type: enum
+  description: Whether the selected action or harm is reversible.
+  analysis_contribution:
+  - precaution
+  - irreversibility aversion
+  theoretical_grounding:
+  - precautionary reasoning
+- slot_id: explainability_level
+  layer: structural
+  type: enum
+  description: How interpretable the recommendation or mechanism is.
+  analysis_contribution:
+  - transparency preference
+  - epistemic trust
+  - autonomy through understanding
+  theoretical_grounding:
+  - informed consent
+  - epistemic justice
+- slot_id: performance_gap
+  layer: structural
+  type: enum_or_float
+  description: Magnitude of outcome advantage of one option over another.
+  analysis_contribution:
+  - outcome-maximization threshold
+  - tolerance for opacity
+  theoretical_grounding:
+  - consequentialism
+- slot_id: public_visibility
+  layer: narrative
+  type: enum
+  description: Whether the choice is public, private, or institutionally scrutinized.
+  analysis_contribution:
+  - reputation sensitivity
+  - public-justification style
+  theoretical_grounding:
+  - public reason
+  - narrative audience
+- slot_id: setting_domain
+  layer: narrative
+  type: enum
+  description: Narrative domain of the case.
+  analysis_contribution:
+  - domain transfer
+  - cross-domain consistency
+  theoretical_grounding:
+  - narrative setting as surface realization
+- slot_id: focalization
+  layer: narrative
+  type: enum
+  description: 'Narrative point of view: first-person, second-person, third-person, memo, consult, etc.'
+  analysis_contribution:
+  - perspective effects
+  - self-involvement sensitivity
+  theoretical_grounding:
+  - 'narratology: focalization'
+- slot_id: information_order
+  layer: perturbation
+  type: enum
+  description: Whether consequences, identities, rules, or emotions are introduced first.
+  analysis_contribution:
+  - order effects
+  - priming
+  - framing sensitivity
+  theoretical_grounding:
+  - narrative sequencing
+  - framing
+- slot_id: emotional_intensity
+  layer: perturbation
+  type: enum
+  description: Degree of emotionally vivid language.
+  analysis_contribution:
+  - affect sensitivity
+  - de-biasing needs
+  theoretical_grounding:
+  - moral psychology
+  - narrative tone
+- slot_id: humanization_bias
+  layer: perturbation
+  type: enum
+  description: Whether one stakeholder group receives more individuating detail than another.
+  analysis_contribution:
+  - identifiable-victim effects
+  - partiality induced by narration
+  theoretical_grounding:
+  - narrative characterization
+- slot_id: numerical_salience
+  layer: perturbation
+  type: enum
+  description: How prominently numbers are foregrounded relative to personal details.
+  analysis_contribution:
+  - aggregation vs person-centered reasoning
+  theoretical_grounding:
+  - 'structural opposition: count vs face'
+- slot_id: authority_pressure
+  layer: structural
+  type: enum
+  description: Pressure from state, supervisor, military command, family, or institution.
+  analysis_contribution:
+  - obedience
+  - resistance to authority
+  - sycophancy under moral pressure
+  theoretical_grounding:
+  - authority and obedience
+- slot_id: replaceability_if_refuse
+  layer: structural
+  type: enum
+  description: Likelihood that refusal by the focal agent changes the overall outcome because someone else would step in.
+  analysis_contribution:
+  - individual complicity under replaceability
+  - counterfactual responsibility
+  theoretical_grounding:
+  - complicity
+  - collective action
+- slot_id: mitigation_if_stay
+  layer: structural
+  type: enum
+  description: Whether staying involved enables harm-reduction from within.
+  analysis_contribution:
+  - dirty-hands pragmatism
+  - inside-vs-outside strategy preferences
+  theoretical_grounding:
+  - complicity
+  - pragmatic ethics
+- slot_id: identity_or_sacred_value
+  layer: structural
+  type: enum
+  description: Whether the conflict implicates religion, bodily integrity, dignity, or another sacred value.
+  analysis_contribution:
+  - sacred-value protection
+  - deontic inviolability
+  theoretical_grounding:
+  - sacred values
+  - identity ethics
+- slot_id: precedent_risk
+  layer: structural
+  type: enum
+  description: Whether a decision risks normalizing a broader harmful practice.
+  analysis_contribution:
+  - rule-consequentialist reasoning
+  - institutional precedent sensitivity
+  theoretical_grounding:
+  - precedent ethics
+  - rule consequentialism
+- slot_id: accountability_gap
+  layer: structural
+  type: enum
+  description: Degree to which it is unclear who will be morally or legally accountable.
+  analysis_contribution:
+  - responsibility diffusion
+  - automation governance reasoning
+  theoretical_grounding:
+  - responsibility gaps

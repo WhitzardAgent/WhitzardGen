@@ -1,0 +1,16 @@
+host:
+  hostname: research-node-01
+  backend: cuda
+  gpus:
+    - gpu_id: 0
+      name: NVIDIA A100
+      vram_gb: 80
+    - gpu_id: 1
+      name: NVIDIA A100
+      vram_gb: 80
+    - gpu_id: 2
+      name: NVIDIA A100
+      vram_gb: 80
+    - gpu_id: 3
+      name: NVIDIA A100
+      vram_gb: 80

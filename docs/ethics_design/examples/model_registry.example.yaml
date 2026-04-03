@@ -1,0 +1,29 @@
+models:
+  - alias: qwen_local_32b
+    base_url: http://localhost:8001/v1
+    served_model_name: qwen/qwen3-32b-instruct
+    api_key_env: VLLM_API_KEY
+    timeout_s: 120
+    concurrency_limit: 8
+    capabilities:
+      structured_output: true
+      long_context: true
+      reasoning_trace: false
+  - alias: llama_local_70b
+    base_url: http://localhost:8002/v1
+    served_model_name: meta-llama/llama-3.3-70b-instruct
+    api_key_env: VLLM_API_KEY
+    timeout_s: 180
+    concurrency_limit: 4
+    capabilities:
+      structured_output: partial
+      long_context: true
+      reasoning_trace: false
+
+# Extension for reasoning-aware handling
+# Each model should eventually include:
+# reasoning_mode: none | rationale_only | exposed_trace
+# supports_structured_output: true/false/partial
+# supports_confidence_field: true/false
+# supports_extended_rationale: true/false
+# trace_handling_policy: ignore | capture_if_present | request_if_supported

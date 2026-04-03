@@ -1,0 +1,16 @@
+benchmark:
+  builder: ethics_sandbox
+  source: ../../docs/ethics_design/sandbox_template
+  config: ../benchmarks/ethics_sandbox/example_build.yaml
+  build_mode: matrix
+targets:
+  - Qwen3-32B
+normalizers:
+  - ethics_structural_normalizer
+evaluators:
+  - ethics_structural_judge
+analysis_plugins:
+  - ethics_family_consistency
+  - ethics_slot_sensitivity
+execution_mode: real
+auto_launch: false

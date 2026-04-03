@@ -19,7 +19,11 @@ from aigc.adapters.stubs import (
     WanT2VDiffusersAdapter,
     WanTI2VAdapter,
 )
-from aigc.adapters.texts import LocalTransformersTextAdapter, Qwen3TextAdapter
+from aigc.adapters.texts import (
+    LocalTransformersTextAdapter,
+    OpenAICompatibleTextAdapter,
+    Qwen3TextAdapter,
+)
 
 ADAPTER_REGISTRY = {
     "FluxImageAdapter": FluxImageAdapter,
@@ -38,6 +42,7 @@ ADAPTER_REGISTRY = {
     "EchoTestAdapter": EchoTestAdapter,
     "LocalTransformersTextAdapter": LocalTransformersTextAdapter,
     "Qwen3TextAdapter": Qwen3TextAdapter,
+    "OpenAICompatibleTextAdapter": OpenAICompatibleTextAdapter,
 }
 
 __all__ = ["ADAPTER_REGISTRY", "PlaceholderAdapter"]

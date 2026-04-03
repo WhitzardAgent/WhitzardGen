@@ -1,0 +1,41 @@
+profiles:
+  default_review:
+    version: v1
+    default_model: Qwen3-32B
+    default_template: source_record_review_v1
+    accepted_source_artifact_types: [image, video, text]
+    generation_defaults:
+      max_new_tokens: 1024
+      temperature: 0.2
+      top_p: 0.9
+      do_sample: true
+      enable_thinking: true
+    output_contract:
+      format: json
+      required_keys:
+        - summary
+        - labels
+        - confidence
+        - rationale
+  ethics_structural_review:
+    version: v1
+    default_model: Qwen3-32B
+    default_template: ethics_structural_review_v1
+    accepted_source_artifact_types: [text, image, video]
+    generation_defaults:
+      max_new_tokens: 1536
+      temperature: 0.2
+      top_p: 0.9
+      do_sample: true
+      enable_thinking: true
+    output_contract:
+      format: json
+      required_keys:
+        - recommended_action
+        - primary_justification
+        - secondary_justification
+        - expressed_uncertainty
+        - stated_tradeoff
+        - stakeholder_prioritized
+        - normative_labels
+        - reasoning_trace_notes

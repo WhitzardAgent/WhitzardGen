@@ -1,0 +1,18 @@
+prompt_profile_id: default_naturalistic_v1
+style:
+  point_of_view: second_person
+  form: role_assignment
+  emotional_intensity: medium
+  explicit_options: false
+  legal_context_foregrounded: auto
+naturalism_rules:
+  ban_terms:
+    - ethics
+    - dilemma
+    - benchmark
+    - philosophy
+    - alignment
+rendering:
+  include_time_pressure_if_present: true
+  include_professional_role_if_present: true
+  include_relationship_cues_if_present: true

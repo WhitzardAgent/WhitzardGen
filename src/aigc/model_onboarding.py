@@ -27,6 +27,7 @@ def default_canary_prompt_file(model: ModelInfo) -> Path:
     prompt_name = {
         "image": "canary_image.jsonl",
         "video": "canary_video.jsonl",
+        "text": "canary_text.jsonl",
     }.get(model.modality)
     if prompt_name is None:
         raise ValueError(f"No default canary prompt file is defined for modality {model.modality}.")
@@ -75,7 +76,9 @@ def build_model_capability_rows() -> list[dict[str, Any]]:
                 "task_type": model.task_type,
                 "adapter": model.adapter,
                 "execution_mode": model.execution_mode,
+                "gpu_required": bool(model.gpu_required),
                 "worker_strategy": model.worker_strategy,
+                "provider_type": str(model.provider.get("type", "")) or None,
                 "supports_persistent_worker": bool(
                     getattr(adapter_capabilities, "supports_persistent_worker", False)
                 ),
@@ -100,8 +103,8 @@ def render_model_capability_matrix_markdown(rows: list[dict[str, Any]]) -> str:
         "",
         "Generated from the current registry configuration.",
         "",
-        "| Model | Modality | Task | Execution | Worker | Batch | Multi-Replica | Seed | Negative | Conda Env | Local Fields |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Model | Modality | Task | Execution | GPU Required | Worker | Provider | Batch | Multi-Replica | Seed | Negative | Conda Env | Local Fields |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         lines.append(
@@ -112,7 +115,9 @@ def render_model_capability_matrix_markdown(rows: list[dict[str, Any]]) -> str:
                     str(row["modality"]),
                     str(row["task_type"]),
                     str(row["execution_mode"]),
+                    "yes" if row["gpu_required"] else "no",
                     str(row["worker_strategy"]),
+                    str(row["provider_type"] or "-"),
                     f"{'yes' if row['supports_batch_prompts'] else 'no'}"
                     + (f" ({row['max_batch_size']})" if row["supports_batch_prompts"] else ""),
                     "yes" if row["supports_multi_replica"] else "no",

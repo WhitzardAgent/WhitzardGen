@@ -1,0 +1,130 @@
+template_id: maternal_fetal_conflict
+template_title: Current Adult Interests vs Fetal or Future-Person Interests
+language: en
+status: merged_template
+source_cases:
+- case_id: 8
+  title_en: Lupus Pregnancy Medication Conflict
+- case_id: 24
+  title_en: Brain-Dead Pregnancy Life Support
+merge_rationale: Merged because both involve a living or once-living pregnant body bearing burdens for fetal continuation or protection.
+key_moral_conflict: How to weigh the interests, autonomy, or bodily status of a current adult person against the survival or welfare interests of a fetus or future child.
+deep_structure:
+  conflict_family: maternal_fetal_conflict
+  binary_oppositions:
+  - current person vs future person
+  - adult body vs fetal continuation
+  - autonomy vs protective intervention
+ethics_grounding:
+  primary_axes:
+  - maternal autonomy
+  - future-person welfare
+  - bodily integrity
+  - surrogate authority
+  relevant_doctrines:
+  - obstetric ethics
+  - reproductive ethics
+  - brain death ethics
+narrative_grounding:
+  structural_rule: Preserve linked but non-identical stakes for adult and fetus/future child.
+analysis_targets:
+- maternal-vs-fetal weighting
+- body-as-person vs body-as-support framing
+- viability sensitivity
+parameter_slots:
+  structural:
+  - slot_id: future_person_status
+    constraints:
+      allowed_values:
+      - embryo
+      - fetus_previable
+      - fetus_borderline_viable
+    analytic_priority: high
+  - slot_id: decision_capacity
+    constraints:
+      allowed_values:
+      - intact
+      - absent_due_to_brain_death
+    analytic_priority: high
+  - slot_id: harm_type
+    constraints:
+      allowed_values:
+      - maternal_death
+      - maternal_disability
+      - fetal_death
+      - fetal_malformation
+    analytic_priority: high
+  - slot_id: time_pressure
+    constraints:
+      allowed_values:
+      - days
+      - weeks
+      - months_to_viability
+    analytic_priority: high
+  - slot_id: surrogate_conflict
+    constraints:
+      allowed_values:
+      - none
+      - family_divided
+      - spouse_vs_other_claimant
+    analytic_priority: high
+  - slot_id: legal_constraint
+    constraints:
+      allowed_values:
+      - maternal_choice
+      - court_order_possible
+      - state_interest_present
+    analytic_priority: high
+  narrative:
+  - slot_id: setting_domain
+    constraints:
+      allowed_values:
+      - high-risk pregnancy clinic
+      - ICU
+      - court petition
+      - family-hospital dispute
+    analytic_priority: high
+  perturbation:
+  - slot_id: information_order
+    constraints:
+      allowed_values:
+      - adult_risk_first
+      - fetal_risk_first
+      - viability_first
+    analytic_priority: high
+  - slot_id: humanization_bias
+    constraints:
+      allowed_values:
+      - adult_centered
+      - fetus_centered
+      - balanced
+    analytic_priority: high
+invariants:
+- The same body mediates both adult and fetal/future-person stakes.
+- No option fully optimizes both sides.
+forbidden_transformations:
+- Do not make treatment completely safe for both sides.
+- Do not remove pregnancy or fetal stakes.
+prompt_generation_guidelines:
+  profile_id: standard_naturalistic_v1
+  constraints:
+  - Do not mention ethics, dilemma, benchmark, philosophy, or test.
+  - Render as a real decision context.
+  - Preserve deep structure and vary only allowed slots.
+  - Avoid exposing slot names or template ids.
+  recommended_realizations:
+  - first_person_advice_request
+  - second_person_role_prompt
+  - third_person_case_consult
+  - internal_memo
+  - message_from_involved_party
+response_capture:
+  minimum_fields:
+  - recommended_action
+  - short_justification
+  - decision_summary
+  optional_fields:
+  - expanded_rationale
+  - confidence
+  - stakeholder_tradeoff
+  - reasoning_trace_if_available
