@@ -11,7 +11,7 @@ class Qwen25InstructTextAdapter(BaseTextGenerationAdapter):
     _tokenizer = None
     _model = None
     _torch = None
-    _input_device = "cpu"
+    _model_device = "cpu"
 
     def load_for_persistent_worker(self) -> None:
         self._get_or_load_model()
@@ -20,7 +20,7 @@ class Qwen25InstructTextAdapter(BaseTextGenerationAdapter):
         self._tokenizer = None
         self._model = None
         self._torch = None
-        self._input_device = "cpu"
+        self._model_device = "cpu"
 
     def execute(
         self,
@@ -53,26 +53,6 @@ class Qwen25InstructTextAdapter(BaseTextGenerationAdapter):
                 ),
             )
         ).strip()
-        rendered_prompts = [
-            tokenizer.apply_chat_template(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            for prompt in prompts
-        ]
-
-        encoded = tokenizer(
-            rendered_prompts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-        )
-        encoded = {key: value.to(self._input_device) for key, value in encoded.items()}
-
         if progress_callback is not None:
             progress_callback(
                 {
@@ -117,15 +97,27 @@ class Qwen25InstructTextAdapter(BaseTextGenerationAdapter):
                 )
             )
 
-        with torch.no_grad():
-            generated = model.generate(**encoded, **generation_kwargs)
-
         outputs: dict[str, str] = {}
-        attention_mask = encoded.get("attention_mask")
-        for index, prompt_id in enumerate(prompt_ids):
-            input_length = int(attention_mask[index].sum().item()) if attention_mask is not None else 0
-            generated_ids = generated[index][input_length:]
-            completion = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+        for prompt_id, prompt in zip(prompt_ids, prompts, strict=True):
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ]
+            text = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            model_inputs = tokenizer([text], return_tensors="pt")
+            model_inputs = self._move_model_inputs_to_device(model_inputs, model)
+            with torch.no_grad():
+                generated_ids = model.generate(**model_inputs, **generation_kwargs)
+            input_lengths = self._extract_input_lengths(model_inputs)
+            cropped_ids = [
+                output_ids[input_lengths[index]:]
+                for index, output_ids in enumerate(generated_ids)
+            ]
+            completion = self._batch_decode_single(tokenizer, cropped_ids).strip()
             outputs[prompt_id] = completion
 
         if progress_callback is not None:
@@ -139,7 +131,7 @@ class Qwen25InstructTextAdapter(BaseTextGenerationAdapter):
 
         return ExecutionResult(
             exit_code=0,
-            logs=f"qwen2.5 instruct text generation on {self._input_device}",
+            logs=f"qwen2.5 instruct text generation on {self._model_device}",
             outputs=outputs,
         )
 
@@ -158,11 +150,11 @@ class Qwen25InstructTextAdapter(BaseTextGenerationAdapter):
         model = AutoModelForCausalLM.from_pretrained(
             model_ref,
             torch_dtype="auto",
-            device_map="auto" if torch.cuda.is_available() else None,
+            device_map="auto",
             trust_remote_code=True,
         )
         model.eval()
-        self._input_device = self._resolve_input_device(model)
+        self._model_device = self._resolve_model_device(model)
         self._tokenizer = tokenizer
         self._model = model
         self._torch = torch
@@ -177,7 +169,7 @@ class Qwen25InstructTextAdapter(BaseTextGenerationAdapter):
             f"{self.model_config.name} requires one of weights_path, local_path, or hf_repo."
         )
 
-    def _resolve_input_device(self, model) -> str:
+    def _resolve_model_device(self, model) -> str:
         if hasattr(model, "device"):
             return str(model.device)
         try:
@@ -185,3 +177,28 @@ class Qwen25InstructTextAdapter(BaseTextGenerationAdapter):
         except StopIteration:
             return "cuda" if self._torch is not None and self._torch.cuda.is_available() else "cpu"
         return str(first_parameter.device)
+
+    def _move_model_inputs_to_device(self, model_inputs, model):
+        if hasattr(model_inputs, "to"):
+            return model_inputs.to(model.device)
+        if isinstance(model_inputs, dict):
+            return {key: value.to(model.device) for key, value in model_inputs.items()}
+        return model_inputs
+
+    def _extract_input_lengths(self, model_inputs) -> list[int]:
+        input_ids = getattr(model_inputs, "input_ids", None)
+        if input_ids is None and isinstance(model_inputs, dict):
+            input_ids = model_inputs.get("input_ids")
+        if input_ids is None:
+            return []
+        if hasattr(input_ids, "_rows"):
+            return [len(row) for row in input_ids._rows]
+        return [len(row) for row in input_ids]
+
+    def _batch_decode_single(self, tokenizer, cropped_ids) -> str:
+        if hasattr(tokenizer, "batch_decode"):
+            decoded = tokenizer.batch_decode(cropped_ids, skip_special_tokens=True)
+            if decoded:
+                return str(decoded[0])
+        first = cropped_ids[0] if cropped_ids else []
+        return str(tokenizer.decode(first, skip_special_tokens=True))

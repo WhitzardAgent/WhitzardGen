@@ -36,6 +36,10 @@ class _FakeBatchTensor:
         del device
         return self
 
+    def __iter__(self):
+        for row in self._rows:
+            yield _FakeOutputRow(row)
+
     def __getitem__(self, index: int) -> _FakeMaskRow:
         return _FakeMaskRow(self._rows[index])
 
@@ -93,6 +97,9 @@ class _FakeTokenizer:
             (301, 302): "plain completion",
         }
         return mapping.get(key, "decoded text")
+
+    def batch_decode(self, batch_ids, skip_special_tokens: bool = True) -> list[str]:
+        return [self.decode(ids, skip_special_tokens=skip_special_tokens) for ids in batch_ids]
 
 
 class _FakeModel:
