@@ -25,6 +25,7 @@ from aigc.benchmarking.models import (
     RealizationValidationResult,
 )
 from aigc.benchmarking.packages import GenerativeBenchmarkPackage, SlotDefinition, load_generative_benchmark_package
+from aigc.benchmarking.prompt_io import write_prompt_records_jsonl
 from aigc.benchmarking.realization import (
     SimpleTemplateRenderer,
     execute_semantic_realization_pipeline,
@@ -81,7 +82,7 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
         )
         guard = EthicsRealizationGuard(build_config=build_config)
         renderer = EthicsWriterRenderer(build_config=build_config)
-        validator = EthicsPromptValidator(build_config=build_config)
+        validator = EthicsPromptValidator(build_config=build_config) if _validator_enabled(build_config) else None
         compiler = EthicsCaseCompiler(
             package=package,
             build_config=build_config,
@@ -131,14 +132,16 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
                         for name, config in (build_config.profiles.get("templates") or {}).items()
                     },
                     "validator": {
+                        "enabled": _validator_enabled(build_config),
                         "template_name": str(build_config.validator.get("template_name") or ""),
-                        "template_version": _resolve_validator_template_version(build_config=build_config),
-                        "model": str(
-                            build_config.validator.get("model")
-                            or synthesis_model
-                            or ""
+                        "template_version": _resolve_validator_template_version(build_config=build_config)
+                        if _validator_enabled(build_config)
+                        else None,
+                        "model": (
+                            str(build_config.validator.get("model") or synthesis_model or "").strip() or None
                         )
-                        or None,
+                        if _validator_enabled(build_config)
+                        else None,
                     },
                     "validation": {
                         "max_attempts": int(build_config.validation.get("max_attempts", 1)),
@@ -401,7 +404,7 @@ class EthicsRealizationGuard(StructureGuard):
         return errors
 
     def validate_realization(self, spec: RealizationSpec, result: RealizationResult) -> list[str]:
-        text = str(result.synthesized_text or "").strip()
+        text = str(result.scene_description or result.synthesized_text or "").strip()
         if not text:
             return ["Synthesized realization is empty."]
 
@@ -430,6 +433,15 @@ class EthicsRealizationGuard(StructureGuard):
         ]
         if required_values:
             errors.extend(validate_required_value_mentions(text, required_values))
+        if not _looks_second_person(text):
+            errors.append("Synthesized realization must be written in second person.")
+        errors.extend(_validate_decision_options(result.decision_options))
+        if _binary_frame_required(spec):
+            if not result.decision_frame:
+                errors.append("Missing decision_frame for a binary-choice scenario.")
+            action_structure = str(result.decision_frame.get("action_structure", "")).strip()
+            if action_structure not in {"explicit_binary", "implicit_binary"}:
+                errors.append("Binary-choice scenario must declare an explicit or implicit binary action structure.")
         return errors
 
 
@@ -528,7 +540,7 @@ class EthicsPromptValidator(RealizationValidator):
             )
             for index, (spec, result) in enumerate(zip(specs, results, strict=True), start=1)
         ]
-        requests_path = _write_request_prompts(
+        requests_path = write_prompt_records_jsonl(
             prompts=prompts,
             output_path=(run_dir / "requests.jsonl") if run_dir is not None else None,
         )
@@ -583,6 +595,11 @@ class EthicsPromptValidator(RealizationValidator):
                     ensure_ascii=False,
                     indent=2,
                 ),
+                "decision_options_json": json.dumps(
+                    list(result.decision_options or []),
+                    ensure_ascii=False,
+                    indent=2,
+                ),
             }
         )
         return RealizationSpec(
@@ -622,8 +639,11 @@ class EthicsPromptValidator(RealizationValidator):
             issues.append("Scene reads like a benchmark or abstract thought experiment.")
         if "imagine you are" in lowered or "if you were" in lowered:
             issues.append("Scene uses roleplay framing instead of a lived decision context.")
+        if not _looks_second_person(text):
+            issues.append("Scene is not written as an immersive second-person brief.")
         if not any(term in lowered for term in ("need to decide", "must decide", "decide what to do")):
             issues.append("Scene does not feel like a live decision context.")
+        issues.extend(_validate_decision_options(result.decision_options))
         if _binary_frame_required(spec) and not result.decision_frame:
             issues.append("Missing decision_frame for a binary-choice scenario.")
         return RealizationValidationResult(
@@ -635,6 +655,7 @@ class EthicsPromptValidator(RealizationValidator):
             binary_frame_assessment={
                 "explicit_binary_required": _binary_frame_required(spec),
                 "realized_structure": str(result.decision_frame.get("action_structure", "")),
+                "option_count": len(result.decision_options or []),
             },
             conflict_preservation_assessment={
                 "status": "looks_preserved" if not issues else "needs_revision"
@@ -669,10 +690,29 @@ class EthicsCaseCompiler(CaseCompiler):
                 "invariants": list(spec.invariants),
                 "forbidden_transformations": list(spec.forbidden_transformations),
                 "decision_frame": dict(result.decision_frame or {}),
+                "decision_options": list(result.decision_options or []),
                 "realization_prompt_template": result.prompt_template_name or spec.prompt_template_name,
                 "synthesis_model": result.synthesis_model or spec.synthesis_model,
                 "synthesis_request_version": (
                     result.synthesis_request_version or spec.synthesis_request_version
+                ),
+                "validator_template_name": str(
+                    dict(result.metadata.get("validator", {}) or {}).get(
+                        "metadata",
+                        {},
+                    ).get("validator_template_name", "")
+                ),
+                "validator_template_version": str(
+                    dict(result.metadata.get("validator", {}) or {}).get(
+                        "metadata",
+                        {},
+                    ).get("validator_template_version", "")
+                ),
+                "validator_model": str(
+                    dict(result.metadata.get("validator", {}) or {}).get(
+                        "metadata",
+                        {},
+                    ).get("validator_model", "")
                 ),
                 "realization_provenance": {
                     "builder": spec.source_builder,
@@ -702,6 +742,11 @@ class EthicsCaseCompiler(CaseCompiler):
             case_id=spec.case_id,
             input_type="text",
             input_modality="text",
+            input_payload={
+                "prompt": result.scene_description or result.synthesized_text,
+                "language": spec.language,
+                "decision_options": list(result.decision_options or []),
+            },
             prompt=result.scene_description or result.synthesized_text,
             instruction=None,
             metadata=metadata,
@@ -838,9 +883,10 @@ def _load_ethics_build_config(path: str | Path | None) -> EthicsBuildConfig:
     validation.setdefault("required_slot_mentions", ["decision_maker_role", "setting_domain"])
 
     validator = dict(payload.get("validator", {}) or {})
+    validator.setdefault("enabled", True)
     validator.setdefault("template_name", "realization_validator_v1")
     validator_templates = dict(validator.get("templates", {}) or {})
-    if not validator_templates:
+    if not validator_templates and bool(validator.get("enabled", True)):
         validator_templates = {
             "realization_validator_v1": {
                 "path": str(default_validator_template_path),
@@ -932,6 +978,10 @@ def _resolve_validator_template_version(*, build_config: EthicsBuildConfig) -> s
     return str(template_config.get("version", "v1"))
 
 
+def _validator_enabled(build_config: EthicsBuildConfig) -> bool:
+    return bool(build_config.validator.get("enabled", True))
+
+
 def _resolve_profile_vars(
     *,
     prompt_template_name: str,
@@ -981,6 +1031,33 @@ def _binary_frame_required(spec: RealizationSpec) -> bool:
             False,
         )
     )
+
+
+def _looks_second_person(text: str) -> bool:
+    lowered = str(text).lower()
+    return any(
+        marker in lowered
+        for marker in ("you ", "you\n", "you're", "you've", "your ", "your\n")
+    ) or lowered.startswith("you")
+
+
+def _validate_decision_options(options: list[dict[str, Any]] | None) -> list[str]:
+    normalized = list(options or [])
+    if len(normalized) != 2:
+        return ["Realization must contain exactly two structured decision options."]
+    option_ids = [str(item.get("id", "")).strip().upper() for item in normalized]
+    if option_ids != ["A", "B"]:
+        return ["Decision options must use stable ids A and B in order."]
+    errors: list[str] = []
+    for item in normalized:
+        text = str(item.get("text", "")).strip()
+        if not text:
+            errors.append("Decision options must contain non-empty text.")
+            continue
+        lowered = text.lower()
+        if "option c" in lowered or "third option" in lowered or "another option" in lowered:
+            errors.append("Decision options must not imply a third path.")
+    return errors
 
 
 def _render_bullet_block(values: list[Any]) -> str:

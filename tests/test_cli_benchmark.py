@@ -64,6 +64,59 @@ class BenchmarkCliTests(unittest.TestCase):
 
         self.assertEqual(payload["benchmark_id"], "ethics_suite")
 
+    def test_handle_benchmark_build_text_output_prints_next_evaluate_hint(self) -> None:
+        from aigc.cli.main import handle_benchmark_build
+
+        summary = type(
+            "Summary",
+            (),
+            {
+                "benchmark_id": "ethics_suite",
+                "builder_name": "ethics_sandbox",
+                "source_path": "examples/benchmarks/ethics_sandbox/package",
+                "case_count": 38,
+                "build_mode": "matrix",
+                "benchmark_dir": "/tmp/benchmarks/ethics_suite",
+                "cases_path": "/tmp/benchmarks/ethics_suite/cases.jsonl",
+                "manifest_path": "/tmp/benchmarks/ethics_suite/benchmark_manifest.json",
+            },
+        )()
+        args = type(
+            "Args",
+            (),
+            {
+                "builder": "ethics_sandbox",
+                "source": "examples/benchmarks/ethics_sandbox/package",
+                "package": None,
+                "entrypoint": None,
+                "builder_config": "/tmp/builder.yaml",
+                "count_config": None,
+                "llm_model": None,
+                "synthesis_model": None,
+                "profile": None,
+                "template": None,
+                "style_family": None,
+                "target_model": None,
+                "intended_modality": None,
+                "out": None,
+                "benchmark_name": "ethics_suite",
+                "seed": 42,
+                "realizations_per_template": 2,
+                "mock": False,
+                "execution_mode": None,
+                "build_mode": "matrix",
+                "output": "text",
+            },
+        )()
+
+        with patch("aigc.cli.main.build_benchmark", return_value=summary):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_benchmark_build(args), 0)
+        output = stream.getvalue()
+        self.assertIn("Bundle Dir: /tmp/benchmarks/ethics_suite", output)
+        self.assertIn("Cases Path: /tmp/benchmarks/ethics_suite/cases.jsonl", output)
+        self.assertIn("Next Evaluate: aigc evaluate run --benchmark /tmp/benchmarks/ethics_suite --targets <MODEL_NAME>", output)
+
     def test_handle_evaluate_run_uses_requested_targets_and_evaluators(self) -> None:
         from aigc.cli.main import handle_evaluate_run
 

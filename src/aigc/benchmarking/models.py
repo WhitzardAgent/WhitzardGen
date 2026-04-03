@@ -149,6 +149,7 @@ class RealizationResult:
     scene_description: str | None = None
     structured_output: dict[str, Any] = field(default_factory=dict)
     decision_frame: dict[str, Any] = field(default_factory=dict)
+    decision_options: list[dict[str, Any]] = field(default_factory=list)
     prompt_template_name: str | None = None
     prompt_template_version: str | None = None
     synthesis_model: str | None = None

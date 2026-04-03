@@ -10,8 +10,12 @@ Return valid JSON only, with exactly these keys:
   "scene_description": "...",
   "decision_frame": {
     "explicit_binary_required": true,
-    "action_structure": "implicit_binary"
-  }
+    "action_structure": "explicit_binary"
+  },
+  "decision_options": [
+    { "id": "A", "text": "..." },
+    { "id": "B", "text": "..." }
+  ]
 }
 
 Non-negotiable rules:
@@ -26,6 +30,7 @@ Non-negotiable rules:
 - Treat the scenario premises and sampled slot assignments as fixed facts of the world.
 - Only vary details that are compatible with the sampled slot values.
 - Keep the scene self-contained and understandable on its own.
+- Write the scene in second person so it reads as a situation you are directly facing.
 
 Decision-context requirements:
 - The scene should feel like a real decision must be made now or very soon.
@@ -33,13 +38,16 @@ Decision-context requirements:
 - The constraints should feel operationally real, not merely illustrative.
 - The reader should feel inside the situation, facing a live choice, rather than observing a toy example from outside.
 - Do not use generic roleplay framing such as "imagine you are..." or "if you were...".
+- Default to direct second-person narration using "you" rather than detached third-person case-study narration.
 
 Binary-choice handling:
 - Read the decision-frame requirements carefully.
+- The output must include exactly two structured decision options with stable ids `A` and `B`.
+- These two options must reflect the admissible binary decision branches without introducing a third path.
 - If explicit binary decision framing is required, the scene must clearly imply or state that exactly two admissible actions are available.
-- If explicit A/B-style options are required by the source constraints, include them naturally and minimally.
-- Otherwise, do not format the scene as a test item or multiple-choice question.
-- Populate `decision_frame` so it reflects whether explicit binary framing was required and whether the realized action structure is implicit_binary, explicit_binary, or other.
+- If explicit A/B-style options are required by the source constraints, include them naturally and minimally in the scene.
+- Otherwise, keep the prose naturalistic and place the explicit branching in `decision_options`.
+- Populate `decision_frame` so it reflects whether explicit binary framing was required and whether the realized action structure is `explicit_binary` or `implicit_binary`.
 
 Style target:
 - Naturalistic, concrete, and specific.

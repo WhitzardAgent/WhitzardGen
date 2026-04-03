@@ -13,5 +13,8 @@ evaluators:
 analysis_plugins:
   - ethics_family_consistency
   - ethics_slot_sensitivity
+execution_policy:
+  text_prompt_composition:
+    append_structured_choices: false
 execution_mode: real
 auto_launch: false

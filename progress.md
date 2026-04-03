@@ -206,10 +206,19 @@
   - writer prompts generate live decision briefs rather than benchmark-like items
   - validator prompts provide build-time quality judgments and retry feedback
   - `decision_frame` is preserved in case metadata and build provenance
+- Phase 39 is now implemented for ethics benchmark realization and evaluation handoff:
+  - the real-mode validator path no longer depends on a missing private helper; prompt batch writing is shared through a public benchmarking utility
+  - writer prompts now require immersive second-person (`you`) scene descriptions
+  - writer outputs now include exactly two structured A/B `decision_options`
+  - ethics benchmark cases persist `decision_options` in both metadata and non-primary input payload fields
+  - evaluation-time text prompt composition can now optionally append structured A/B choices through generic `execution_policy.text_prompt_composition.append_structured_choices`
+  - model-based realization validation is now config-optional via `validator.enabled`
+  - benchmark build CLI now prints a direct `aigc evaluate run --benchmark ... --targets ...` handoff hint so bundle-to-evaluation flow is explicit
 - Benchmark bundles remain lightweight, while final case metadata now preserves:
   - `slot_assignments`
   - `slot_layers`
   - `decision_frame`
+  - `decision_options`
   - `realization_prompt_template`
   - `synthesis_model`
   - `synthesis_request_version`

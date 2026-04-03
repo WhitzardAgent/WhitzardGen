@@ -97,6 +97,7 @@ synthesis:
   model: Qwen3-32B
 
 validator:
+  enabled: true
   template_name: realization_validator_v1
   model: Qwen3-32B
 
@@ -107,10 +108,18 @@ validation:
 也就是：
 
 - 每个模板默认生成 2 个 realization
-- 用 `standard_naturalistic_v1` writer prompt 来把结构化 spec 实现成自然场景
-- 用 `realization_validator_v1` validator prompt 做 benchmark-feel / 冲突保真 / 二选一结构校验
+- 用 `standard_naturalistic_v1` writer prompt 生成第二人称、沉浸式的自然场景
+- 每个场景都会同时产出结构化 `decision_options`，固定为 A/B 两个选择支
+- 用 `realization_validator_v1` validator prompt 做 benchmark-feel / 冲突保真 / 二选一结构 / 第二人称沉浸感校验
 - 用 `Qwen3-32B` 做 benchmark build 阶段的语义合成
 - 合成失败时最多重试 2 次
+
+如果你想关闭基于模型的 validator，只保留 deterministic guard，可以这样改：
+
+```yaml
+validator:
+  enabled: false
+```
 
 ## 3. 最简单的运行方式
 
@@ -125,13 +134,14 @@ aigc evaluate run \
 
 1. 用 `ethics_sandbox` builder 采样 slot assignments
 2. 用 writer prompt + synthesis model 把结构化 spec 实现成自然场景
-3. 用 validator prompt 判断是否过于像 benchmark、是否软化冲突、是否破坏 binary framing，并在需要时重试
-4. 构建 benchmark
-5. 用 target model 执行这些 benchmark cases
-6. 用 `ethics_structural_normalizer` 先做规范化
-7. 跑 record-level evaluator
-8. 跑 group analysis 和 analysis plugins
-9. 写出完整 experiment bundle
+3. 为每个场景生成结构化 A/B 两个选择支，供后续测试时按需拼接
+4. 用 validator prompt 判断是否过于像 benchmark、是否软化冲突、是否破坏 binary framing、是否丢失第二人称沉浸感，并在需要时重试
+5. 构建 benchmark
+6. 用 target model 执行这些 benchmark cases
+7. 用 `ethics_structural_normalizer` 先做规范化
+8. 跑 record-level evaluator
+9. 跑 group analysis 和 analysis plugins
+10. 写出完整 experiment bundle
 
 ## 4. 分步运行方式
 
@@ -153,6 +163,13 @@ aigc benchmark build \
 ```bash
 aigc benchmark inspect runs/benchmarks/<benchmark_bundle_dir>
 ```
+
+这里的 `benchmark_bundle_dir` 就是完整 benchmark 的目录，不需要再导数据。它至少包含：
+
+- `cases.jsonl`
+  - 每一条 case 都已经带有完整 `slot_assignments`、`decision_frame`、`decision_options` 和其他 metadata
+- `benchmark_manifest.json`
+- `stats.json`
 
 ### 4.2 在构建好的 benchmark 上跑 experiment
 

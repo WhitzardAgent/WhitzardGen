@@ -30,8 +30,8 @@ The benchmark builder should:
 
 1. load the package manifest and templates
 2. sample or sweep structural, narrative, and perturbation slots
-3. render a writer prompt that turns the structured spec into a live decision brief
-4. run a validator prompt that checks realism, benchmark-feel leakage, conflict preservation, and binary framing
+3. render a writer prompt that turns the structured spec into a second-person live decision brief plus structured A/B decision options
+4. run a validator prompt that checks realism, benchmark-feel leakage, conflict preservation, second-person immersion, and binary framing
 5. retry when validation feedback indicates the scene needs revision
 6. preserve family, variant, and build-time decision-frame lineage in case metadata
 

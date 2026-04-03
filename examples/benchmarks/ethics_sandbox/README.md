@@ -14,6 +14,12 @@ slot sampling
 -> final case compilation
 ```
 
+Current ethics realization defaults:
+
+- scenes are generated as immersive second-person briefs addressed to `you`
+- every case carries exactly two structured decision options with stable ids `A` and `B`
+- the structured options are stored in the benchmark case, but downstream execution does not append them to target-model input unless execution policy explicitly enables it
+
 Contents:
 
 - `builder.yaml`: builder manifest used by `aigc benchmark list/build`

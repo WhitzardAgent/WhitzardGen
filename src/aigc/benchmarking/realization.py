@@ -20,6 +20,7 @@ from aigc.benchmarking.models import (
     RealizationSpec,
     RealizationValidationResult,
 )
+from aigc.benchmarking.prompt_io import write_prompt_records_jsonl
 from aigc.prompt_generation.config import render_instruction_template
 from aigc.prompts.models import PromptRecord
 from aigc.run_flow import run_single_model
@@ -269,7 +270,7 @@ class RunKernelRealizationSynthesisBackend(RealizationSynthesisBackend):
             )
             for index, spec in enumerate(specs, start=1)
         ]
-        requests_path = _write_request_prompts(
+        requests_path = write_prompt_records_jsonl(
             prompts=request_prompts,
             output_path=(run_dir / "requests.jsonl") if run_dir is not None else None,
         )
@@ -301,7 +302,7 @@ class RunKernelRealizationSynthesisBackend(RealizationSynthesisBackend):
             prompt_id = f"realize_{index:06d}"
             request_prompt = request_prompts[index - 1].prompt
             raw_text = text_by_prompt_id.get(prompt_id, "")
-            scene_description, structured_output, decision_frame = _parse_synthesized_output(raw_text)
+            scene_description, structured_output, decision_frame, decision_options = _parse_synthesized_output(raw_text)
             results.append(
                 RealizationResult(
                     benchmark_id=spec.benchmark_id,
@@ -311,6 +312,7 @@ class RunKernelRealizationSynthesisBackend(RealizationSynthesisBackend):
                     scene_description=scene_description,
                     structured_output=structured_output,
                     decision_frame=decision_frame,
+                    decision_options=decision_options,
                     prompt_template_name=spec.prompt_template_name,
                     prompt_template_version=spec.prompt_template_version,
                     synthesis_model=spec.synthesis_model or synthesis_model,
@@ -355,17 +357,41 @@ def validate_required_value_mentions(text: str, values: list[str]) -> list[str]:
     return errors
 
 
-def _parse_synthesized_output(raw_text: str) -> tuple[str, dict[str, Any], dict[str, Any]]:
+def _normalize_decision_options(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    options: list[dict[str, Any]] = []
+    for index, item in enumerate(value[:2], start=1):
+        option_id = "A" if index == 1 else "B"
+        text = ""
+        if isinstance(item, dict):
+            raw_id = str(item.get("id") or option_id).strip().upper()
+            option_id = raw_id or option_id
+            text = str(item.get("text") or "").strip()
+        else:
+            text = str(item).strip()
+        if option_id not in {"A", "B"} or not text:
+            return []
+        options.append({"id": option_id, "text": text})
+    if len(options) != 2:
+        return []
+    if {item["id"] for item in options} != {"A", "B"}:
+        return []
+    return sorted(options, key=lambda item: item["id"])
+
+
+def _parse_synthesized_output(raw_text: str) -> tuple[str, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     stripped = str(raw_text).strip()
     if not stripped:
-        return "", {}, {}
+        return "", {}, {}, []
     try:
         payload = json.loads(stripped)
     except json.JSONDecodeError:
-        return stripped, {}, {}
+        return stripped, {}, {}, []
     if isinstance(payload, dict):
         structured_output = dict(payload)
         decision_frame = dict(payload.get("decision_frame", {}) or {})
+        decision_options = _normalize_decision_options(payload.get("decision_options"))
         for key in (
             "scene_description",
             "realized_prompt",
@@ -376,13 +402,13 @@ def _parse_synthesized_output(raw_text: str) -> tuple[str, dict[str, Any], dict[
         ):
             value = payload.get(key)
             if value not in (None, ""):
-                return str(value).strip(), structured_output, decision_frame
-        return stripped, structured_output, decision_frame
+                return str(value).strip(), structured_output, decision_frame, decision_options
+        return stripped, structured_output, decision_frame, decision_options
     if isinstance(payload, list) and payload:
         first = payload[0]
         if isinstance(first, str):
-            return first.strip(), {}, {}
-    return stripped, {}, {}
+            return first.strip(), {}, {}, []
+    return stripped, {}, {}, []
 
 
 def _build_mock_realization_result(*, spec: RealizationSpec, request_prompt: str) -> RealizationResult:
@@ -396,16 +422,20 @@ def _build_mock_realization_result(*, spec: RealizationSpec, request_prompt: str
     )
     conflict = str(spec.metadata.get("key_moral_conflict") or "").strip()
     synthesized_text = (
-        f"I'm dealing with a difficult situation in {domain}. "
-        f"As the {role}, I need to decide what to do next. "
+        f"You are in a difficult situation in {domain}. "
+        f"As the {role}, you need to decide what to do next. "
         f"{conflict}"
     ).strip()
     decision_frame = {
         "explicit_binary_required": bool(
             spec.metadata.get("decision_frame_requirements", {}).get("explicit_binary_required", False)
         ),
-        "action_structure": "implicit_binary",
+        "action_structure": "explicit_binary",
     }
+    decision_options = [
+        {"id": "A", "text": "Take the first admissible action available to you in this situation."},
+        {"id": "B", "text": "Take the second admissible action available to you in this situation."},
+    ]
     return RealizationResult(
         benchmark_id=spec.benchmark_id,
         case_id=spec.case_id,
@@ -415,8 +445,10 @@ def _build_mock_realization_result(*, spec: RealizationSpec, request_prompt: str
         structured_output={
             "scene_description": synthesized_text,
             "decision_frame": decision_frame,
+            "decision_options": decision_options,
         },
         decision_frame=decision_frame,
+        decision_options=decision_options,
         prompt_template_name=spec.prompt_template_name,
         prompt_template_version=spec.prompt_template_version,
         synthesis_model=spec.synthesis_model,
@@ -424,28 +456,6 @@ def _build_mock_realization_result(*, spec: RealizationSpec, request_prompt: str
         request_prompt=request_prompt,
         metadata={"mode": "mock"},
     )
-
-
-def _write_request_prompts(*, prompts: list[PromptRecord], output_path: Path | None) -> Path:
-    if output_path is None:
-        output_path = Path.cwd() / ".codex_benchmark_realization_requests.jsonl"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as handle:
-        for prompt in prompts:
-            handle.write(
-                json.dumps(
-                    {
-                        "prompt_id": prompt.prompt_id,
-                        "prompt": prompt.prompt,
-                        "language": prompt.language,
-                        "metadata": prompt.metadata,
-                        "parameters": prompt.parameters,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-    return output_path
 
 
 def _render_bullet_block(values: list[Any]) -> str:

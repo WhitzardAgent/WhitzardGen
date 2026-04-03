@@ -618,6 +618,7 @@ def handle_benchmark_build(args: argparse.Namespace) -> int:
     print(f"Bundle Dir: {summary.benchmark_dir}")
     print(f"Cases Path: {summary.cases_path}")
     print(f"Manifest: {summary.manifest_path}")
+    print("Next Evaluate: aigc evaluate run --benchmark " f"{summary.benchmark_dir} --targets <MODEL_NAME>")
     return 0
 
 
@@ -692,6 +693,7 @@ def handle_evaluate_run(args: argparse.Namespace) -> int:
         recipe_path=args.recipe,
         auto_launch=bool(args.auto_launch or recipe.get("auto_launch", False)),
         launcher_config_path=args.launcher_config or _resolve_recipe_relative_path(args.recipe, recipe.get("launcher_config")),
+        execution_policy=dict(recipe.get("execution_policy") or {}),
     )
     if args.output == "json":
         print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))

@@ -158,11 +158,62 @@ def _execution_request_to_prompt_record(request: ExecutionRequest) -> PromptReco
 
 def _resolve_request_prompt_text(request: ExecutionRequest) -> str:
     payload = dict(request.input_payload)
+    prompt_text = ""
     for key in ("prompt", "instruction", "text", "input"):
         value = payload.get(key)
         if value not in (None, ""):
-            return str(value)
-    return json.dumps(payload, ensure_ascii=False)
+            prompt_text = str(value)
+            break
+    if not prompt_text:
+        prompt_text = json.dumps(payload, ensure_ascii=False)
+    return _compose_prompt_text(
+        prompt_text=prompt_text,
+        payload=payload,
+        metadata=dict(request.metadata),
+    )
+
+
+def _compose_prompt_text(
+    *,
+    prompt_text: str,
+    payload: dict[str, Any],
+    metadata: dict[str, Any],
+) -> str:
+    composition = dict(metadata.get("prompt_composition", {}) or {})
+    text_prompt_composition = dict(composition.get("text_prompt_composition", {}) or {})
+    if not text_prompt_composition:
+        text_prompt_composition = composition
+    if not bool(text_prompt_composition.get("append_structured_choices", False)):
+        return prompt_text
+    decision_options = payload.get("decision_options")
+    if not isinstance(decision_options, list) or not decision_options:
+        case_metadata = dict(metadata.get("case_metadata", {}) or {})
+        decision_options = case_metadata.get("decision_options")
+    formatted_choices = _format_structured_choices(decision_options)
+    if not formatted_choices:
+        return prompt_text
+    separator = str(text_prompt_composition.get("separator") or "\n\n").replace("\\n", "\n")
+    header = str(text_prompt_composition.get("choices_header") or "Choices:").strip()
+    if header:
+        return f"{prompt_text}{separator}{header}\n{formatted_choices}"
+    return f"{prompt_text}{separator}{formatted_choices}"
+
+
+def _format_structured_choices(decision_options: Any) -> str:
+    if not isinstance(decision_options, list):
+        return ""
+    rendered: list[str] = []
+    for item in decision_options:
+        if not isinstance(item, dict):
+            return ""
+        option_id = str(item.get("id", "")).strip().upper()
+        text = str(item.get("text", "")).strip()
+        if option_id not in {"A", "B"} or not text:
+            return ""
+        rendered.append(f"{option_id}. {text}")
+    if len(rendered) != 2:
+        return ""
+    return "\n".join(rendered)
 
 
 def _optional_text(value: Any) -> str | None:

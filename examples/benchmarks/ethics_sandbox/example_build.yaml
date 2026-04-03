@@ -9,6 +9,7 @@ profiles:
       version: v1
       profile_vars:
         realization_mode: live_decision_brief
+        narrative_person: second_person
         binary_decision_policy: infer_from_constraints
 
 synthesis:
@@ -19,6 +20,7 @@ synthesis:
     max_new_tokens: 512
 
 validator:
+  enabled: true
   template_name: realization_validator_v1
   model: Qwen3-32B
   templates:

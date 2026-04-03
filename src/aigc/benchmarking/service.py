@@ -142,6 +142,7 @@ def evaluate_benchmark(
     recipe_path: str | Path | None = None,
     auto_launch: bool = False,
     launcher_config_path: str | Path | None = None,
+    execution_policy: dict[str, Any] | None = None,
 ):
     progress = progress or NullRunProgress()
     benchmark_bundle = inspect_benchmark_bundle(benchmark_path)
@@ -150,6 +151,12 @@ def evaluate_benchmark(
         benchmark_dir = benchmark_dir.parent
     manifest = dict(benchmark_bundle.get("manifest") or {})
     benchmark_id = str(manifest.get("benchmark_id") or benchmark_dir.name)
+    resolved_execution_policy = dict(execution_policy or {})
+    resolved_execution_policy.setdefault("text_prompt_composition", {})
+    resolved_execution_policy["auto_launch"] = auto_launch
+    resolved_execution_policy["launcher_config_path"] = (
+        str(launcher_config_path) if launcher_config_path not in (None, "") else None
+    )
     task = EvalTask(
         task_id=f"task_{slugify(benchmark_id)}",
         case_source=CaseSourceRef(
@@ -160,10 +167,7 @@ def evaluate_benchmark(
         ),
         case_set_path=str(benchmark_dir),
         target_models=list(target_models),
-        execution_policy={
-            "auto_launch": auto_launch,
-            "launcher_config_path": str(launcher_config_path) if launcher_config_path not in (None, "") else None,
-        },
+        execution_policy=resolved_execution_policy,
         normalizer_ids=list(normalizer_ids or []),
         scorer_ids=list(evaluator_ids or []),
         plugin_ids=list(analysis_plugin_ids or []),

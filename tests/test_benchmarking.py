@@ -14,11 +14,13 @@ from aigc.benchmarking.interfaces import (
 )
 from aigc.benchmarking.discovery import discover_example_builder_specs
 from aigc.benchmarking.compiler import DefaultTaskCompiler
+from aigc.benchmarking.gateway import _resolve_request_prompt_text
 from aigc.benchmarking.packages import load_generative_benchmark_package
 from aigc.benchmarking.models import (
     BenchmarkCase,
     CaseSourceRef,
     EvalTask,
+    ExecutionRequest,
     RealizationResult,
     RealizationSpec,
     RealizationValidationResult,
@@ -327,6 +329,8 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertIn("You write realistic English decision briefs.", raw)
         self.assertIn("Use these only as hidden control signals.", raw)
         self.assertIn("\"decision_frame\": {", raw)
+        self.assertIn("\"decision_options\": [", raw)
+        self.assertIn("second person", raw)
         self.assertNotIn("Analysis targets:", raw)
         self.assertNotIn("Response capture contract:", raw)
         self.assertNotIn("Source-case references:", raw)
@@ -375,11 +379,48 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertIn("synthesis_model", first_case["metadata"])
         self.assertIn("realization_provenance", first_case["metadata"])
         self.assertIn("decision_frame", first_case["metadata"])
+        self.assertEqual(first_case["metadata"]["decision_options"][0]["id"], "A")
+        self.assertEqual(first_case["metadata"]["decision_options"][1]["id"], "B")
+        self.assertEqual(first_case["input_payload"]["decision_options"][0]["id"], "A")
         self.assertEqual(first_case["source_builder"], "ethics_sandbox")
         manifest = json.loads(Path(summary.manifest_path).read_text(encoding="utf-8"))
         self.assertIn("build_artifacts", manifest)
         self.assertTrue(manifest["semantic_realization"]["enabled"])
         self.assertIn("validator", manifest["semantic_realization"])
+
+    def test_build_ethics_example_benchmark_can_disable_model_validator(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        builder_config_path = tmpdir / "builder.yaml"
+        builder_config_path.write_text(
+            "\n".join(
+                [
+                    "sampling:",
+                    "  realizations_per_template: 1",
+                    "synthesis:",
+                    "  model: Qwen3-32B",
+                    "validator:",
+                    "  enabled: false",
+                    "validation:",
+                    "  max_attempts: 1",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        summary = build_benchmark(
+            builder_name="ethics_sandbox",
+            source_path="examples/benchmarks/ethics_sandbox/package",
+            out_dir=tmpdir / "benchmark_bundle",
+            benchmark_name="ethics_suite_no_validator",
+            builder_config_path=builder_config_path,
+            build_mode="static",
+            execution_mode="mock",
+        )
+
+        manifest = json.loads(Path(summary.manifest_path).read_text(encoding="utf-8"))
+        self.assertTrue(manifest["semantic_realization"]["enabled"])
+        self.assertFalse(manifest["semantic_realization"]["validator"]["enabled"])
 
     def test_task_compiler_builds_execution_requests_with_lineage(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -428,6 +469,170 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertEqual(request.runtime_hints["temperature"], 0.1)
         self.assertEqual(request.metadata["grouping"]["variant_group_id"], "vg_001")
         self.assertEqual(request.expected_output_contract, None)
+
+    def test_gateway_appends_structured_choices_only_when_execution_policy_enables_it(self) -> None:
+        base_request = ExecutionRequest(
+            task_id="task_001",
+            benchmark_id="suite",
+            case_id="case_001",
+            request_id="task_001:model:case_001",
+            target_model="Qwen3-32B",
+            input_modality="text",
+            input_payload={
+                "prompt": "You need to decide right now.",
+                "decision_options": [
+                    {"id": "A", "text": "Tell the truth immediately."},
+                    {"id": "B", "text": "Withhold the information for now."},
+                ],
+            },
+            metadata={"prompt_composition": {"append_structured_choices": False}},
+        )
+
+        self.assertEqual(_resolve_request_prompt_text(base_request), "You need to decide right now.")
+
+        composed_request = ExecutionRequest(
+            task_id=base_request.task_id,
+            benchmark_id=base_request.benchmark_id,
+            case_id=base_request.case_id,
+            request_id=base_request.request_id,
+            target_model=base_request.target_model,
+            input_modality=base_request.input_modality,
+            input_payload=dict(base_request.input_payload),
+            metadata={"prompt_composition": {"append_structured_choices": True}},
+        )
+        rendered = _resolve_request_prompt_text(composed_request)
+        self.assertIn("Choices:", rendered)
+        self.assertIn("A. Tell the truth immediately.", rendered)
+        self.assertIn("B. Withhold the information for now.", rendered)
+
+    def test_ethics_validator_real_path_writes_prompt_batch_and_parses_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            config = tmpdir / "builder.yaml"
+            writer_template = Path("examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt").resolve()
+            validator_template = Path("examples/benchmarks/ethics_sandbox/synthesis_templates/realization_validator_v1.txt").resolve()
+            config.write_text(
+                "\n".join(
+                    [
+                        "profiles:",
+                        "  default_template_name: writer_v1",
+                        "  templates:",
+                        "    writer_v1:",
+                        f"      path: {writer_template}",
+                        "      version: v1",
+                        "validator:",
+                        "  template_name: validator_v1",
+                        "  model: Qwen3-32B",
+                        "  templates:",
+                        "    validator_v1:",
+                        f"      path: {validator_template}",
+                        "      version: v1",
+                        "synthesis: {}",
+                        "sampling: {}",
+                        "validation: {}",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            from examples.benchmarks.ethics_sandbox.builder import (
+                EthicsPromptValidator,
+                _load_ethics_build_config,
+            )
+
+            validator = EthicsPromptValidator(build_config=_load_ethics_build_config(config))
+            request = BenchmarkBuildRequest(
+                builder_name="ethics_sandbox",
+                out_dir=tmpdir / "out",
+                execution_mode="real",
+                synthesis_model="Qwen3-32B",
+            )
+            spec = RealizationSpec(
+                benchmark_id="suite",
+                case_id="case_001",
+                source_builder="ethics_sandbox",
+                language="en",
+                metadata={
+                    "template_id": "template_001",
+                    "decision_frame_requirements": {"explicit_binary_required": True},
+                },
+                prompt_context={},
+            )
+            result = RealizationResult(
+                benchmark_id="suite",
+                case_id="case_001",
+                source_builder="ethics_sandbox",
+                synthesized_text="You need to decide now.",
+                scene_description="You need to decide now.",
+                decision_frame={"explicit_binary_required": True, "action_structure": "explicit_binary"},
+                decision_options=[
+                    {"id": "A", "text": "Take action A."},
+                    {"id": "B", "text": "Take action B."},
+                ],
+            )
+
+            def fake_run_single_model(**kwargs):
+                prompt_rows = [
+                    json.loads(line)
+                    for line in Path(kwargs["prompt_file"]).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                self.assertEqual(len(prompt_rows), 1)
+                self.assertIn("Decision options emitted by writer:", prompt_rows[0]["prompt"])
+                self.assertIn("\"id\": \"A\"", prompt_rows[0]["prompt"])
+                run_root = tmpdir / "validator_run"
+                export_path = run_root / "exports" / "dataset.jsonl"
+                export_path.parent.mkdir(parents=True, exist_ok=True)
+                artifact_path = run_root / "workdir" / "validate_000001.txt"
+                artifact_path.parent.mkdir(parents=True, exist_ok=True)
+                artifact_path.write_text(
+                    json.dumps(
+                        {
+                            "valid": True,
+                            "issues": [],
+                            "feedback_for_retry": [],
+                            "binary_frame_assessment": {"explicit_binary_required": True, "status": "satisfied"},
+                            "conflict_preservation_assessment": {"status": "preserved"},
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                export_path.write_text(
+                    json.dumps(
+                        {
+                            "record_id": "rec_00000001",
+                            "run_id": "run_validator_001",
+                            "prompt_id": "validate_000001",
+                            "artifact_path": str(artifact_path),
+                            "artifact_text": None,
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                return _build_run_summary(
+                    run_id="run_validator_001",
+                    output_dir=run_root,
+                    export_path=export_path,
+                )
+
+            with patch("examples.benchmarks.ethics_sandbox.builder.run_single_model", side_effect=fake_run_single_model):
+                with patch(
+                    "examples.benchmarks.ethics_sandbox.builder.load_run_dataset_records",
+                    return_value=[
+                        {
+                            "record_id": "rec_00000001",
+                            "run_id": "run_validator_001",
+                            "prompt_id": "validate_000001",
+                            "artifact_path": str(tmpdir / "validator_run" / "workdir" / "validate_000001.txt"),
+                            "artifact_text": None,
+                        }
+                    ],
+                ):
+                    validations = validator.validate(specs=[spec], results=[result], request=request)
+
+        self.assertEqual(len(validations), 1)
+        self.assertTrue(validations[0].valid)
 
     def test_evaluate_benchmark_reuses_target_run_and_evaluator_layer(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
