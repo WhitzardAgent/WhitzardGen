@@ -64,7 +64,7 @@ For an architecture-focused Chinese runbook on the current V2 task-first stack, 
 Build:
 
 ```bash
-aigc benchmark build \
+whitzard benchmark build \
   --builder ethics_sandbox \
   --source examples/benchmarks/ethics_sandbox/package \
   --config examples/benchmarks/ethics_sandbox/example_build.yaml \
@@ -75,7 +75,7 @@ aigc benchmark build \
 Evaluate:
 
 ```bash
-aigc evaluate run \
+whitzard evaluate run \
   --benchmark runs/benchmarks/<bundle_id> \
   --targets Qwen3-32B \
   --evaluator-model Qwen3-32B \

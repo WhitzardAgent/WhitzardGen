@@ -213,7 +213,7 @@ A reasonable MVP code structure may look like:
 
 ```text
 src/
-  aigc/
+  whitzard/
     __init__.py
     cli/
     registry/
@@ -258,7 +258,7 @@ The first meaningful milestone is:
 A command like this should work:
 
 ```bash
-aigc run --models Z-Image --prompts prompts/example.jsonl
+whitzard run --models Z-Image --prompts prompts/example.jsonl
 ```
 
 And produce:
@@ -279,7 +279,7 @@ Until this works, nothing else matters.
 A command like this should work:
 
 ```bash
-aigc run --models Z-Image,FLUX.1-dev --prompts prompts/example.jsonl
+whitzard run --models Z-Image,FLUX.1-dev --prompts prompts/example.jsonl
 ```
 
 With:
@@ -298,7 +298,7 @@ With:
 A command like this should work:
 
 ```bash
-aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/video_example.jsonl
+whitzard run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/video_example.jsonl
 ```
 
 With:

@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.annotation.service import annotate_run
-from aigc.run_store import load_run_dataset_records
+from whitzard.annotation.service import annotate_run
+from whitzard.run_store import load_run_dataset_records
 
 
 def _build_summary(*, run_id: str, output_dir: Path, export_path: Path):
@@ -110,9 +110,9 @@ class AnnotationTests(unittest.TestCase):
             (run_root / "failures.json").write_text("[]", encoding="utf-8")
             return _build_summary(run_id="annotation_run_001", output_dir=run_root, export_path=export_path)
 
-        with patch("aigc.annotation.service.load_run_manifest", return_value={"run_id": "run_001", "manifest_path": str(tmpdir / "runs" / "run_001" / "run_manifest.json"), "export_path": str(tmpdir / "runs" / "run_001" / "exports" / "dataset.jsonl")}):
-            with patch("aigc.annotation.service.load_run_dataset_records", return_value=[source_record]):
-                with patch("aigc.annotation.service.run_single_model", side_effect=fake_run_single_model):
+        with patch("whitzard.annotation.service.load_run_manifest", return_value={"run_id": "run_001", "manifest_path": str(tmpdir / "runs" / "run_001" / "run_manifest.json"), "export_path": str(tmpdir / "runs" / "run_001" / "exports" / "dataset.jsonl")}):
+            with patch("whitzard.annotation.service.load_run_dataset_records", return_value=[source_record]):
+                with patch("whitzard.annotation.service.run_single_model", side_effect=fake_run_single_model):
                     summary = annotate_run(
                         "run_001",
                         annotation_profile="default_review",
@@ -150,9 +150,9 @@ class AnnotationTests(unittest.TestCase):
             "prompt_metadata": {},
         }
 
-        with patch("aigc.annotation.service.load_run_manifest", return_value={"run_id": "run_001", "manifest_path": str(tmpdir / "run_manifest.json"), "export_path": str(tmpdir / "dataset.jsonl")}):
-            with patch("aigc.annotation.service.load_run_dataset_records", return_value=[source_record]):
-                with patch("aigc.annotation.service.run_single_model") as run_single_model:
+        with patch("whitzard.annotation.service.load_run_manifest", return_value={"run_id": "run_001", "manifest_path": str(tmpdir / "run_manifest.json"), "export_path": str(tmpdir / "dataset.jsonl")}):
+            with patch("whitzard.annotation.service.load_run_dataset_records", return_value=[source_record]):
+                with patch("whitzard.annotation.service.run_single_model") as run_single_model:
                     summary = annotate_run(
                         "run_001",
                         annotation_profile="default_review",
@@ -211,9 +211,9 @@ class AnnotationTests(unittest.TestCase):
             (run_root / "failures.json").write_text("[]", encoding="utf-8")
             return _build_summary(run_id="annotation_run_remote", output_dir=run_root, export_path=export_path)
 
-        with patch("aigc.annotation.service.load_run_manifest", return_value={"run_id": "run_001", "manifest_path": str(tmpdir / "run_manifest.json"), "export_path": str(tmpdir / "dataset.jsonl")}):
-            with patch("aigc.annotation.service.load_run_dataset_records", return_value=[source_record]):
-                with patch("aigc.annotation.service.run_single_model", side_effect=fake_run_single_model):
+        with patch("whitzard.annotation.service.load_run_manifest", return_value={"run_id": "run_001", "manifest_path": str(tmpdir / "run_manifest.json"), "export_path": str(tmpdir / "dataset.jsonl")}):
+            with patch("whitzard.annotation.service.load_run_dataset_records", return_value=[source_record]):
+                with patch("whitzard.annotation.service.run_single_model", side_effect=fake_run_single_model):
                     summary = annotate_run(
                         "run_001",
                         annotation_profile="default_review",

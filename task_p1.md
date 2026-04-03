@@ -22,17 +22,17 @@ So the correct conclusion is:
 
 - Prompt loading is implemented for `.txt`, `.csv`, and `.jsonl`.
 - Registry coverage exists for all 11 MVP target models.
-- Environment management exists and now supports foreground synchronous creation for `aigc run`.
+- Environment management exists and now supports foreground synchronous creation for `whitzard run`.
 - Image and video adapters exist for all MVP target models.
 - Local `mock` mode works across image and video flows.
-- `aigc run`, `models`, `runs`, `export dataset`, and `doctor` are present and usable.
+- `whitzard run`, `models`, `runs`, `export dataset`, and `doctor` are present and usable.
 - Run directories, manifests, failures summaries, and JSONL dataset export are implemented.
 - Local model path overrides (`configs/local_models.yaml`) are implemented.
 
 ### What is not yet truly complete
 
 - The **scheduler subsystem** is still only a minimal sequential orchestration path inside `run_flow.py`; the dedicated scheduler described in the docs is not implemented.
-- `aigc runs retry` and `aigc runs resume` are **not implemented**.
+- `whitzard runs retry` and `whitzard runs resume` are **not implemented**.
 - Retry / resume behavior from the pipeline and scheduler specs is **not implemented**.
 - Prompt preprocessing is still **minimal**; model-specific translation / adaptation / token-length enforcement from the pipeline docs is not implemented.
 - Artifact validation is still **minimal**; there is collection and metadata extraction, but not a dedicated validation stage.
@@ -55,7 +55,7 @@ So the correct conclusion is:
 | Run flow | Mostly done | Multi-model, modality-consistent, batch-aware, mock/real-aware flow exists. Still acts as a lightweight orchestration layer, not a full scheduler. |
 | Dataset export | Mostly done | JSONL export and prompt-to-artifact mapping are in place. Parquet not implemented. |
 | CLI MVP | Partially done | `models list`, `models inspect`, `run`, `runs list`, `runs inspect`, `runs failures`, `export dataset`, `doctor`, `version` exist. `runs retry` / `runs resume` do not. |
-| Scheduler core | Not done | `src/aigc/scheduler/` is effectively empty; no queue, concurrency control, retry engine, or resume engine. |
+| Scheduler core | Not done | `src/whitzard/scheduler/` is effectively empty; no queue, concurrency control, retry engine, or resume engine. |
 
 ---
 
@@ -80,7 +80,7 @@ Current reality:
 - sequential execution exists
 - run manifest / failures summaries exist
 - but there is **no real scheduler subsystem**
-- `src/aigc/scheduler/__init__.py` is only a stub
+- `src/whitzard/scheduler/__init__.py` is only a stub
 
 This is the single biggest architecture gap still remaining.
 
@@ -91,8 +91,8 @@ The docs explicitly call for:
 - basic retry
 - interrupted run resume
 - CLI commands:
-  - `aigc runs retry <run_id>`
-  - `aigc runs resume <run_id>`
+  - `whitzard runs retry <run_id>`
+  - `whitzard runs resume <run_id>`
 
 Current reality:
 
@@ -136,8 +136,8 @@ Compared with `docs/cli_spec.md`, the CLI is in good shape but not fully complet
 
 Main remaining gaps:
 
-- `aigc runs retry`
-- `aigc runs resume`
+- `whitzard runs retry`
+- `whitzard runs resume`
 - richer global conventions like `--verbose` / `--quiet`
 - more differentiated exit codes beyond the current simple error handling
 - no meaningful run-time terminal progress UI yet for long-running jobs
@@ -254,7 +254,7 @@ The next work should be split into two tracks.
 This is the right next operational step now.
 
 - populate `configs/local_models.yaml`
-- create envs via `aigc run` / `aigc doctor`
+- create envs via `whitzard run` / `whitzard doctor`
 - run canary image/video jobs in `real` mode
 - validate artifact paths, command compatibility, and weights resolution
 

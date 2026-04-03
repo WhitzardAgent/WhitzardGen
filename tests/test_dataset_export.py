@@ -3,15 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aigc.exporters import (
+from whitzard.exporters import (
     ExportBundleSource,
     build_dataset_records,
     export_dataset_bundle,
     export_dataset_bundle_for_runs,
     export_jsonl,
 )
-from aigc.registry import load_registry
-from aigc.runtime.payloads import TaskPayload, TaskPrompt
+from whitzard.registry import load_registry
+from whitzard.runtime.payloads import TaskPayload, TaskPrompt
 
 
 class DatasetExportTests(unittest.TestCase):

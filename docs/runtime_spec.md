@@ -157,7 +157,7 @@ Example:
 
 ```
 
-aigc run --models Z-Image --prompts prompts.txt
+whitzard run --models Z-Image --prompts prompts.txt
 
 ```
 

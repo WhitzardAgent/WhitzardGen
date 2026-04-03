@@ -6,8 +6,8 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-import aigc.adapters.videos.mova_adapter as mova_adapter_module
-from aigc.adapters.video_family import (
+import whitzard.adapters.videos.mova_adapter as mova_adapter_module
+from whitzard.adapters.video_family import (
     CogVideoX5BAdapter,
     HeliosPyramidAdapter,
     HunyuanVideo15Adapter,
@@ -18,7 +18,7 @@ from aigc.adapters.video_family import (
     metadata_sidecar_path,
     resolve_video_model_reference,
 )
-from aigc.registry import load_registry
+from whitzard.registry import load_registry
 
 
 class VideoAdapterTests(unittest.TestCase):

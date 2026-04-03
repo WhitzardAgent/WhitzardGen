@@ -18,4 +18,4 @@
 # `aigc run --out ...` still takes precedence for one-off runs.
 
 paths:
-  runs_root: "/inspire/qb-ilm/project/control-technology/public/aigc_data"
+  runs_root: "/inspire/qb-ilm/project/control-technology/25015/aigc_data"

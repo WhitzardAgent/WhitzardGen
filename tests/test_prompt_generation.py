@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.prompt_generation import generate_prompt_bundle, inspect_prompt_bundle, plan_theme_tree
-from aigc.prompt_generation.planner import ThemePlanningError
+from whitzard.prompt_generation import generate_prompt_bundle, inspect_prompt_bundle, plan_theme_tree
+from whitzard.prompt_generation.planner import ThemePlanningError
 
 
 class PromptGenerationTests(unittest.TestCase):
@@ -288,7 +288,7 @@ class PromptGenerationTests(unittest.TestCase):
                 },
             )()
 
-        with patch("aigc.prompt_generation.service.run_single_model", side_effect=fake_run_single_model):
+        with patch("whitzard.prompt_generation.service.run_single_model", side_effect=fake_run_single_model):
             summary = generate_prompt_bundle(
                 tree_path=tree_path,
                 out_dir=out_dir,
@@ -374,7 +374,7 @@ class PromptGenerationTests(unittest.TestCase):
                 },
             )()
 
-        with patch("aigc.prompt_generation.service.run_single_model", side_effect=fake_run_single_model):
+        with patch("whitzard.prompt_generation.service.run_single_model", side_effect=fake_run_single_model):
             summary = generate_prompt_bundle(
                 tree_path=tree_path,
                 out_dir=out_dir,
@@ -588,7 +588,7 @@ class PromptGenerationTests(unittest.TestCase):
             )
             return type("Summary", (), {"run_id": "llm_run_001", "export_path": str(dataset_path)})()
 
-        with patch("aigc.prompt_generation.service.run_single_model", side_effect=fake_run_single_model):
+        with patch("whitzard.prompt_generation.service.run_single_model", side_effect=fake_run_single_model):
             summary = generate_prompt_bundle(
                 tree_path=tree_path,
                 out_dir=out_dir,
@@ -670,7 +670,7 @@ class PromptGenerationTests(unittest.TestCase):
             )
             return type("Summary", (), {"run_id": "llm_run_001", "export_path": str(dataset_path)})()
 
-        with patch("aigc.prompt_generation.service.run_single_model", side_effect=fake_run_single_model):
+        with patch("whitzard.prompt_generation.service.run_single_model", side_effect=fake_run_single_model):
             summary = generate_prompt_bundle(
                 tree_path=tree_path,
                 out_dir=out_dir,

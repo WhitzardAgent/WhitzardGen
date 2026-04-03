@@ -34,14 +34,14 @@ pip install -e .
 
 - 在 registry 中已有 `Qwen3-32B`
 - 对应 conda 环境已准备好
-- `aigc doctor --model Qwen3-32B` 通过
+- `whitzard doctor --model Qwen3-32B` 通过
 
 建议先检查：
 
 ```bash
-aigc version
-aigc doctor --model Qwen3-32B
-aigc models inspect Qwen3-32B
+whitzard version
+whitzard doctor --model Qwen3-32B
+whitzard models inspect Qwen3-32B
 ```
 
 ### 1.3 确认 ethics sandbox 模板包存在
@@ -126,7 +126,7 @@ validator:
 直接使用 recipe：
 
 ```bash
-aigc evaluate run \
+whitzard evaluate run \
   --recipe examples/experiments/ethics_structural.yaml
 ```
 
@@ -150,7 +150,7 @@ aigc evaluate run \
 ### 4.1 单独构建 benchmark
 
 ```bash
-aigc benchmark build \
+whitzard benchmark build \
   --builder ethics_sandbox \
   --source examples/benchmarks/ethics_sandbox/package \
   --config examples/benchmarks/ethics_sandbox/example_build.yaml \
@@ -161,7 +161,7 @@ aigc benchmark build \
 构建后可以检查：
 
 ```bash
-aigc benchmark inspect runs/benchmarks/<benchmark_bundle_dir>
+whitzard benchmark inspect runs/benchmarks/<benchmark_bundle_dir>
 ```
 
 这里的 `benchmark_bundle_dir` 就是完整 benchmark 的目录，不需要再导数据。它至少包含：
@@ -170,11 +170,21 @@ aigc benchmark inspect runs/benchmarks/<benchmark_bundle_dir>
   - 每一条 case 都已经带有完整 `slot_assignments`、`decision_frame`、`decision_options` 和其他 metadata
 - `benchmark_manifest.json`
 - `stats.json`
+- `raw_realizations.jsonl`
+  - build 阶段所有 realization 的原始结果和 validation 状态
+- `rejected_realizations.jsonl`
+  - 没进入最终 benchmark 的坏样本，但不会丢失
+
+如果你关闭 model-based validator 或者允许部分坏样本存在，当前 build 也不会整批失败：
+
+- valid cases 会写进 `cases.jsonl`
+- invalid cases 会写进 `rejected_realizations.jsonl`
+- 所以前面已经生成出来的 realization 不会白跑
 
 ### 4.2 在构建好的 benchmark 上跑 experiment
 
 ```bash
-aigc evaluate run \
+whitzard evaluate run \
   --benchmark runs/benchmarks/<benchmark_bundle_dir> \
   --targets Qwen3-32B \
   --normalizers ethics_structural_normalizer \
@@ -185,7 +195,7 @@ aigc evaluate run \
 如果你想使用 evaluator 的 legacy flags，也可以继续显式指定：
 
 ```bash
-aigc evaluate run \
+whitzard evaluate run \
   --benchmark runs/benchmarks/<benchmark_bundle_dir> \
   --targets Qwen3-32B \
   --normalizers ethics_structural_normalizer \
@@ -200,7 +210,7 @@ aigc evaluate run \
 如果你想测多个模型，只需要改 recipe 的 `targets`，或者直接在命令行覆盖：
 
 ```bash
-aigc evaluate run \
+whitzard evaluate run \
   --recipe examples/experiments/ethics_structural.yaml \
   --targets Qwen3-32B Another-LLM
 ```
@@ -208,7 +218,7 @@ aigc evaluate run \
 建议注意：
 
 - 所有 target models 最好都是 `t2t`
-- 对每个 target model 先跑 `aigc doctor --model <model_name>`
+- 对每个 target model 先跑 `whitzard doctor --model <model_name>`
 - 如果 judge model 和 target model 不是同一个，也要确认 judge model 环境可用
 
 ## 6. 如何调 benchmark 规模
@@ -267,13 +277,13 @@ experiment 完成后，会写出一个 experiment bundle。核心文件包括：
 你可以直接查看实验摘要：
 
 ```bash
-aigc experiments report <experiment_id>
+whitzard experiments report <experiment_id>
 ```
 
 或者 inspect：
 
 ```bash
-aigc evaluate inspect <experiment_id>
+whitzard evaluate inspect <experiment_id>
 ```
 
 其中各文件含义建议这样理解：
@@ -298,7 +308,7 @@ aigc evaluate inspect <experiment_id>
 先把 `realizations_per_template` 设成 `1` 或 `2`，然后运行：
 
 ```bash
-aigc evaluate run --recipe examples/experiments/ethics_structural.yaml
+whitzard evaluate run --recipe examples/experiments/ethics_structural.yaml
 ```
 
 重点看：

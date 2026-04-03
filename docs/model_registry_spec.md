@@ -421,7 +421,7 @@ Example:
 ### list models
 
 ```
-aigc models list
+whitzard models list
 ```
 
 Output:
@@ -440,7 +440,7 @@ HunyuanImage-3.0   text-to-image
 ### inspect model
 
 ```
-aigc models inspect Z-Image
+whitzard models inspect Z-Image
 ```
 
 Output:

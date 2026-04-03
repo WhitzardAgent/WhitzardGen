@@ -3,8 +3,8 @@ from __future__ import annotations
 import io
 import unittest
 
-from aigc.ui.runtime_ui import RuntimeTerminalUI
-from aigc.utils.progress import (
+from whitzard.ui.runtime_ui import RuntimeTerminalUI
+from whitzard.utils.progress import (
     RunHeaderData,
     RunSummaryData,
     TextRunProgress,

@@ -22,7 +22,7 @@ Current ethics realization defaults:
 
 Contents:
 
-- `builder.yaml`: builder manifest used by `aigc benchmark list/build`
+- `builder.yaml`: builder manifest used by `whitzard benchmark list/build`
 - `builder.py`: example benchmark builder and example group analyzer
 - `example_build.yaml`: semantic-build config with sampling / synthesis / validator / validation sections
 - `synthesis_templates/`: build-time writer and validator templates used to realize and validate naturalistic scenarios

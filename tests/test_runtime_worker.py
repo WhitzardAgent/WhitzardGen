@@ -68,7 +68,7 @@ class RuntimeWorkerTests(unittest.TestCase):
             [
                 sys.executable,
                 "-m",
-                "aigc.runtime.worker",
+                "whitzard.runtime.worker",
                 "--task-file",
                 str(task_path),
                 "--result-file",
@@ -115,7 +115,7 @@ class RuntimeWorkerTests(unittest.TestCase):
             [
                 sys.executable,
                 "-m",
-                "aigc.runtime.worker",
+                "whitzard.runtime.worker",
                 "--task-file",
                 str(task_path),
                 "--result-file",

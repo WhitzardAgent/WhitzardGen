@@ -21,7 +21,7 @@ The Environment Manager must support:
 - environment validation
 - environment health reporting
 
-The Environment Manager is a **runtime subsystem**. It is not user-facing in MVP except through indirect CLI behavior such as `aigc run` and `aigc doctor`.
+The Environment Manager is a **runtime subsystem**. It is not user-facing in MVP except through indirect CLI behavior such as `whitzard run` and `whitzard doctor`.
 
 ---
 
@@ -73,8 +73,8 @@ The framework should not recreate environments unnecessarily.
 
 Readiness validation should also be cached pragmatically for normal run execution.
 
-- `aigc run` may trust a recent successful validation result for an existing `ready` environment
-- `aigc doctor` should force a fresh validation pass
+- `whitzard run` may trust a recent successful validation result for an existing `ready` environment
+- `whitzard doctor` should force a fresh validation pass
 - the cache policy should remain simple and observable
 
 ---
@@ -564,7 +564,7 @@ Recommended MVP behavior:
 
 # 16. Health Check / Doctor Integration
 
-The `aigc doctor` command should query the Environment Manager.
+The `whitzard doctor` command should query the Environment Manager.
 
 Checks should include:
 

@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aigc.run_profiles import RunProfileError, load_run_profile, resolve_profile_run_request
+from whitzard.run_profiles import RunProfileError, load_run_profile, resolve_profile_run_request
 
 
 class RunProfilesTests(unittest.TestCase):

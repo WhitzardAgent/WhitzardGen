@@ -122,11 +122,11 @@ Already defined in `prompt_spec.md`
 
 The MVP is complete only if all of the following are true:
 
-1. `aigc models list` shows all target models
-2. `aigc models inspect <model>` works for all target models
+1. `whitzard models list` shows all target models
+2. `whitzard models inspect <model>` works for all target models
 3. prompt loader supports `.txt`, `.csv`, and `.jsonl`
-4. `aigc run --models ... --prompts ...` works for image jobs
-5. `aigc run --models ... --prompts ...` works for video jobs
+4. `whitzard run --models ... --prompts ...` works for image jobs
+5. `whitzard run --models ... --prompts ...` works for video jobs
 6. environments are created automatically
 7. at least one batch-capable image model actually runs in batch mode
 8. all target models have real integration paths
@@ -247,7 +247,7 @@ Suggested structure:
 
 ```text
 src/
-  aigc/
+  whitzard/
     cli/
     prompts/
     registry/
@@ -343,8 +343,8 @@ Even if adapter not fully implemented yet, registry structure must exist
 
 ### Done when
 
-* `aigc models list` works
-* `aigc models inspect <model>` works
+* `whitzard models list` works
+* `whitzard models inspect <model>` works
 * all target models are discoverable
 
 ---
@@ -383,7 +383,7 @@ For worker launches and external-process models
 
 * selecting a model causes its environment to be resolved automatically
 * missing environments are created automatically
-* `aigc doctor` can report env readiness
+* `whitzard doctor` can report env readiness
 
 ---
 
@@ -477,7 +477,7 @@ Run one real image model end-to-end.
 Command works:
 
 ```bash
-aigc run --models Z-Image --prompts prompts/example.txt
+whitzard run --models Z-Image --prompts prompts/example.txt
 ```
 
 And produces:
@@ -520,7 +520,7 @@ Each model satisfies:
 * registry entry exists
 * environment spec exists
 * adapter exists
-* `aigc models inspect` works
+* `whitzard models inspect` works
 * real run generates at least one valid image artifact
 
 ---
@@ -550,7 +550,7 @@ Run one real video model end-to-end.
 Command works:
 
 ```bash
-aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/video_prompts.txt
+whitzard run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/video_prompts.txt
 ```
 
 And produces:
@@ -666,25 +666,25 @@ Implement the user-facing CLI defined in `cli_spec.md`
 
 ### Tasks
 
-#### T12.1 `aigc models list`
+#### T12.1 `whitzard models list`
 
-#### T12.2 `aigc models inspect <model>`
+#### T12.2 `whitzard models inspect <model>`
 
-#### T12.3 `aigc run --models ... --prompts ...`
+#### T12.3 `whitzard run --models ... --prompts ...`
 
-#### T12.4 `aigc runs list`
+#### T12.4 `whitzard runs list`
 
-#### T12.5 `aigc runs inspect <run_id>`
+#### T12.5 `whitzard runs inspect <run_id>`
 
-#### T12.6 `aigc runs failures <run_id>`
+#### T12.6 `whitzard runs failures <run_id>`
 
-#### T12.7 `aigc runs retry <run_id>`
+#### T12.7 `whitzard runs retry <run_id>`
 
-#### T12.8 `aigc runs resume <run_id>`
+#### T12.8 `whitzard runs resume <run_id>`
 
-#### T12.9 `aigc export dataset <run_id>`
+#### T12.9 `whitzard export dataset <run_id>`
 
-#### T12.10 `aigc doctor`
+#### T12.10 `whitzard doctor`
 
 ### Done when
 
@@ -723,7 +723,7 @@ Because you explicitly require `.txt` and `.csv`, these are mandatory MVP tasks.
 Done when:
 
 ```bash
-aigc run --models Z-Image --prompts prompts/example.txt
+whitzard run --models Z-Image --prompts prompts/example.txt
 ```
 
 works successfully.
@@ -733,7 +733,7 @@ works successfully.
 Done when:
 
 ```bash
-aigc run --models Z-Image --prompts prompts/example.csv
+whitzard run --models Z-Image --prompts prompts/example.csv
 ```
 
 works successfully.
@@ -839,7 +839,7 @@ One image model runs end-to-end from `.txt`
 Example:
 
 ```bash
-aigc run --models Z-Image --prompts prompts/example.txt
+whitzard run --models Z-Image --prompts prompts/example.txt
 ```
 
 ## Milestone B
@@ -849,7 +849,7 @@ Two image models run from `.csv`
 Example:
 
 ```bash
-aigc run --models Z-Image,FLUX.1-dev --prompts prompts/example.csv
+whitzard run --models Z-Image,FLUX.1-dev --prompts prompts/example.csv
 ```
 
 ## Milestone C
@@ -859,7 +859,7 @@ One video model runs end-to-end
 Example:
 
 ```bash
-aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/video_prompts.txt
+whitzard run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/video_prompts.txt
 ```
 
 ## Milestone D

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aigc.registry import load_registry
+from whitzard.registry import load_registry
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -277,7 +277,7 @@ class RegistryTests(unittest.TestCase):
         )
 
         result = subprocess.run(
-            [sys.executable, "-m", "aigc", "models", "inspect", "OpenAI-Compatible-Chat", "--output", "json"],
+            [sys.executable, "-m", "whitzard", "models", "inspect", "OpenAI-Compatible-Chat", "--output", "json"],
             cwd=ROOT,
             env={
                 "PYTHONPATH": str(ROOT / "src"),
@@ -329,7 +329,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_models_list_json_output(self) -> None:
         result = subprocess.run(
-            [sys.executable, "-m", "aigc", "models", "list", "--output", "json"],
+            [sys.executable, "-m", "whitzard", "models", "list", "--output", "json"],
             cwd=ROOT,
             env={"PYTHONPATH": str(ROOT / "src")},
             capture_output=True,
@@ -342,7 +342,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_models_inspect_text_output(self) -> None:
         result = subprocess.run(
-            [sys.executable, "-m", "aigc", "models", "inspect", "Z-Image"],
+            [sys.executable, "-m", "whitzard", "models", "inspect", "Z-Image"],
             cwd=ROOT,
             env={"PYTHONPATH": str(ROOT / "src")},
             capture_output=True,

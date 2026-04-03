@@ -5,18 +5,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.benchmarking.interfaces import (
+from whitzard.benchmarking.interfaces import (
     BenchmarkBuildRequest,
     CaseCompiler,
     ParameterSampler,
     RealizationValidator,
     StructureGuard,
 )
-from aigc.benchmarking.discovery import discover_example_builder_specs
-from aigc.benchmarking.compiler import DefaultTaskCompiler
-from aigc.benchmarking.gateway import _resolve_request_prompt_text
-from aigc.benchmarking.packages import load_generative_benchmark_package
-from aigc.benchmarking.models import (
+from whitzard.benchmarking.discovery import discover_example_builder_specs
+from whitzard.benchmarking.compiler import DefaultTaskCompiler
+from whitzard.benchmarking.gateway import _resolve_request_prompt_text
+from whitzard.benchmarking.packages import load_generative_benchmark_package
+from whitzard.benchmarking.models import (
     BenchmarkCase,
     CaseSourceRef,
     EvalTask,
@@ -26,11 +26,11 @@ from aigc.benchmarking.models import (
     RealizationValidationResult,
     ScoreRecord,
 )
-from aigc.benchmarking.realization import (
+from whitzard.benchmarking.realization import (
     BenchmarkBuildOutputLike,
     execute_semantic_realization_pipeline,
 )
-from aigc.benchmarking.service import build_benchmark, evaluate_benchmark, normalize_case_payload
+from whitzard.benchmarking.service import build_benchmark, evaluate_benchmark, normalize_case_payload
 
 
 def _build_run_summary(*, run_id: str, output_dir: Path, export_path: Path):
@@ -257,6 +257,77 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertIn("doctor", output.cases[0].prompt.lower())
         self.assertTrue(output.build_artifacts["realization_validator_enabled"])
 
+    def test_semantic_realization_pipeline_exports_valid_subset_when_some_cases_fail(self) -> None:
+        class DummySampler(ParameterSampler):
+            def sample(self, request: BenchmarkBuildRequest) -> list[RealizationSpec]:
+                del request
+                return [
+                    RealizationSpec(benchmark_id="suite", case_id="case_good", source_builder="dummy"),
+                    RealizationSpec(benchmark_id="suite", case_id="case_bad", source_builder="dummy"),
+                ]
+
+        class DummyGuard(StructureGuard):
+            def validate_spec(self, spec: RealizationSpec) -> list[str]:
+                return []
+
+            def validate_realization(self, spec: RealizationSpec, result: RealizationResult) -> list[str]:
+                del result
+                if spec.case_id == "case_bad":
+                    return ["bad case should be rejected"]
+                return []
+
+        class DummyRenderer:
+            def render(self, spec: RealizationSpec, *, validation_feedback=None) -> str:
+                del validation_feedback
+                return spec.case_id
+
+        class DummyBackend:
+            def synthesize(
+                self,
+                *,
+                specs: list[RealizationSpec],
+                renderer,
+                request: BenchmarkBuildRequest,
+                validation_feedback_by_case_id: dict[str, list[str]] | None = None,
+            ) -> list[RealizationResult]:
+                del renderer, request, validation_feedback_by_case_id
+                return [
+                    RealizationResult(
+                        benchmark_id=spec.benchmark_id,
+                        case_id=spec.case_id,
+                        source_builder=spec.source_builder,
+                        synthesized_text=f"result for {spec.case_id}",
+                    )
+                    for spec in specs
+                ]
+
+        class DummyCompiler(CaseCompiler):
+            def compile(self, spec: RealizationSpec, result: RealizationResult) -> BenchmarkCase:
+                return BenchmarkCase(
+                    benchmark_id=spec.benchmark_id,
+                    case_id=spec.case_id,
+                    input_modality="text",
+                    input_payload={"prompt": result.synthesized_text},
+                    prompt=result.synthesized_text,
+                    source_builder=spec.source_builder,
+                )
+
+        output = execute_semantic_realization_pipeline(
+            request=BenchmarkBuildRequest(builder_name="dummy", execution_mode="mock"),
+            sampler=DummySampler(),
+            guard=DummyGuard(),
+            renderer=DummyRenderer(),
+            compiler=DummyCompiler(),
+            synthesis_backend=DummyBackend(),
+            max_attempts=1,
+        )
+
+        self.assertEqual([case.case_id for case in output.cases], ["case_good"])
+        self.assertEqual(output.build_artifacts["realization_rejected_case_count"], 1)
+        self.assertEqual(len(output.extra_jsonl_files["raw_realizations.jsonl"]), 2)
+        self.assertEqual(len(output.extra_jsonl_files["rejected_realizations.jsonl"]), 1)
+        self.assertEqual(output.extra_jsonl_files["rejected_realizations.jsonl"][0]["case_id"], "case_bad")
+
     def test_normalize_case_payload_supports_structured_v2_fields(self) -> None:
         case = normalize_case_payload(
             {
@@ -421,6 +492,58 @@ class BenchmarkingTests(unittest.TestCase):
         manifest = json.loads(Path(summary.manifest_path).read_text(encoding="utf-8"))
         self.assertTrue(manifest["semantic_realization"]["enabled"])
         self.assertFalse(manifest["semantic_realization"]["validator"]["enabled"])
+
+    def test_build_benchmark_summary_exposes_raw_and_rejected_realization_paths(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        builder_config_path = tmpdir / "builder.yaml"
+        builder_config_path.write_text(
+            "\n".join(
+                [
+                    "sampling:",
+                    "  realizations_per_template: 1",
+                    "synthesis:",
+                    "  model: Qwen3-32B",
+                    "validator:",
+                    "  enabled: false",
+                    "validation:",
+                    "  max_attempts: 1",
+                    "  required_slot_mentions:",
+                    "    - decision_maker_role",
+                    "    - setting_domain",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with patch("examples.benchmarks.ethics_sandbox.builder._looks_second_person", return_value=True):
+            with patch(
+                "examples.benchmarks.ethics_sandbox.builder._validate_decision_options",
+                return_value=[],
+            ):
+                with patch(
+                    "examples.benchmarks.ethics_sandbox.builder.validate_required_value_mentions",
+                    return_value=["missing mention"],
+                ):
+                    summary = build_benchmark(
+                        builder_name="ethics_sandbox",
+                        source_path="examples/benchmarks/ethics_sandbox/package",
+                        out_dir=tmpdir / "benchmark_bundle",
+                        benchmark_name="ethics_suite_partial",
+                        builder_config_path=builder_config_path,
+                        build_mode="matrix",
+                        execution_mode="mock",
+                    )
+
+        self.assertTrue(Path(summary.cases_path).exists())
+        self.assertTrue(Path(str(summary.raw_realizations_path)).exists())
+        self.assertTrue(Path(str(summary.rejected_realizations_path)).exists())
+        rejected_rows = [
+            json.loads(line)
+            for line in Path(str(summary.rejected_realizations_path)).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertGreater(len(rejected_rows), 0)
 
     def test_task_compiler_builds_execution_requests_with_lineage(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -744,8 +867,8 @@ class BenchmarkingTests(unittest.TestCase):
             return results, []
 
         with patch.dict(os.environ, {"AIGC_LOCAL_RUNTIME_FILE": str(config_path)}, clear=False):
-            with patch("aigc.benchmarking.gateway.run_single_model", side_effect=fake_run_single_model):
-                with patch("aigc.benchmarking.runner.score_target_results", side_effect=fake_score_target_results):
+            with patch("whitzard.benchmarking.gateway.run_single_model", side_effect=fake_run_single_model):
+                with patch("whitzard.benchmarking.runner.score_target_results", side_effect=fake_score_target_results):
                     summary = evaluate_benchmark(
                         benchmark_path=benchmark_summary.benchmark_dir,
                         target_models=["Qwen3-32B"],

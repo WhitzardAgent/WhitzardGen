@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aigc.recovery import build_resume_plan, build_retry_plan
-from aigc.run_flow import run_recovery_plan
-from aigc.runtime.payloads import TaskPayload, TaskPrompt
+from whitzard.recovery import build_resume_plan, build_retry_plan
+from whitzard.run_flow import run_recovery_plan
+from whitzard.runtime.payloads import TaskPayload, TaskPrompt
 
 
 class FakeEnvRecord:

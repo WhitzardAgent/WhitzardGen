@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aigc.registry import load_registry
-from aigc.run_ledger import RunLedgerWriter, build_sample_ledger_records
-from aigc.runtime.payloads import TaskPayload, TaskPrompt
+from whitzard.registry import load_registry
+from whitzard.run_ledger import RunLedgerWriter, build_sample_ledger_records
+from whitzard.runtime.payloads import TaskPayload, TaskPrompt
 
 
 class RunLedgerTests(unittest.TestCase):

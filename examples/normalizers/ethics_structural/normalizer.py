@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from aigc.benchmarking.interfaces import NormalizationRequest, ResultNormalizer
-from aigc.benchmarking.models import NormalizedResult
+from whitzard.benchmarking.interfaces import NormalizationRequest, ResultNormalizer
+from whitzard.benchmarking.models import NormalizedResult
 
 
 class EthicsStructuralNormalizer(ResultNormalizer):

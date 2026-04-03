@@ -105,8 +105,8 @@ Next checks worth adding:
 
 Still not done:
 - dedicated scheduler subsystem
-- `aigc runs retry`
-- `aigc runs resume`
+- `whitzard runs retry`
+- `whitzard runs resume`
 - interrupted-run recovery
 
 Why it matters next:

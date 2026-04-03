@@ -8,8 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from aigc.run_flow import REPO_ROOT, RunFlowError, _PersistentWorkerSession
-from aigc.registry import load_registry
+from whitzard.run_flow import REPO_ROOT, RunFlowError, _PersistentWorkerSession
+from whitzard.registry import load_registry
 
 
 class _FakeEnvRecord:
@@ -248,4 +248,4 @@ class PersistentWorkerTests(unittest.TestCase):
                 env.update(env_overrides)
             return [sys.executable, "-m", module_name, *extra_args], env
 
-        return patch("aigc.run_flow._build_worker_command_and_env", side_effect=fake_build_worker_command_and_env)
+        return patch("whitzard.run_flow._build_worker_command_and_env", side_effect=fake_build_worker_command_and_env)

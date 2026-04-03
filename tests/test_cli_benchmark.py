@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 class BenchmarkCliTests(unittest.TestCase):
     def test_handle_benchmark_build_prints_summary(self) -> None:
-        from aigc.cli.main import handle_benchmark_build
+        from whitzard.cli.main import handle_benchmark_build
 
         summary = type(
             "Summary",
@@ -57,7 +57,7 @@ class BenchmarkCliTests(unittest.TestCase):
             },
         )()
 
-        with patch("aigc.cli.main.build_benchmark", return_value=summary):
+        with patch("whitzard.cli.main.build_benchmark", return_value=summary):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_benchmark_build(args), 0)
             payload = json.loads(stream.getvalue())
@@ -65,7 +65,7 @@ class BenchmarkCliTests(unittest.TestCase):
         self.assertEqual(payload["benchmark_id"], "ethics_suite")
 
     def test_handle_benchmark_build_text_output_prints_next_evaluate_hint(self) -> None:
-        from aigc.cli.main import handle_benchmark_build
+        from whitzard.cli.main import handle_benchmark_build
 
         summary = type(
             "Summary",
@@ -79,6 +79,8 @@ class BenchmarkCliTests(unittest.TestCase):
                 "benchmark_dir": "/tmp/benchmarks/ethics_suite",
                 "cases_path": "/tmp/benchmarks/ethics_suite/cases.jsonl",
                 "manifest_path": "/tmp/benchmarks/ethics_suite/benchmark_manifest.json",
+                "raw_realizations_path": "/tmp/benchmarks/ethics_suite/raw_realizations.jsonl",
+                "rejected_realizations_path": "/tmp/benchmarks/ethics_suite/rejected_realizations.jsonl",
             },
         )()
         args = type(
@@ -109,16 +111,18 @@ class BenchmarkCliTests(unittest.TestCase):
             },
         )()
 
-        with patch("aigc.cli.main.build_benchmark", return_value=summary):
+        with patch("whitzard.cli.main.build_benchmark", return_value=summary):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_benchmark_build(args), 0)
         output = stream.getvalue()
         self.assertIn("Bundle Dir: /tmp/benchmarks/ethics_suite", output)
         self.assertIn("Cases Path: /tmp/benchmarks/ethics_suite/cases.jsonl", output)
-        self.assertIn("Next Evaluate: aigc evaluate run --benchmark /tmp/benchmarks/ethics_suite --targets <MODEL_NAME>", output)
+        self.assertIn("Raw Realizations: /tmp/benchmarks/ethics_suite/raw_realizations.jsonl", output)
+        self.assertIn("Rejected Realizations: /tmp/benchmarks/ethics_suite/rejected_realizations.jsonl", output)
+        self.assertIn("Next Evaluate: whitzard evaluate run --benchmark /tmp/benchmarks/ethics_suite --targets <MODEL_NAME>", output)
 
     def test_handle_evaluate_run_uses_requested_targets_and_evaluators(self) -> None:
-        from aigc.cli.main import handle_evaluate_run
+        from whitzard.cli.main import handle_evaluate_run
 
         summary = type(
             "Summary",
@@ -184,7 +188,7 @@ class BenchmarkCliTests(unittest.TestCase):
             self.assertEqual(kwargs["execution_mode"], "mock")
             return summary
 
-        with patch("aigc.cli.main.evaluate_benchmark", side_effect=fake_evaluate_benchmark):
+        with patch("whitzard.cli.main.evaluate_benchmark", side_effect=fake_evaluate_benchmark):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_evaluate_run(args), 0)
             payload = json.loads(stream.getvalue())
@@ -192,7 +196,7 @@ class BenchmarkCliTests(unittest.TestCase):
         self.assertEqual(payload["experiment_id"], "experiment_ethics_suite")
 
     def test_handle_evaluate_run_recipe_builds_benchmark_and_uses_recipe_layers(self) -> None:
-        from aigc.cli.main import handle_evaluate_run
+        from whitzard.cli.main import handle_evaluate_run
 
         summary = type(
             "Summary",
@@ -266,9 +270,9 @@ class BenchmarkCliTests(unittest.TestCase):
             },
         )()
 
-        with patch("aigc.cli.main.load_experiment_recipe", return_value=recipe):
-            with patch("aigc.cli.main.build_benchmark", return_value=build_summary) as build_mock:
-                with patch("aigc.cli.main.evaluate_benchmark", return_value=summary) as evaluate_mock:
+        with patch("whitzard.cli.main.load_experiment_recipe", return_value=recipe):
+            with patch("whitzard.cli.main.build_benchmark", return_value=build_summary) as build_mock:
+                with patch("whitzard.cli.main.evaluate_benchmark", return_value=summary) as evaluate_mock:
                     with redirect_stdout(StringIO()) as stream:
                         self.assertEqual(handle_evaluate_run(args), 0)
                     payload = json.loads(stream.getvalue())
@@ -287,7 +291,7 @@ class BenchmarkCliTests(unittest.TestCase):
         )
 
     def test_handle_experiments_report_prints_summary(self) -> None:
-        from aigc.cli.main import handle_experiments_report
+        from whitzard.cli.main import handle_experiments_report
 
         args = type(
             "Args",
@@ -317,7 +321,7 @@ class BenchmarkCliTests(unittest.TestCase):
             "report_path": "/tmp/experiments/experiment_ethics_suite/report.md",
         }
 
-        with patch("aigc.cli.main.inspect_experiment", return_value=payload):
+        with patch("whitzard.cli.main.inspect_experiment", return_value=payload):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_experiments_report(args), 0)
 

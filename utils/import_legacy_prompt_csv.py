@@ -12,14 +12,14 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from aigc.utils.prompt_import import convert_legacy_prompt_csv_to_jsonl
+from whitzard.utils.prompt_import import convert_legacy_prompt_csv_to_jsonl
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Convert legacy synthesized prompt CSV files into JSONL files that "
-            "aigc run can consume."
+            "whitzard run can consume."
         )
     )
     parser.add_argument("--input", required=True, help="Source CSV path.")

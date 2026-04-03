@@ -6,10 +6,10 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.env import EnvManager
-from aigc.env import manager as env_manager_module
-from aigc.env.manager import EnvManagerError
-from aigc.registry import load_registry
+from whitzard.env import EnvManager
+from whitzard.env import manager as env_manager_module
+from whitzard.env.manager import EnvManagerError
+from whitzard.registry import load_registry
 
 
 class FakeManualEnvManager(EnvManager):
@@ -304,7 +304,7 @@ OpenAI-Compatible-Chat:
 
         with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=False):
             with patch(
-                "aigc.env.manager.urllib.request.urlopen",
+                "whitzard.env.manager.urllib.request.urlopen",
                 return_value=_FakeResponse(b'{"data": []}'),
             ):
                 record = manager.inspect_model_environment("OpenAI-Compatible-Chat")

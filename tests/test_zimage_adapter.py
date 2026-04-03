@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aigc.adapters.base import ExecutionPlan, ExecutionResult
-from aigc.adapters.zimage import ZImageAdapter
-from aigc.registry import load_registry
+from whitzard.adapters.base import ExecutionPlan, ExecutionResult
+from whitzard.adapters.zimage import ZImageAdapter
+from whitzard.registry import load_registry
 
 
 TINY_PNG = base64.b64decode(

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-from aigc.benchmarking.interfaces import AnalysisPlugin, AnalysisPluginRequest
-from aigc.benchmarking.models import AnalysisPluginResult
+from whitzard.benchmarking.interfaces import AnalysisPlugin, AnalysisPluginRequest
+from whitzard.benchmarking.models import AnalysisPluginResult
 
 
 class EthicsFamilyConsistencyPlugin(AnalysisPlugin):

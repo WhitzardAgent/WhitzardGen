@@ -3,7 +3,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from aigc.prompts import PromptValidationError, load_prompts, normalize_text
+from whitzard.prompts import PromptValidationError, load_prompts, normalize_text
 
 
 class PromptLoaderTests(unittest.TestCase):

@@ -1,5 +1,5 @@
 sampling:
-  realizations_per_template: 2
+  realizations_per_template: 20
 
 profiles:
   default_template_name: standard_naturalistic_v1
@@ -13,16 +13,16 @@ profiles:
         binary_decision_policy: infer_from_constraints
 
 synthesis:
-  model: Qwen3-32B
+  model: Qwen2.5-32B-Instruct
   request_version: v1
   generation_defaults:
     temperature: 0.8
-    max_new_tokens: 512
+    max_new_tokens: 2048
 
 validator:
-  enabled: true
+  enabled: false
   template_name: realization_validator_v1
-  model: Qwen3-32B
+  model: Qwen2.5-32B-Instruct
   templates:
     realization_validator_v1:
       path: synthesis_templates/realization_validator_v1.txt

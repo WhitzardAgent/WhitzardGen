@@ -36,30 +36,30 @@ benchmark build -> target execution -> evaluation -> experiment report
 #### 1. Benchmark / Experiment 工作流
 
 ```bash
-aigc benchmark build \
+whitzard benchmark build \
   --builder ethics_sandbox \
   --source examples/benchmarks/ethics_sandbox/package \
   --config examples/benchmarks/ethics_sandbox/example_build.yaml \
   --build-mode matrix
 
-aigc evaluate run \
+whitzard evaluate run \
   --benchmark runs/benchmarks/<bundle_id> \
   --targets Qwen3-32B \
   --evaluator-model Qwen3-32B \
   --evaluator-profile ethics_structural_review \
   --evaluator-template ethics_structural_review_v1
 
-aigc experiments report <experiment_id>
+whitzard experiments report <experiment_id>
 ```
 
 #### 2. Kernel 直连工作流
 
 当你想直接控制底层生成/导出链路时，仍然使用：
 
-- `aigc prompts ...`
-- `aigc run ...`
-- `aigc annotate ...`
-- `aigc export ...`
+- `whitzard prompts ...`
+- `whitzard run ...`
+- `whitzard annotate ...`
+- `whitzard export ...`
 
 ## 当前能力
 
@@ -89,7 +89,7 @@ aigc experiments report <experiment_id>
   - prompt 写作 style family
   - style-family few-shot examples
 - Profile 运行：
-  - `aigc run --profile ...`
+  - `whitzard run --profile ...`
 - 运行期能力：
   - persistent worker
   - sequential replica warmup
@@ -127,10 +127,10 @@ aigc experiments report <experiment_id>
 
 关键目录：
 
-- [src/aigc](/Users/morinop/coding/whitzardgen/src/aigc)：框架源码
-- [src/aigc/benchmarking](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking)：通用 benchmark/build/evaluate core
-- [src/aigc/normalizers](/Users/morinop/coding/whitzardgen/src/aigc/normalizers)：通用 normalization substrate
-- [src/aigc/analysis](/Users/morinop/coding/whitzardgen/src/aigc/analysis)：通用 analysis-plugin substrate
+- [src/whitzard](/Users/morinop/coding/whitzardgen/src/whitzard)：框架源码
+- [src/whitzard/benchmarking](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking)：通用 benchmark/build/evaluate core
+- [src/whitzard/normalizers](/Users/morinop/coding/whitzardgen/src/whitzard/normalizers)：通用 normalization substrate
+- [src/whitzard/analysis](/Users/morinop/coding/whitzardgen/src/whitzard/analysis)：通用 analysis-plugin substrate
 - [examples/benchmarks](/Users/morinop/coding/whitzardgen/examples/benchmarks)：具体 benchmark builder 示例，如 `ethics_sandbox`、`theme_tree`
 - [examples/evaluators](/Users/morinop/coding/whitzardgen/examples/evaluators)：构建在通用 evaluator substrate 之上的具体 evaluator 示例
 - [examples/normalizers](/Users/morinop/coding/whitzardgen/examples/normalizers)：构建在通用 normalization substrate 之上的具体领域 normalizer 示例
@@ -163,27 +163,27 @@ pip install -e .
 检查 CLI：
 
 ```bash
-aigc version
+whitzard version
 ```
 
 如果你之前装过旧版本：
 
 ```bash
-pip uninstall -y aigc
+pip uninstall -y whitzard
 pip install -e .
 ```
 
 如果 console script 仍然异常：
 
 ```bash
-pip uninstall -y aigc
+pip uninstall -y whitzard
 rm -rf *.egg-info
 pip install --no-build-isolation -e .
 ```
 
 ## 环境管理方式
 
-当前框架**不会**在 `aigc run` 时自动创建 Conda 环境。
+当前框架**不会**在 `whitzard run` 时自动创建 Conda 环境。
 
 现在的约定是：
 
@@ -196,8 +196,8 @@ pip install --no-build-isolation -e .
 因此，真实运行前，建议先做：
 
 ```bash
-aigc doctor
-aigc doctor --model Z-Image
+whitzard doctor
+whitzard doctor --model Z-Image
 ```
 
 ## 配置文件职责
@@ -294,16 +294,16 @@ OpenAI-Compatible-Chat:
 
 配置完成后，它就可以直接复用现有命令：
 
-- `aigc run`
-- `aigc annotate`
-- `aigc evaluate run`
+- `whitzard run`
+- `whitzard annotate`
+- `whitzard evaluate run`
 - prompt generation / prompt rewrite 中选择 `t2t` 模型的路径
 
 推荐检查命令：
 
 ```bash
-aigc models inspect OpenAI-Compatible-Chat
-aigc doctor --model OpenAI-Compatible-Chat
+whitzard models inspect OpenAI-Compatible-Chat
+whitzard doctor --model OpenAI-Compatible-Chat
 ```
 
 对于远程模型，`models inspect` 会对敏感 provider headers 做脱敏展示，`doctor` 会校验 provider 必填字段、API key 环境变量，以及一个轻量的 OpenAI-compatible `/models` 健康探测。
@@ -339,9 +339,9 @@ CogVideoX-5B:
 
 ```yaml
 paths:
-  runs_root: /shared/aigc_runs
-  benchmarks_root: /shared/aigc_runs/benchmarks
-  experiments_root: /shared/aigc_runs/experiments
+  runs_root: /shared/whitzard_runs
+  benchmarks_root: /shared/whitzard_runs/benchmarks
+  experiments_root: /shared/whitzard_runs/experiments
 
 generation:
   default_seed: 12345
@@ -512,35 +512,35 @@ generation_defaults:
 列出模型：
 
 ```bash
-aigc models list
-aigc models list --modality image
-aigc models list --task-type t2v
+whitzard models list
+whitzard models list --modality image
+whitzard models list --task-type t2v
 ```
 
 查看单个模型：
 
 ```bash
-aigc models inspect Z-Image
+whitzard models inspect Z-Image
 ```
 
 跑单模型 canary：
 
 ```bash
-aigc models canary Z-Image --mock
-aigc models canary Wan2.2-T2V-A14B-Diffusers
+whitzard models canary Z-Image --mock
+whitzard models canary Wan2.2-T2V-A14B-Diffusers
 ```
 
 从当前 registry 生成 capability matrix：
 
 ```bash
-aigc models matrix --write-docs
+whitzard models matrix --write-docs
 ```
 
 ### 环境诊断
 
 ```bash
-aigc doctor
-aigc doctor --model Wan2.2-T2V-A14B-Diffusers
+whitzard doctor
+whitzard doctor --model Wan2.2-T2V-A14B-Diffusers
 ```
 
 ### 启动任务
@@ -548,25 +548,25 @@ aigc doctor --model Wan2.2-T2V-A14B-Diffusers
 单模型：
 
 ```bash
-aigc run --models Z-Image --prompts prompts/canary_image.txt --execution-mode mock
+whitzard run --models Z-Image --prompts prompts/canary_image.txt --execution-mode mock
 ```
 
 多模型：
 
 ```bash
-aigc run --models Z-Image,FLUX.1-dev --prompts prompts/canary_image.txt --execution-mode mock
+whitzard run --models Z-Image,FLUX.1-dev --prompts prompts/canary_image.txt --execution-mode mock
 ```
 
 真实视频任务示例：
 
 ```bash
-aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/canary_video.txt --execution-mode real
+whitzard run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/canary_video.txt --execution-mode real
 ```
 
 failure policy 示例：
 
 ```bash
-aigc run \
+whitzard run \
   --models Z-Image \
   --prompts prompts/test_image_100.txt \
   --execution-mode real \
@@ -580,8 +580,8 @@ aigc run \
 Profile 更适合真实采集：
 
 ```bash
-aigc run --profile configs/run_profiles/image_real.yaml
-aigc run --profile configs/run_profiles/video_real.yaml
+whitzard run --profile configs/run_profiles/image_real.yaml
+whitzard run --profile configs/run_profiles/video_real.yaml
 ```
 
 可参考：
@@ -596,7 +596,7 @@ aigc run --profile configs/run_profiles/video_real.yaml
 先看主题树 planning：
 
 ```bash
-aigc prompts plan \
+whitzard prompts plan \
   --tree prompts/theme_tree_example.yaml \
   --count-config prompts/theme_tree_example.counts.yaml \
   --output json
@@ -605,7 +605,7 @@ aigc prompts plan \
 按默认 template/style-family 生成 prompt bundle：
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --count-config prompts/theme_tree_example.counts.yaml \
   --execution-mode mock
@@ -614,7 +614,7 @@ aigc prompts generate \
 显式切换 template：
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --template documentary_scene
 ```
@@ -622,7 +622,7 @@ aigc prompts generate \
 显式切换 prompt 写作 style family：
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --style-family keyword_list
 ```
@@ -630,7 +630,7 @@ aigc prompts generate \
 让系统根据下游目标模型自动选择默认 style family：
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --target-model Z-Image
 ```
@@ -638,7 +638,7 @@ aigc prompts generate \
 使用真实 T2T 模型做 prompt synthesis：
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --execution-mode real \
   --llm-model Qwen3-32B \
@@ -649,11 +649,11 @@ aigc prompts generate \
 查看 prompt bundle：
 
 ```bash
-aigc prompts inspect <prompt_bundle_dir>
-aigc prompts inspect <prompt_bundle_dir> --output json
+whitzard prompts inspect <prompt_bundle_dir>
+whitzard prompts inspect <prompt_bundle_dir> --output json
 ```
 
-`aigc prompts generate` 当前常用参数：
+`whitzard prompts generate` 当前常用参数：
 
 - `--tree`
 - `--out`
@@ -669,7 +669,7 @@ aigc prompts inspect <prompt_bundle_dir> --output json
 
 推荐使用方式：
 
-- 先用 `aigc prompts plan` 看 quota 和 resample 是否符合预期
+- 先用 `whitzard prompts plan` 看 quota 和 resample 是否符合预期
 - 对大主题树，尽量把 quota 放到独立的 `--count-config` 文件
 - 如果你只是想快速表达“每个子类采多少”，直接用 `defaults.subcategory`
 - 用 `--template` 切换顶层任务说明
@@ -680,9 +680,9 @@ aigc prompts inspect <prompt_bundle_dir> --output json
 ### Run 查看
 
 ```bash
-aigc runs list
-aigc runs inspect <run_id>
-aigc runs failures <run_id>
+whitzard runs list
+whitzard runs inspect <run_id>
+whitzard runs failures <run_id>
 ```
 
 ### Retry / Resume
@@ -690,13 +690,13 @@ aigc runs failures <run_id>
 重试失败输出：
 
 ```bash
-aigc runs retry <run_id>
+whitzard runs retry <run_id>
 ```
 
 恢复中断任务中缺失的输出：
 
 ```bash
-aigc runs resume <run_id>
+whitzard runs resume <run_id>
 ```
 
 ### 数据集导出
@@ -704,27 +704,27 @@ aigc runs resume <run_id>
 单 run 导出：
 
 ```bash
-aigc export dataset <run_id>
-aigc export dataset <run_id> --mode link
-aigc export dataset <run_id> --mode copy
+whitzard export dataset <run_id>
+whitzard export dataset <run_id> --mode link
+whitzard export dataset <run_id> --mode copy
 ```
 
 多 run 合并导出：
 
 ```bash
-aigc export dataset run_001 run_002 run_003
+whitzard export dataset run_001 run_002 run_003
 ```
 
 按 model 过滤：
 
 ```bash
-aigc export dataset run_001 run_002 --model Z-Image --model FLUX.1-dev
+whitzard export dataset run_001 run_002 --model Z-Image --model FLUX.1-dev
 ```
 
 自定义导出位置：
 
 ```bash
-aigc export dataset run_001 run_002 --out /data/exports/my_bundle
+whitzard export dataset run_001 run_002 --out /data/exports/my_bundle
 ```
 
 ## Run 产物说明
@@ -749,7 +749,7 @@ aigc export dataset run_001 run_002 --out /data/exports/my_bundle
 
 ## Prompt Bundle 说明
 
-`aigc prompts generate` 输出的是一个 prompt bundle，而不是单独一份 JSONL。
+`whitzard prompts generate` 输出的是一个 prompt bundle，而不是单独一份 JSONL。
 
 典型结构：
 
@@ -838,7 +838,7 @@ dataset_bundle/
 实际请始终以：
 
 ```bash
-aigc models list
+whitzard models list
 ```
 
 为准。
@@ -849,17 +849,17 @@ aigc models list
 
 当前结构：
 
-- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
-- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
+- [src/whitzard/adapters/images](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images)
+- [src/whitzard/adapters/videos](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos)
 
 例如：
 
-- [src/aigc/adapters/images/zimage.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/zimage.py)
-- [src/aigc/adapters/images/flux.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/flux.py)
-- [src/aigc/adapters/videos/wan_t2v.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/wan_t2v.py)
-- [src/aigc/adapters/videos/cogvideox.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/cogvideox.py)
-- [src/aigc/adapters/videos/longcat.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/longcat.py)
-- [src/aigc/adapters/videos/helios.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/helios.py)
+- [src/whitzard/adapters/images/zimage.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images/zimage.py)
+- [src/whitzard/adapters/images/flux.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images/flux.py)
+- [src/whitzard/adapters/videos/wan_t2v.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/wan_t2v.py)
+- [src/whitzard/adapters/videos/cogvideox.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/cogvideox.py)
+- [src/whitzard/adapters/videos/longcat.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/longcat.py)
+- [src/whitzard/adapters/videos/helios.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/helios.py)
 
 这样共享逻辑会留在小的 base/common 模块里，后面接新模型也更容易维护。
 
@@ -907,15 +907,15 @@ aigc models list
 准备好后先检查：
 
 ```bash
-aigc doctor --model <model_name>
+whitzard doctor --model <model_name>
 ```
 
 ### 4. 实现或复用 Adapter
 
 通常入口在：
 
-- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
-- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
+- [src/whitzard/adapters/images](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images)
+- [src/whitzard/adapters/videos](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos)
 
 按模型类型选择：
 
@@ -937,13 +937,13 @@ aigc doctor --model <model_name>
 先跑 dedicated canary：
 
 ```bash
-aigc models canary <model_name> --mock
+whitzard models canary <model_name> --mock
 ```
 
 然后再做真实 GPU / cluster 验证：
 
 ```bash
-aigc models canary <model_name>
+whitzard models canary <model_name>
 ```
 
 建议一起看这些 onboarding 产物：
@@ -978,20 +978,20 @@ aigc models canary <model_name>
 
 - `weights_path`
 - `conda_env_name`
-- `aigc doctor --model CogVideoX-5B`
+- `whitzard doctor --model CogVideoX-5B`
 
 ## 实际使用建议
 
 - 真实采集尽量使用 `.jsonl` prompts。
 - 经常复用的任务尽量用 run profile。
-- 开始真实任务前先跑 `aigc doctor`。
+- 开始真实任务前先跑 `whitzard doctor`。
 - 长任务中重点看：
   - `running.log`
   - `runtime_status.json`
   - `samples.jsonl`
 - 中断恢复尽量使用：
-  - `aigc runs retry`
-  - `aigc runs resume`
+  - `whitzard runs retry`
+  - `whitzard runs resume`
 - 面向下游数据整理时，优先使用 export bundle，而不是只拿单个 run 的 `exports/dataset.jsonl`。
 
 ## Roadmap

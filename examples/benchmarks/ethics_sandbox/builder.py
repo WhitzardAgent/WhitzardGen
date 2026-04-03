@@ -7,7 +7,7 @@ from pathlib import Path
 from random import Random
 from typing import Any
 
-from aigc.benchmarking.interfaces import (
+from whitzard.benchmarking.interfaces import (
     BenchmarkBuildOutput,
     BenchmarkBuildRequest,
     BenchmarkBuilder,
@@ -18,25 +18,25 @@ from aigc.benchmarking.interfaces import (
     RealizationValidator,
     StructureGuard,
 )
-from aigc.benchmarking.models import (
+from whitzard.benchmarking.models import (
     BenchmarkCase,
     RealizationResult,
     RealizationSpec,
     RealizationValidationResult,
 )
-from aigc.benchmarking.packages import GenerativeBenchmarkPackage, SlotDefinition, load_generative_benchmark_package
-from aigc.benchmarking.prompt_io import write_prompt_records_jsonl
-from aigc.benchmarking.realization import (
+from whitzard.benchmarking.packages import GenerativeBenchmarkPackage, SlotDefinition, load_generative_benchmark_package
+from whitzard.benchmarking.prompt_io import write_prompt_records_jsonl
+from whitzard.benchmarking.realization import (
     SimpleTemplateRenderer,
     execute_semantic_realization_pipeline,
     validate_forbidden_terms,
     validate_required_value_mentions,
 )
-from aigc.benchmarking.service import load_yaml_file, slugify
-from aigc.prompts.models import PromptRecord
-from aigc.run_flow import run_single_model
-from aigc.run_store import load_run_dataset_records
-from aigc.utils.progress import NullRunProgress
+from whitzard.benchmarking.service import load_yaml_file, slugify
+from whitzard.prompts.models import PromptRecord
+from whitzard.run_flow import run_single_model
+from whitzard.run_store import load_run_dataset_records
+from whitzard.utils.progress import NullRunProgress
 
 _DEFAULT_FORBIDDEN_TERMS = [
     "test",
@@ -151,6 +151,7 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
             },
             build_artifacts=pipeline_output.build_artifacts,
             build_manifest_overrides=pipeline_output.build_manifest_overrides,
+            extra_jsonl_files=pipeline_output.extra_jsonl_files,
         )
 
 

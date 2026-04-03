@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aigc"
+name = "whitzard"
 version = "0.1.0"
 description = "Multimodal AIGC synthetic data generation framework MVP"
 readme = "README.md"
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-aigc = "aigc.cli.main:main"
+whitzard = "whitzard.cli.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

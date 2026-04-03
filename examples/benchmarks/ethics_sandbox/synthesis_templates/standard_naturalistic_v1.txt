@@ -75,6 +75,8 @@ Generation priorities, in order:
 
 If validation feedback is provided, revise only as much as needed to fix those issues while preserving the scene's realism and deep structure.
 
+### Context
+
 Template title:
 {{template_title}}
 
@@ -122,3 +124,17 @@ Hidden control signals for fidelity only:
 
 If this is a retry, fix the following validation issues:
 {{validation_feedback_block}}
+
+### Output format:
+Return valid JSON only, with exactly these keys:
+{
+  "scene_description": "...",
+  "decision_frame": {
+    "explicit_binary_required": true,
+    "action_structure": "explicit_binary"
+  },
+  "decision_options": [
+    { "id": "A", "text": "..." },
+    { "id": "B", "text": "..." }
+  ]
+}

@@ -50,6 +50,6 @@ For each real benchmark run, record at least:
 
 1. Start from the current defaults in [configs/models](/Users/morinop/coding/whitzardgen/configs/models).
 2. Use [configs/local_models](/Users/morinop/coding/whitzardgen/configs/local_models) for machine-local overrides.
-3. Run `aigc models canary <model>` first.
+3. Run `whitzard models canary <model>` first.
 4. Then run a slightly longer real prompt set.
 5. Update [configs/model_benchmarks.yaml](/Users/morinop/coding/whitzardgen/configs/model_benchmarks.yaml) with the measured results and recommended tuned defaults.

@@ -155,20 +155,20 @@ Current policy:
 
 - users prepare Conda envs manually
 - the framework checks and uses them
-- the framework does not auto-create envs during `aigc run`
+- the framework does not auto-create envs during `whitzard run`
 
 Make sure the model has a usable env name.
 
 Then verify:
 
 ```bash
-aigc doctor --model <model_name>
+whitzard doctor --model <model_name>
 ```
 
 Also inspect effective model config:
 
 ```bash
-aigc models inspect <model_name>
+whitzard models inspect <model_name>
 ```
 
 Checklist:
@@ -184,20 +184,20 @@ Checklist:
 
 Typical adapter locations:
 
-- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
-- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
+- [src/whitzard/adapters/images](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images)
+- [src/whitzard/adapters/videos](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos)
 
 Recommended layout:
 
-- shared image helpers in [src/aigc/adapters/images/base.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/base.py)
+- shared image helpers in [src/whitzard/adapters/images/base.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images/base.py)
 - model-specific image integrations in focused modules such as:
-  - [src/aigc/adapters/images/zimage.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/zimage.py)
-  - [src/aigc/adapters/images/flux.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/flux.py)
-- shared video helpers in [src/aigc/adapters/videos/base.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/base.py) and [src/aigc/adapters/videos/diffusers_base.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/diffusers_base.py)
+  - [src/whitzard/adapters/images/zimage.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images/zimage.py)
+  - [src/whitzard/adapters/images/flux.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images/flux.py)
+- shared video helpers in [src/whitzard/adapters/videos/base.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/base.py) and [src/whitzard/adapters/videos/diffusers_base.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/diffusers_base.py)
 - model-specific video integrations in focused modules such as:
-  - [src/aigc/adapters/videos/wan_t2v.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/wan_t2v.py)
-  - [src/aigc/adapters/videos/longcat.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/longcat.py)
-  - [src/aigc/adapters/videos/helios.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/helios.py)
+  - [src/whitzard/adapters/videos/wan_t2v.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/wan_t2v.py)
+  - [src/whitzard/adapters/videos/longcat.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/longcat.py)
+  - [src/whitzard/adapters/videos/helios.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/helios.py)
 
 Checklist:
 
@@ -266,13 +266,13 @@ Useful test targets:
 ### Step 1. Static config inspection
 
 ```bash
-aigc models inspect <model_name>
+whitzard models inspect <model_name>
 ```
 
 ### Step 2. Environment readiness
 
 ```bash
-aigc doctor --model <model_name>
+whitzard doctor --model <model_name>
 ```
 
 ### Step 3. Canary validation
@@ -280,14 +280,14 @@ aigc doctor --model <model_name>
 Prefer the dedicated canary command:
 
 ```bash
-aigc models canary <model_name>
+whitzard models canary <model_name>
 ```
 
 Optional forms:
 
 ```bash
-aigc models canary <model_name> --mock
-aigc models canary <model_name> --prompt-file prompts/canary_video.jsonl
+whitzard models canary <model_name> --mock
+whitzard models canary <model_name> --prompt-file prompts/canary_video.jsonl
 ```
 
 This command reuses the normal run flow, but constrains it to a one-model validation path with the appropriate canary prompt file by default.
@@ -327,7 +327,7 @@ Keep onboarding artifacts in sync with the actual model state.
 Generate the current capability matrix from the registry:
 
 ```bash
-aigc models matrix --write-docs
+whitzard models matrix --write-docs
 ```
 
 This refreshes:
@@ -346,8 +346,8 @@ A model integration should not be considered complete until all of the following
 
 - registry entry exists and is valid
 - local deployment fields are clearly defined
-- `aigc models inspect` is useful
-- `aigc doctor --model ...` is useful
+- `whitzard models inspect` is useful
+- `whitzard doctor --model ...` is useful
 - canary validation works
 - real mode works on the target cluster
 - outputs are traceable in:

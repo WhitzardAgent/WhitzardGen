@@ -7,9 +7,9 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.env.manager import EnvManagerError
-from aigc.run_ledger import RunLedgerWriter
-from aigc.run_flow import (
+from whitzard.env.manager import EnvManagerError
+from whitzard.run_ledger import RunLedgerWriter
+from whitzard.run_flow import (
     FailureBudget,
     FailurePolicy,
     PreparedTask,
@@ -26,12 +26,12 @@ from aigc.run_flow import (
     run_models,
     run_single_model,
 )
-from aigc.registry import load_registry
-from aigc.runtime.payloads import TaskPayload, TaskPrompt
-from aigc.runtime_telemetry import RunTelemetry
-from aigc.runtime.worker import execute_task_payload
-from aigc.utils.progress import TextRunProgress
-from aigc.utils.runtime_logging import RunLogger
+from whitzard.registry import load_registry
+from whitzard.runtime.payloads import TaskPayload, TaskPrompt
+from whitzard.runtime_telemetry import RunTelemetry
+from whitzard.runtime.worker import execute_task_payload
+from whitzard.utils.progress import TextRunProgress
+from whitzard.utils.runtime_logging import RunLogger
 
 
 class FakeEnvRecord:
@@ -578,7 +578,7 @@ class RunFlowTests(unittest.TestCase):
         prompts_path = tmpdir / "rewrite_fallback.txt"
         prompts_path.write_text(original_prompt + "\n", encoding="utf-8")
 
-        with patch("aigc.run_flow._parse_prompt_rewrite_response", return_value=""):
+        with patch("whitzard.run_flow._parse_prompt_rewrite_response", return_value=""):
             summary = run_models(
                 model_names=["Z-Image"],
                 prompt_file=prompts_path,
@@ -971,7 +971,7 @@ class RunFlowTests(unittest.TestCase):
                 return 0, ""
 
         with patch.dict(os.environ, {"AIGC_AVAILABLE_GPUS": "0,1"}, clear=False):
-            with patch("aigc.run_flow._PersistentWorkerSession", FakeSession):
+            with patch("whitzard.run_flow._PersistentWorkerSession", FakeSession):
                 summary = run_single_model(
                     model_name="Z-Image",
                     prompt_file=prompts_path,
@@ -1081,7 +1081,7 @@ class RunFlowTests(unittest.TestCase):
                 return 0, ""
 
         with patch.dict(os.environ, {"AIGC_AVAILABLE_GPUS": "0,1,2,3"}, clear=False):
-            with patch("aigc.run_flow._PersistentWorkerSession", FakeSession):
+            with patch("whitzard.run_flow._PersistentWorkerSession", FakeSession):
                 summary = run_single_model(
                     model_name="CogVideoX-5B",
                     prompt_file=prompts_path,
@@ -1205,8 +1205,8 @@ class RunFlowTests(unittest.TestCase):
         ]
         ledger_writer = RunLedgerWriter(tmpdir / "samples.jsonl")
         try:
-            with patch("aigc.run_flow._PersistentWorkerSession", FakeSession), patch(
-                "aigc.run_flow._execute_prepared_task",
+            with patch("whitzard.run_flow._PersistentWorkerSession", FakeSession), patch(
+                "whitzard.run_flow._execute_prepared_task",
                 fake_execute_prepared_task,
             ):
                 _run_persistent_worker_replicas(
@@ -1341,8 +1341,8 @@ class RunFlowTests(unittest.TestCase):
         try:
             telemetry.set_plan(prepared_tasks_by_model={model.name: replica_plans[0].tasks})
             telemetry.register_replica_assignments(model_name=model.name, replica_plans=replica_plans)
-            with patch("aigc.run_flow._PersistentWorkerSession", FakeSession), patch(
-                "aigc.run_flow._execute_prepared_task",
+            with patch("whitzard.run_flow._PersistentWorkerSession", FakeSession), patch(
+                "whitzard.run_flow._execute_prepared_task",
                 fake_execute_prepared_task,
             ):
                 results = _run_persistent_worker_replicas(

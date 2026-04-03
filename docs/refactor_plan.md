@@ -712,17 +712,17 @@ Medium-term:
 Suggested commands:
 
 ```bash
-aigc tasks list
-aigc tasks inspect <task_id>
-aigc tasks run <task_id>
-aigc tasks compile <task_id>
+whitzard tasks list
+whitzard tasks inspect <task_id>
+whitzard tasks run <task_id>
+whitzard tasks compile <task_id>
 ```
 
 Supporting commands:
 
 ```bash
-aigc benchmark build ...
-aigc evaluate run ...
+whitzard benchmark build ...
+whitzard evaluate run ...
 ```
 
 can remain as lower-level or compatibility flows.
@@ -873,30 +873,30 @@ Existing commands should continue to work during the migration window.
 One possible V2 package structure:
 
 ```text
-src/aigc/tasks/
+src/whitzard/tasks/
   models.py
   compiler.py
   registry.py
   service.py
 
-src/aigc/contracts/
+src/whitzard/contracts/
   cases.py
   execution.py
   results.py
   logs.py
 
-src/aigc/experiments/
+src/whitzard/experiments/
   runner.py
   bundle.py
   reporting.py
   logging.py
 
-src/aigc/scoring/
+src/whitzard/scoring/
   interfaces.py
   service.py
   config.py
 
-src/aigc/runtime_gateway/
+src/whitzard/runtime_gateway/
   service.py
   prompt_bridge.py
 ```

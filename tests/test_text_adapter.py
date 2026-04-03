@@ -8,8 +8,8 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.registry import load_registry
-from aigc.providers.openai_compatible import OpenAICompatibleClient
+from whitzard.registry import load_registry
+from whitzard.providers.openai_compatible import OpenAICompatibleClient
 
 
 class _FakeScalar:
@@ -169,7 +169,7 @@ class TextAdapterTests(unittest.TestCase):
         )
 
     def test_qwen25_instruct_adapter_uses_system_and_user_chat_template(self) -> None:
-        from aigc.adapters.texts.qwen25_instruct import Qwen25InstructTextAdapter
+        from whitzard.adapters.texts.qwen25_instruct import Qwen25InstructTextAdapter
 
         registry = load_registry()
         adapter = Qwen25InstructTextAdapter(
@@ -216,7 +216,7 @@ class TextAdapterTests(unittest.TestCase):
         self.assertIn("p001", result.outputs)
 
     def test_qwen3_adapter_sets_left_padding_for_decoder_only_batches(self) -> None:
-        from aigc.adapters.texts.qwen3 import Qwen3TextAdapter
+        from whitzard.adapters.texts.qwen3 import Qwen3TextAdapter
 
         registry = load_registry()
         adapter = Qwen3TextAdapter(model_config=registry.get_model("Qwen3-32B"))
@@ -264,7 +264,7 @@ class TextAdapterTests(unittest.TestCase):
         self.assertEqual(tokenizer.padding_side, "left")
 
     def test_local_transformers_adapter_sets_left_padding_for_decoder_only_batches(self) -> None:
-        from aigc.adapters.texts.local_transformers import LocalTransformersTextAdapter
+        from whitzard.adapters.texts.local_transformers import LocalTransformersTextAdapter
 
         registry = load_registry()
         adapter = LocalTransformersTextAdapter(model_config=registry.get_model("Qwen3-32B"))
@@ -353,7 +353,7 @@ class TextAdapterTests(unittest.TestCase):
             timeout_sec=12.5,
         )
 
-        with patch("aigc.providers.openai_compatible.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("whitzard.providers.openai_compatible.urllib.request.urlopen", side_effect=fake_urlopen):
             payload = client.generate_text(
                 prompt="Tell me about reefs",
                 params={"temperature": 0.2, "max_new_tokens": 128, "seed": 7},
@@ -399,7 +399,7 @@ class TextAdapterTests(unittest.TestCase):
             request_api="responses",
         )
 
-        with patch("aigc.providers.openai_compatible.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("whitzard.providers.openai_compatible.urllib.request.urlopen", side_effect=fake_urlopen):
             payload = client.generate_text(
                 prompt="Summarize the scene",
                 params={"top_p": 0.8},
@@ -461,7 +461,7 @@ class TextAdapterTests(unittest.TestCase):
             initial_backoff_sec=0.0,
         )
 
-        with patch("aigc.providers.openai_compatible.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("whitzard.providers.openai_compatible.urllib.request.urlopen", side_effect=fake_urlopen):
             payload = client.generate_text(
                 prompt="Tell me about reefs",
                 params={},

@@ -8,8 +8,8 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.recovery import RecoveryPlan
-from aigc.run_flow import run_single_model
+from whitzard.recovery import RecoveryPlan
+from whitzard.run_flow import run_single_model
 
 
 class FakeEnvRecord:
@@ -63,7 +63,7 @@ class FakeDoctorRecord:
 
 class RunsCliTests(unittest.TestCase):
     def test_handle_prompts_generate_returns_bundle_summary(self) -> None:
-        from aigc.cli.main import handle_prompts_generate
+        from whitzard.cli.main import handle_prompts_generate
 
         summary = type(
             "Summary",
@@ -112,7 +112,7 @@ class RunsCliTests(unittest.TestCase):
             },
         )()
 
-        with patch("aigc.cli.main.generate_prompt_bundle", return_value=summary):
+        with patch("whitzard.cli.main.generate_prompt_bundle", return_value=summary):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_prompts_generate(args), 0)
             payload = json.loads(stream.getvalue())
@@ -121,7 +121,7 @@ class RunsCliTests(unittest.TestCase):
         self.assertEqual(payload["prompt_count"], 12)
 
     def test_handle_prompts_inspect_prints_bundle_summary(self) -> None:
-        from aigc.cli.main import handle_prompts_inspect
+        from whitzard.cli.main import handle_prompts_inspect
 
         args = type(
             "Args",
@@ -147,7 +147,7 @@ class RunsCliTests(unittest.TestCase):
             "counts_by_category": {"Animals": 8},
         }
 
-        with patch("aigc.cli.main.inspect_prompt_bundle", return_value=inspect_payload):
+        with patch("whitzard.cli.main.inspect_prompt_bundle", return_value=inspect_payload):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_prompts_inspect(args), 0)
 
@@ -158,7 +158,7 @@ class RunsCliTests(unittest.TestCase):
         self.assertIn("Style Family: detailed_sentence", output)
 
     def test_handle_models_canary_runs_one_model_with_requested_mode(self) -> None:
-        from aigc.cli.main import handle_models_canary
+        from whitzard.cli.main import handle_models_canary
 
         summary = type(
             "Summary",
@@ -195,7 +195,7 @@ class RunsCliTests(unittest.TestCase):
             self.assertIsNone(kwargs["prompt_file"])
             return summary
 
-        with patch("aigc.cli.main.run_model_canary", side_effect=fake_run_model_canary):
+        with patch("whitzard.cli.main.run_model_canary", side_effect=fake_run_model_canary):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_models_canary(args), 0)
             payload = json.loads(stream.getvalue())
@@ -204,7 +204,7 @@ class RunsCliTests(unittest.TestCase):
         self.assertEqual(payload["status"], "completed")
 
     def test_handle_annotate_uses_requested_profile_and_model(self) -> None:
-        from aigc.cli.main import handle_annotate
+        from whitzard.cli.main import handle_annotate
 
         summary = type(
             "Summary",
@@ -256,7 +256,7 @@ class RunsCliTests(unittest.TestCase):
             self.assertEqual(kwargs["execution_mode"], "mock")
             return summary
 
-        with patch("aigc.cli.main.annotate_run", side_effect=fake_annotate_run):
+        with patch("whitzard.cli.main.annotate_run", side_effect=fake_annotate_run):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_annotate(args), 0)
             payload = json.loads(stream.getvalue())
@@ -265,7 +265,7 @@ class RunsCliTests(unittest.TestCase):
         self.assertEqual(payload["annotator_model"], "Qwen3-32B")
 
     def test_handle_models_matrix_can_write_docs(self) -> None:
-        from aigc.cli.main import handle_models_matrix
+        from whitzard.cli.main import handle_models_matrix
 
         tmpdir = Path(tempfile.mkdtemp())
         args = type(
@@ -294,7 +294,7 @@ class RunsCliTests(unittest.TestCase):
         )
 
     def test_handle_run_uses_profile_and_cli_overrides(self) -> None:
-        from aigc.cli.main import handle_run
+        from whitzard.cli.main import handle_run
 
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "profile_prompts.txt"
@@ -358,7 +358,7 @@ class RunsCliTests(unittest.TestCase):
             self.assertEqual(os.environ.get("AIGC_AVAILABLE_GPUS"), "2,3")
             return summary
 
-        with patch("aigc.cli.main.run_models", side_effect=fake_run_models):
+        with patch("whitzard.cli.main.run_models", side_effect=fake_run_models):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_run(args), 0)
             payload = json.loads(stream.getvalue())
@@ -367,8 +367,8 @@ class RunsCliTests(unittest.TestCase):
         self.assertNotEqual(os.environ.get("AIGC_AVAILABLE_GPUS"), "2,3")
 
     def test_handle_run_rejects_mixed_modality_profile_early(self) -> None:
-        from aigc.cli.main import handle_run
-        from aigc.run_flow import RunFlowError
+        from whitzard.cli.main import handle_run
+        from whitzard.run_flow import RunFlowError
 
         tmpdir = Path(tempfile.mkdtemp())
         prompts_path = tmpdir / "profile_prompts.txt"
@@ -409,7 +409,7 @@ class RunsCliTests(unittest.TestCase):
             handle_run(args)
 
     def test_doctor_text_output_shows_conda_env_and_path_existence(self) -> None:
-        from aigc.cli.main import handle_doctor
+        from whitzard.cli.main import handle_doctor
 
         class DoctorManager:
             def conda_available(self) -> bool:
@@ -422,7 +422,7 @@ class RunsCliTests(unittest.TestCase):
         args = type("Args", (), {"model": "Z-Image", "output": "text"})()
         manager = DoctorManager()
 
-        with patch("aigc.cli.main.EnvManager", return_value=manager):
+        with patch("whitzard.cli.main.EnvManager", return_value=manager):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_doctor(args), 0)
 
@@ -433,7 +433,7 @@ class RunsCliTests(unittest.TestCase):
         self.assertIn("local_path_exists: yes", output)
 
     def test_run_store_commands_use_configured_runs_root(self) -> None:
-        from aigc.cli.main import handle_runs_inspect, handle_runs_list
+        from whitzard.cli.main import handle_runs_inspect, handle_runs_list
 
         tmpdir = Path(tempfile.mkdtemp())
         runtime_config = tmpdir / "local_runtime.yaml"
@@ -473,7 +473,7 @@ class RunsCliTests(unittest.TestCase):
             self.assertEqual(inspected["output_dir"], str(run_root))
 
     def test_run_store_commands_have_manifest_and_dataset_visibility(self) -> None:
-        from aigc.cli.main import handle_export_dataset, handle_runs_failures, handle_runs_inspect, handle_runs_list
+        from whitzard.cli.main import handle_export_dataset, handle_runs_failures, handle_runs_inspect, handle_runs_list
 
         tmpdir = Path(tempfile.mkdtemp())
         runtime_config = tmpdir / "local_runtime.yaml"
@@ -566,7 +566,7 @@ class RunsCliTests(unittest.TestCase):
             self.assertTrue(Path(export_payload["readme_path"]).exists())
 
     def test_handle_export_dataset_supports_multiple_runs_and_model_filter(self) -> None:
-        from aigc.cli.main import handle_export_dataset
+        from whitzard.cli.main import handle_export_dataset
 
         tmpdir = Path(tempfile.mkdtemp())
         runtime_config = tmpdir / "local_runtime.yaml"
@@ -658,7 +658,7 @@ class RunsCliTests(unittest.TestCase):
         self.assertEqual([record["model_name"] for record in dataset_records], ["Z-Image"])
 
     def test_runs_retry_handler_executes_recovery_run(self) -> None:
-        from aigc.cli.main import handle_runs_retry
+        from whitzard.cli.main import handle_runs_retry
 
         plan = RecoveryPlan(
             recovery_mode="retry",
@@ -689,8 +689,8 @@ class RunsCliTests(unittest.TestCase):
         )()
         args = type("Args", (), {"run_id": "run_failed", "model": None, "output": "json"})()
 
-        with patch("aigc.cli.main.build_retry_plan", return_value=plan), patch(
-            "aigc.cli.main.run_recovery_plan",
+        with patch("whitzard.cli.main.build_retry_plan", return_value=plan), patch(
+            "whitzard.cli.main.run_recovery_plan",
             return_value=summary,
         ):
             with redirect_stdout(StringIO()) as stream:
@@ -701,7 +701,7 @@ class RunsCliTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["run_id"], "retry_run_001")
 
     def test_runs_resume_handler_reports_no_missing_work(self) -> None:
-        from aigc.cli.main import handle_runs_resume
+        from whitzard.cli.main import handle_runs_resume
 
         plan = RecoveryPlan(
             recovery_mode="resume",
@@ -717,7 +717,7 @@ class RunsCliTests(unittest.TestCase):
         )
         args = type("Args", (), {"run_id": "run_complete", "model": None, "output": "text"})()
 
-        with patch("aigc.cli.main.build_resume_plan", return_value=plan):
+        with patch("whitzard.cli.main.build_resume_plan", return_value=plan):
             with redirect_stdout(StringIO()) as stream:
                 self.assertEqual(handle_runs_resume(args), 0)
             output = stream.getvalue()

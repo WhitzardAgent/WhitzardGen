@@ -9,13 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class SmokeTests(unittest.TestCase):
     def test_package_imports(self) -> None:
-        import aigc
+        import whitzard
 
-        self.assertEqual(aigc.__version__, "0.1.0")
+        self.assertEqual(whitzard.__version__, "0.1.0")
 
     def test_version_command(self) -> None:
         result = subprocess.run(
-            [sys.executable, "-m", "aigc", "version"],
+            [sys.executable, "-m", "whitzard", "version"],
             cwd=ROOT,
             env={"PYTHONPATH": str(ROOT / "src")},
             capture_output=True,
@@ -23,4 +23,4 @@ class SmokeTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0)
-        self.assertIn("aigc 0.1.0", result.stdout)
+        self.assertIn("whitzard 0.1.0", result.stdout)

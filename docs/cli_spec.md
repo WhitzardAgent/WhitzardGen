@@ -7,19 +7,19 @@ The CLI is the primary interface for running benchmark construction, target exec
 The top-level product view is now benchmark-centric:
 
 ```text
-aigc benchmark ...
-aigc evaluate ...
-aigc experiments ...
+whitzard benchmark ...
+whitzard evaluate ...
+whitzard experiments ...
 ```
 
 The legacy/kernel-oriented commands remain available:
 
 ```text
-aigc prompts ...
-aigc run ...
-aigc annotate ...
-aigc runs ...
-aigc export ...
+whitzard prompts ...
+whitzard run ...
+whitzard annotate ...
+whitzard runs ...
+whitzard export ...
 ```
 
 ## 2. Design Principles
@@ -37,7 +37,7 @@ The CLI must be:
 Current command groups:
 
 ```text
-aigc
+whitzard
  ├── benchmark
  ├── evaluate
  ├── experiments
@@ -55,7 +55,7 @@ Recommended user workflow starts with `benchmark`, `evaluate`, and `experiments`
 
 ## 4. Benchmark-Centric Commands
 
-### 4.1 `aigc benchmark list`
+### 4.1 `whitzard benchmark list`
 
 Lists supported benchmark builders discovered from the core and `examples/`.
 
@@ -64,14 +64,14 @@ Current sources:
 - core generic builders such as `static_jsonl`
 - example builders such as `theme_tree` and `ethics_sandbox`
 
-### 4.2 `aigc benchmark build`
+### 4.2 `whitzard benchmark build`
 
 Builds a benchmark bundle.
 
 Current supported shape:
 
 ```bash
-aigc benchmark build \
+whitzard benchmark build \
   --builder ethics_sandbox \
   --source examples/benchmarks/ethics_sandbox/package \
   --config examples/benchmarks/ethics_sandbox/example_build.yaml \
@@ -84,7 +84,7 @@ Current outputs:
 - `benchmark_manifest.json`
 - `stats.json`
 
-### 4.3 `aigc benchmark inspect`
+### 4.3 `whitzard benchmark inspect`
 
 Inspects a benchmark bundle and reports:
 
@@ -97,7 +97,7 @@ Inspects a benchmark bundle and reports:
 
 ## 5. Evaluation Commands
 
-### 5.1 `aigc evaluate run`
+### 5.1 `whitzard evaluate run`
 
 Runs one benchmark across one or more target models and optionally applies:
 
@@ -109,7 +109,7 @@ Runs one benchmark across one or more target models and optionally applies:
 Current shape:
 
 ```bash
-aigc evaluate run \
+whitzard evaluate run \
   --recipe examples/experiments/ethics_structural.yaml
 ```
 
@@ -136,11 +136,11 @@ Current bundle outputs:
 - `report.md`
 - `failures.json`
 
-### 5.2 `aigc experiments list`
+### 5.2 `whitzard experiments list`
 
 Lists recorded experiment bundles.
 
-### 5.3 `aigc experiments report`
+### 5.3 `whitzard experiments report`
 
 Prints experiment manifest and summary information and points to the generated report.
 
@@ -148,19 +148,19 @@ Prints experiment manifest and summary information and points to the generated r
 
 These commands remain supported because they expose useful lower-level workflow components.
 
-### 6.1 `aigc prompts ...`
+### 6.1 `whitzard prompts ...`
 
 Prompt/theme-tree generation remains available, but it should be understood as a benchmark/scenario builder path rather than the primary product concept.
 
-### 6.2 `aigc run ...`
+### 6.2 `whitzard run ...`
 
 The low-level multimodal execution kernel remains available for direct model runs.
 
-### 6.3 `aigc annotate ...`
+### 6.3 `whitzard annotate ...`
 
 Annotation remains available and now acts as the reusable record-evaluator path behind higher-level evaluation workflows.
 
-### 6.4 `aigc export ...`
+### 6.4 `whitzard export ...`
 
 Dataset export remains a lower-level result/export layer and is still useful for dataset production workflows.
 

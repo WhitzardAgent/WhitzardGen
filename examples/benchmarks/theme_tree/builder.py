@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from aigc.benchmarking.interfaces import BenchmarkBuildOutput, BenchmarkBuildRequest, BenchmarkBuilder
-from aigc.benchmarking.models import BenchmarkCase
-from aigc.benchmarking.service import slugify
-from aigc.prompt_generation import generate_prompt_bundle
-from aigc.prompts import load_prompts
+from whitzard.benchmarking.interfaces import BenchmarkBuildOutput, BenchmarkBuildRequest, BenchmarkBuilder
+from whitzard.benchmarking.models import BenchmarkCase
+from whitzard.benchmarking.service import slugify
+from whitzard.prompt_generation import generate_prompt_bundle
+from whitzard.prompts import load_prompts
 
 
 class ThemeTreeBenchmarkBuilder(BenchmarkBuilder):

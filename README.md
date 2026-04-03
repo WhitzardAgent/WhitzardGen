@@ -46,30 +46,30 @@ The older command families remain available because they are still the kernel th
 Use this when you want to compare target models on the same case set.
 
 ```bash
-aigc benchmark build \
+whitzard benchmark build \
   --builder ethics_sandbox \
   --source examples/benchmarks/ethics_sandbox/package \
   --config examples/benchmarks/ethics_sandbox/example_build.yaml \
   --build-mode matrix
 
-aigc evaluate run \
+whitzard evaluate run \
   --benchmark runs/benchmarks/<bundle_id> \
   --targets Qwen3-32B \
   --evaluator-model Qwen3-32B \
   --evaluator-profile ethics_structural_review \
   --evaluator-template ethics_structural_review_v1
 
-aigc experiments report <experiment_id>
+whitzard experiments report <experiment_id>
 ```
 
 ### 2. Kernel-Oriented Workflow
 
 Use this when you want lower-level control over generation/data-production:
 
-- `aigc prompts ...`
-- `aigc run ...`
-- `aigc annotate ...`
-- `aigc export ...`
+- `whitzard prompts ...`
+- `whitzard run ...`
+- `whitzard annotate ...`
+- `whitzard export ...`
 
 ## Current Capabilities
 
@@ -93,7 +93,7 @@ Use this when you want lower-level control over generation/data-production:
   - `parameters`
   - `metadata`
 - Profile-based runs:
-  - `aigc run --profile ...`
+  - `whitzard run --profile ...`
 - Prompt-generation workflow:
   - theme-tree planning
   - prompt bundle generation
@@ -137,10 +137,10 @@ This is especially important for structural benchmark examples such as the ethic
 
 Key directories:
 
-- [src/aigc](/Users/morinop/coding/whitzardgen/src/aigc): framework source code
-- [src/aigc/benchmarking](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking): generic benchmark/build/evaluate core
-- [src/aigc/normalizers](/Users/morinop/coding/whitzardgen/src/aigc/normalizers): generic normalization substrate
-- [src/aigc/analysis](/Users/morinop/coding/whitzardgen/src/aigc/analysis): generic analysis-plugin substrate
+- [src/whitzard](/Users/morinop/coding/whitzardgen/src/whitzard): framework source code
+- [src/whitzard/benchmarking](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking): generic benchmark/build/evaluate core
+- [src/whitzard/normalizers](/Users/morinop/coding/whitzardgen/src/whitzard/normalizers): generic normalization substrate
+- [src/whitzard/analysis](/Users/morinop/coding/whitzardgen/src/whitzard/analysis): generic analysis-plugin substrate
 - [examples/benchmarks](/Users/morinop/coding/whitzardgen/examples/benchmarks): concrete benchmark-builder examples such as `ethics_sandbox` and `theme_tree`
 - [examples/evaluators](/Users/morinop/coding/whitzardgen/examples/evaluators): concrete evaluator presets layered on the generic evaluator substrate
 - [examples/normalizers](/Users/morinop/coding/whitzardgen/examples/normalizers): concrete domain-specific normalizers layered on the generic normalization substrate
@@ -173,27 +173,27 @@ pip install -e .
 Check the CLI:
 
 ```bash
-aigc version
+whitzard version
 ```
 
 If you previously installed an older build:
 
 ```bash
-pip uninstall -y aigc
+pip uninstall -y whitzard
 pip install -e .
 ```
 
 If the console script still looks stale:
 
 ```bash
-pip uninstall -y aigc
+pip uninstall -y whitzard
 rm -rf *.egg-info
 pip install --no-build-isolation -e .
 ```
 
 ## Environment Model
 
-The framework no longer auto-creates Conda envs during `aigc run`.
+The framework no longer auto-creates Conda envs during `whitzard run`.
 
 Current policy:
 
@@ -205,14 +205,14 @@ Current policy:
 Use this to inspect readiness:
 
 ```bash
-aigc doctor
-aigc doctor --model Z-Image
+whitzard doctor
+whitzard doctor --model Z-Image
 ```
 
 Use this to inspect effective config:
 
 ```bash
-aigc models inspect Z-Image
+whitzard models inspect Z-Image
 ```
 
 ## Configuration Model
@@ -309,16 +309,16 @@ OpenAI-Compatible-Chat:
 
 After that, the same model can be used in existing flows:
 
-- `aigc run`
-- `aigc annotate`
-- `aigc evaluate run`
+- `whitzard run`
+- `whitzard annotate`
+- `whitzard evaluate run`
 - prompt generation / prompt rewrite when a `t2t` model is selected
 
 Useful checks:
 
 ```bash
-aigc models inspect OpenAI-Compatible-Chat
-aigc doctor --model OpenAI-Compatible-Chat
+whitzard models inspect OpenAI-Compatible-Chat
+whitzard doctor --model OpenAI-Compatible-Chat
 ```
 
 For remote models, `models inspect` redacts sensitive provider headers, and `doctor` validates provider fields, required env vars, and a lightweight OpenAI-compatible `/models` endpoint probe.
@@ -354,9 +354,9 @@ Example:
 
 ```yaml
 paths:
-  runs_root: /shared/aigc_runs
-  benchmarks_root: /shared/aigc_runs/benchmarks
-  experiments_root: /shared/aigc_runs/experiments
+  runs_root: /shared/whitzard_runs
+  benchmarks_root: /shared/whitzard_runs/benchmarks
+  experiments_root: /shared/whitzard_runs/experiments
 
 generation:
   default_seed: 12345
@@ -525,35 +525,35 @@ Effective `width` for `p002` becomes `1280`.
 List models:
 
 ```bash
-aigc models list
-aigc models list --modality image
-aigc models list --task-type t2v
+whitzard models list
+whitzard models list --modality image
+whitzard models list --task-type t2v
 ```
 
 Inspect one model:
 
 ```bash
-aigc models inspect Z-Image
+whitzard models inspect Z-Image
 ```
 
 Run a one-model canary:
 
 ```bash
-aigc models canary Z-Image --mock
-aigc models canary Wan2.2-T2V-A14B-Diffusers
+whitzard models canary Z-Image --mock
+whitzard models canary Wan2.2-T2V-A14B-Diffusers
 ```
 
 Generate the capability matrix from the current registry:
 
 ```bash
-aigc models matrix --write-docs
+whitzard models matrix --write-docs
 ```
 
 ### Environment Diagnostics
 
 ```bash
-aigc doctor
-aigc doctor --model Wan2.2-T2V-A14B-Diffusers
+whitzard doctor
+whitzard doctor --model Wan2.2-T2V-A14B-Diffusers
 ```
 
 ### Run Jobs
@@ -561,25 +561,25 @@ aigc doctor --model Wan2.2-T2V-A14B-Diffusers
 Single-model:
 
 ```bash
-aigc run --models Z-Image --prompts prompts/canary_image.txt --execution-mode mock
+whitzard run --models Z-Image --prompts prompts/canary_image.txt --execution-mode mock
 ```
 
 Multi-model:
 
 ```bash
-aigc run --models Z-Image,FLUX.1-dev --prompts prompts/canary_image.txt --execution-mode mock
+whitzard run --models Z-Image,FLUX.1-dev --prompts prompts/canary_image.txt --execution-mode mock
 ```
 
 Real video example:
 
 ```bash
-aigc run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/canary_video.txt --execution-mode real
+whitzard run --models Wan2.2-T2V-A14B-Diffusers --prompts prompts/canary_video.txt --execution-mode real
 ```
 
 Failure policy:
 
 ```bash
-aigc run \
+whitzard run \
   --models Z-Image \
   --prompts prompts/test_image_100.txt \
   --execution-mode real \
@@ -593,8 +593,8 @@ aigc run \
 Profiles make multi-model collection easier:
 
 ```bash
-aigc run --profile configs/run_profiles/image_real.yaml
-aigc run --profile configs/run_profiles/video_real.yaml
+whitzard run --profile configs/run_profiles/image_real.yaml
+whitzard run --profile configs/run_profiles/video_real.yaml
 ```
 
 Examples:
@@ -609,7 +609,7 @@ CLI flags override profile values when both are present.
 Theme-tree planning:
 
 ```bash
-aigc prompts plan \
+whitzard prompts plan \
   --tree prompts/theme_tree_example.yaml \
   --count-config prompts/theme_tree_example.counts.yaml \
   --output json
@@ -618,7 +618,7 @@ aigc prompts plan \
 Generate a prompt bundle with the default template/style-family stack:
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --count-config prompts/theme_tree_example.counts.yaml \
   --execution-mode mock
@@ -627,7 +627,7 @@ aigc prompts generate \
 Switch prompt template explicitly:
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --template documentary_scene
 ```
@@ -635,7 +635,7 @@ aigc prompts generate \
 Switch prompt writing style family explicitly:
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --style-family keyword_list
 ```
@@ -643,7 +643,7 @@ aigc prompts generate \
 Resolve the default style family from a downstream target model:
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --target-model Z-Image
 ```
@@ -651,7 +651,7 @@ aigc prompts generate \
 Use real T2T synthesis with the current text backend:
 
 ```bash
-aigc prompts generate \
+whitzard prompts generate \
   --tree prompts/theme_tree_example.yaml \
   --execution-mode real \
   --llm-model Qwen3-32B \
@@ -662,11 +662,11 @@ aigc prompts generate \
 Inspect a prompt bundle:
 
 ```bash
-aigc prompts inspect <prompt_bundle_dir>
-aigc prompts inspect <prompt_bundle_dir> --output json
+whitzard prompts inspect <prompt_bundle_dir>
+whitzard prompts inspect <prompt_bundle_dir> --output json
 ```
 
-Useful flags on `aigc prompts generate`:
+Useful flags on `whitzard prompts generate`:
 
 - `--tree`
 - `--out`
@@ -682,7 +682,7 @@ Useful flags on `aigc prompts generate`:
 
 Recommended flow:
 
-- use `aigc prompts plan` to verify quota allocation and resampling first
+- use `whitzard prompts plan` to verify quota allocation and resampling first
 - keep quotas in a separate `--count-config` file for large trees
 - if you just want “every subcategory gets N samples”, use `defaults.subcategory` in the count-config
 - use `--template` to change top-level synthesis instructions
@@ -693,9 +693,9 @@ Recommended flow:
 ### Run Inspection
 
 ```bash
-aigc runs list
-aigc runs inspect <run_id>
-aigc runs failures <run_id>
+whitzard runs list
+whitzard runs inspect <run_id>
+whitzard runs failures <run_id>
 ```
 
 ### Retry / Resume
@@ -703,13 +703,13 @@ aigc runs failures <run_id>
 Retry failed prompt outputs:
 
 ```bash
-aigc runs retry <run_id>
+whitzard runs retry <run_id>
 ```
 
 Resume missing prompt outputs from an interrupted run:
 
 ```bash
-aigc runs resume <run_id>
+whitzard runs resume <run_id>
 ```
 
 ### Export Dataset Bundles
@@ -717,27 +717,27 @@ aigc runs resume <run_id>
 Single run:
 
 ```bash
-aigc export dataset <run_id>
-aigc export dataset <run_id> --mode link
-aigc export dataset <run_id> --mode copy
+whitzard export dataset <run_id>
+whitzard export dataset <run_id> --mode link
+whitzard export dataset <run_id> --mode copy
 ```
 
 Multi-run merged export:
 
 ```bash
-aigc export dataset run_001 run_002 run_003
+whitzard export dataset run_001 run_002 run_003
 ```
 
 Model-filtered export:
 
 ```bash
-aigc export dataset run_001 run_002 --model Z-Image --model FLUX.1-dev
+whitzard export dataset run_001 run_002 --model Z-Image --model FLUX.1-dev
 ```
 
 Custom bundle output:
 
 ```bash
-aigc export dataset run_001 run_002 --out /data/exports/my_bundle
+whitzard export dataset run_001 run_002 --out /data/exports/my_bundle
 ```
 
 ## Run Outputs
@@ -764,7 +764,7 @@ What they mean:
 
 ## Prompt Bundles
 
-`aigc prompts generate` writes a prompt bundle instead of a loose JSONL file.
+`whitzard prompts generate` writes a prompt bundle instead of a loose JSONL file.
 
 Typical structure:
 
@@ -853,7 +853,7 @@ Examples currently represented in the registry include:
 Always use:
 
 ```bash
-aigc models list
+whitzard models list
 ```
 
 for the current authoritative set.
@@ -864,17 +864,17 @@ Adapters are now organized by modality package instead of growing one giant imag
 
 Current structure:
 
-- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
-- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
+- [src/whitzard/adapters/images](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images)
+- [src/whitzard/adapters/videos](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos)
 
 Examples:
 
-- [src/aigc/adapters/images/zimage.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/zimage.py)
-- [src/aigc/adapters/images/flux.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images/flux.py)
-- [src/aigc/adapters/videos/wan_t2v.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/wan_t2v.py)
-- [src/aigc/adapters/videos/cogvideox.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/cogvideox.py)
-- [src/aigc/adapters/videos/longcat.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/longcat.py)
-- [src/aigc/adapters/videos/helios.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos/helios.py)
+- [src/whitzard/adapters/images/zimage.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images/zimage.py)
+- [src/whitzard/adapters/images/flux.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images/flux.py)
+- [src/whitzard/adapters/videos/wan_t2v.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/wan_t2v.py)
+- [src/whitzard/adapters/videos/cogvideox.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/cogvideox.py)
+- [src/whitzard/adapters/videos/longcat.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/longcat.py)
+- [src/whitzard/adapters/videos/helios.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos/helios.py)
 
 This keeps shared logic in small base/common modules and makes new-model onboarding much easier to maintain.
 
@@ -923,15 +923,15 @@ Create the Conda env manually before real runs.
 Then verify:
 
 ```bash
-aigc doctor --model <model_name>
+whitzard doctor --model <model_name>
 ```
 
 ### 4. Implement or Reuse an Adapter
 
 Typical places:
 
-- [src/aigc/adapters/images](/Users/morinop/coding/whitzardgen/src/aigc/adapters/images)
-- [src/aigc/adapters/videos](/Users/morinop/coding/whitzardgen/src/aigc/adapters/videos)
+- [src/whitzard/adapters/images](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/images)
+- [src/whitzard/adapters/videos](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/videos)
 
 Choose the appropriate pattern:
 
@@ -953,13 +953,13 @@ Recommended targets:
 Start with the dedicated canary command:
 
 ```bash
-aigc models canary <model_name> --mock
+whitzard models canary <model_name> --mock
 ```
 
 Then move to real cluster validation:
 
 ```bash
-aigc models canary <model_name>
+whitzard models canary <model_name>
 ```
 
 Useful onboarding artifacts:
@@ -996,10 +996,10 @@ Current integration is in-process and replica-aware. Use doctor + local model ov
 
 - Prefer `.jsonl` prompts for real collection jobs.
 - Use profiles for repeatable image/video collection recipes.
-- Use `aigc doctor` before starting a real cluster run.
+- Use `whitzard doctor` before starting a real cluster run.
 - Watch `running.log` and `runtime_status.json` during long runs.
 - Use `samples.jsonl` for prompt-level recovery visibility.
-- Use `aigc runs retry` and `aigc runs resume` rather than manually editing old run directories.
+- Use `whitzard runs retry` and `whitzard runs resume` rather than manually editing old run directories.
 - Use export bundles, not only per-run `exports/dataset.jsonl`, when preparing downstream datasets.
 
 ## Roadmap

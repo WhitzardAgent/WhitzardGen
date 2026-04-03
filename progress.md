@@ -5,8 +5,8 @@
 
 ## Completed
 - Added a generic benchmark-package loader with canonical-path + alias-path resolution for example-owned generative benchmark packages:
-  - [src/aigc/benchmarking/packages.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/packages.py)
-  - [src/aigc/benchmarking/__init__.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/__init__.py)
+  - [src/whitzard/benchmarking/packages.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/packages.py)
+  - [src/whitzard/benchmarking/__init__.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/__init__.py)
 - Moved the canonical ethics sandbox benchmark package under `examples/` and kept the old docs path as a runnable compatibility alias:
   - [examples/benchmarks/ethics_sandbox/package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
   - [docs/ethics_design/sandbox_template/package_alias.yaml](/Users/morinop/coding/whitzardgen/docs/ethics_design/sandbox_template/package_alias.yaml)
@@ -19,13 +19,13 @@
   - [examples/benchmarks/ethics_sandbox/package/schema.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/schema.yaml)
   - [examples/benchmarks/ethics_sandbox/package/templates](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package/templates)
 - Added generic semantic-realization core contracts so benchmark builders can express sampled structured specs, synthesis requests, and realized outputs without baking workload semantics into core:
-  - [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py)
-  - [src/aigc/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/interfaces.py)
+  - [src/whitzard/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/models.py)
+  - [src/whitzard/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/interfaces.py)
 - Implemented the reusable semantic realization pipeline and run-kernel-backed synthesis orchestration in:
-  - [src/aigc/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/realization.py)
+  - [src/whitzard/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/realization.py)
 - Wired benchmark build and CLI to support `synthesis_model` and build-manifest realization metadata:
-  - [src/aigc/benchmarking/service.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/service.py)
-  - [src/aigc/cli/main.py](/Users/morinop/coding/whitzardgen/src/aigc/cli/main.py)
+  - [src/whitzard/benchmarking/service.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/service.py)
+  - [src/whitzard/cli/main.py](/Users/morinop/coding/whitzardgen/src/whitzard/cli/main.py)
 - Reworked the ethics sandbox builder from mechanical prompt stitching to:
   - slot sampling
   - structure validation
@@ -35,7 +35,7 @@
 - Updated the ethics builder to sample only from library-defined slot value spaces and to preserve example-package lineage in final case metadata:
   - [examples/benchmarks/ethics_sandbox/builder.py](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/builder.py)
 - Fixed a real CLI/runtime circular import introduced during package-loader extraction by removing `packages.py`'s dependency on `benchmarking.service`:
-  - [src/aigc/benchmarking/packages.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/packages.py)
+  - [src/whitzard/benchmarking/packages.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/packages.py)
 - Added semantic-build config and realization template for the ethics example package:
   - [examples/benchmarks/ethics_sandbox/example_build.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/example_build.yaml)
   - [examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt)
@@ -55,7 +55,7 @@
   - `used_slots` schema enforcement
   - library-defined slot sampling in mock-mode benchmark builds
   in [tests/test_benchmarking.py](/Users/morinop/coding/whitzardgen/tests/test_benchmarking.py)
-- Replaced benchmark/evaluation core contracts with V2 task-first types in [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py):
+- Replaced benchmark/evaluation core contracts with V2 task-first types in [src/whitzard/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/models.py):
   - `CaseSourceRef`
   - `CaseSet`
   - `EvalTask`
@@ -67,48 +67,48 @@
   - `GroupAnalysisRecord`
   - `ExperimentLogEvent`
   - `ExperimentBundleManifest`
-- Reworked benchmark interfaces in [src/aigc/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/interfaces.py) around:
+- Reworked benchmark interfaces in [src/whitzard/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/interfaces.py) around:
   - `TaskCompiler`
   - `RunEngineGateway`
   - `ExperimentRunner`
   - scorer-oriented contracts
   - V2 normalization / analysis requests
 - Added V2 planning / execution scaffolding:
-  - [src/aigc/benchmarking/compiler.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/compiler.py)
-  - [src/aigc/benchmarking/gateway.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/gateway.py)
-  - [src/aigc/benchmarking/runner.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/runner.py)
-  - [src/aigc/benchmarking/resolution.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/resolution.py)
+  - [src/whitzard/benchmarking/compiler.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/compiler.py)
+  - [src/whitzard/benchmarking/gateway.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/gateway.py)
+  - [src/whitzard/benchmarking/runner.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/runner.py)
+  - [src/whitzard/benchmarking/resolution.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/resolution.py)
 - Updated normalization and scoring substrate toward V2:
-  - [src/aigc/normalizers/service.py](/Users/morinop/coding/whitzardgen/src/aigc/normalizers/service.py)
-  - [src/aigc/evaluators/models.py](/Users/morinop/coding/whitzardgen/src/aigc/evaluators/models.py)
-  - [src/aigc/evaluators/service.py](/Users/morinop/coding/whitzardgen/src/aigc/evaluators/service.py)
+  - [src/whitzard/normalizers/service.py](/Users/morinop/coding/whitzardgen/src/whitzard/normalizers/service.py)
+  - [src/whitzard/evaluators/models.py](/Users/morinop/coding/whitzardgen/src/whitzard/evaluators/models.py)
+  - [src/whitzard/evaluators/service.py](/Users/morinop/coding/whitzardgen/src/whitzard/evaluators/service.py)
   - [examples/normalizers/ethics_structural/normalizer.py](/Users/morinop/coding/whitzardgen/examples/normalizers/ethics_structural/normalizer.py)
 - Cut the benchmark artifact layer and orchestration over to V2-first outputs and flow:
-  - [src/aigc/benchmarking/bundle.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/bundle.py)
-  - [src/aigc/benchmarking/service.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/service.py)
-  - [src/aigc/analysis/service.py](/Users/morinop/coding/whitzardgen/src/aigc/analysis/service.py)
-  - [src/aigc/cli/main.py](/Users/morinop/coding/whitzardgen/src/aigc/cli/main.py)
+  - [src/whitzard/benchmarking/bundle.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/bundle.py)
+  - [src/whitzard/benchmarking/service.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/service.py)
+  - [src/whitzard/analysis/service.py](/Users/morinop/coding/whitzardgen/src/whitzard/analysis/service.py)
+  - [src/whitzard/cli/main.py](/Users/morinop/coding/whitzardgen/src/whitzard/cli/main.py)
 - Updated example plugins and tests to the new primary V2 names:
   - [examples/analysis_plugins/ethics_family_consistency/plugin.py](/Users/morinop/coding/whitzardgen/examples/analysis_plugins/ethics_family_consistency/plugin.py)
   - [examples/analysis_plugins/ethics_slot_sensitivity/plugin.py](/Users/morinop/coding/whitzardgen/examples/analysis_plugins/ethics_slot_sensitivity/plugin.py)
   - [tests/test_benchmarking.py](/Users/morinop/coding/whitzardgen/tests/test_benchmarking.py)
   - [tests/test_cli_benchmark.py](/Users/morinop/coding/whitzardgen/tests/test_cli_benchmark.py)
 - Fixed one unrelated-but-real recovery regression discovered during full-suite verification:
-  - [src/aigc/run_flow.py](/Users/morinop/coding/whitzardgen/src/aigc/run_flow.py)
+  - [src/whitzard/run_flow.py](/Users/morinop/coding/whitzardgen/src/whitzard/run_flow.py)
 - Added current-architecture ethics evaluation docs in `docs/`:
   - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
   - [docs/ethics_benchmark_spec.md](/Users/morinop/coding/whitzardgen/docs/ethics_benchmark_spec.md)
 - Fixed remote/source-install example discovery so `examples.*` entrypoints can load even when `examples` is not installed as a site-package:
-  - [src/aigc/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/discovery.py)
+  - [src/whitzard/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/discovery.py)
 - Fixed decoder-only text-model tokenizer initialization so local batched generation uses left padding instead of right padding:
-  - [src/aigc/adapters/texts/qwen3.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/qwen3.py)
-  - [src/aigc/adapters/texts/local_transformers.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/local_transformers.py)
+  - [src/whitzard/adapters/texts/qwen3.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/texts/qwen3.py)
+  - [src/whitzard/adapters/texts/local_transformers.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/texts/local_transformers.py)
 - Added regression tests to keep decoder-only tokenizer padding behavior pinned:
   - [tests/test_text_adapter.py](/Users/morinop/coding/whitzardgen/tests/test_text_adapter.py)
 - Added `Qwen2.5-32B-Instruct` as a first-class local `t2t` model with an instruct-style chat-template adapter:
-  - [src/aigc/adapters/texts/qwen25_instruct.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/qwen25_instruct.py)
-  - [src/aigc/adapters/texts/__init__.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/__init__.py)
-  - [src/aigc/adapters/__init__.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/__init__.py)
+  - [src/whitzard/adapters/texts/qwen25_instruct.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/texts/qwen25_instruct.py)
+  - [src/whitzard/adapters/texts/__init__.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/texts/__init__.py)
+  - [src/whitzard/adapters/__init__.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/__init__.py)
   - [configs/models/t2t.yaml](/Users/morinop/coding/whitzardgen/configs/models/t2t.yaml)
   - [configs/local_models/t2t.yaml](/Users/morinop/coding/whitzardgen/configs/local_models/t2t.yaml)
 - Added regression coverage for:
@@ -122,9 +122,9 @@
   - validator prompt judges benchmark-feel leakage, conflict preservation, and binary framing
   - retry now uses validator feedback instead of relying only on deterministic guards
   in:
-  - [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py)
-  - [src/aigc/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/interfaces.py)
-  - [src/aigc/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/realization.py)
+  - [src/whitzard/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/models.py)
+  - [src/whitzard/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/interfaces.py)
+  - [src/whitzard/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/realization.py)
   - [examples/benchmarks/ethics_sandbox/builder.py](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/builder.py)
 - Reworked the ethics writer prompt so control-heavy fields are treated as hidden fidelity signals instead of ordinary visible sections, and added a separate validator prompt template:
   - [examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt)
@@ -144,23 +144,23 @@
 ## Files Added/Modified
 - Modified:
   - [progress.md](/Users/morinop/coding/whitzardgen/progress.md)
-  - [src/aigc/benchmarking/__init__.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/__init__.py)
-  - [src/aigc/benchmarking/packages.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/packages.py)
-  - [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py)
-  - [src/aigc/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/interfaces.py)
-  - [src/aigc/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/realization.py)
-  - [src/aigc/benchmarking/bundle.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/bundle.py)
-  - [src/aigc/benchmarking/service.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/service.py)
-  - [src/aigc/benchmarking/runner.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/runner.py)
-  - [src/aigc/analysis/service.py](/Users/morinop/coding/whitzardgen/src/aigc/analysis/service.py)
-  - [src/aigc/cli/main.py](/Users/morinop/coding/whitzardgen/src/aigc/cli/main.py)
-  - [src/aigc/normalizers/service.py](/Users/morinop/coding/whitzardgen/src/aigc/normalizers/service.py)
-  - [src/aigc/evaluators/models.py](/Users/morinop/coding/whitzardgen/src/aigc/evaluators/models.py)
-  - [src/aigc/evaluators/service.py](/Users/morinop/coding/whitzardgen/src/aigc/evaluators/service.py)
-  - [src/aigc/run_flow.py](/Users/morinop/coding/whitzardgen/src/aigc/run_flow.py)
-  - [src/aigc/adapters/texts/qwen3.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/qwen3.py)
-  - [src/aigc/adapters/texts/local_transformers.py](/Users/morinop/coding/whitzardgen/src/aigc/adapters/texts/local_transformers.py)
-  - [src/aigc/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/discovery.py)
+  - [src/whitzard/benchmarking/__init__.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/__init__.py)
+  - [src/whitzard/benchmarking/packages.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/packages.py)
+  - [src/whitzard/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/models.py)
+  - [src/whitzard/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/interfaces.py)
+  - [src/whitzard/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/realization.py)
+  - [src/whitzard/benchmarking/bundle.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/bundle.py)
+  - [src/whitzard/benchmarking/service.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/service.py)
+  - [src/whitzard/benchmarking/runner.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/runner.py)
+  - [src/whitzard/analysis/service.py](/Users/morinop/coding/whitzardgen/src/whitzard/analysis/service.py)
+  - [src/whitzard/cli/main.py](/Users/morinop/coding/whitzardgen/src/whitzard/cli/main.py)
+  - [src/whitzard/normalizers/service.py](/Users/morinop/coding/whitzardgen/src/whitzard/normalizers/service.py)
+  - [src/whitzard/evaluators/models.py](/Users/morinop/coding/whitzardgen/src/whitzard/evaluators/models.py)
+  - [src/whitzard/evaluators/service.py](/Users/morinop/coding/whitzardgen/src/whitzard/evaluators/service.py)
+  - [src/whitzard/run_flow.py](/Users/morinop/coding/whitzardgen/src/whitzard/run_flow.py)
+  - [src/whitzard/adapters/texts/qwen3.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/texts/qwen3.py)
+  - [src/whitzard/adapters/texts/local_transformers.py](/Users/morinop/coding/whitzardgen/src/whitzard/adapters/texts/local_transformers.py)
+  - [src/whitzard/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/discovery.py)
   - [docs/ethics_benchmark_spec.md](/Users/morinop/coding/whitzardgen/docs/ethics_benchmark_spec.md)
   - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
   - [docs/cli_spec.md](/Users/morinop/coding/whitzardgen/docs/cli_spec.md)
@@ -187,10 +187,10 @@
 - Added:
   - [examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt)
   - [examples/benchmarks/ethics_sandbox/package](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/package)
-  - [src/aigc/benchmarking/compiler.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/compiler.py)
-  - [src/aigc/benchmarking/gateway.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/gateway.py)
-  - [src/aigc/benchmarking/runner.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/runner.py)
-  - [src/aigc/benchmarking/resolution.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/resolution.py)
+  - [src/whitzard/benchmarking/compiler.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/compiler.py)
+  - [src/whitzard/benchmarking/gateway.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/gateway.py)
+  - [src/whitzard/benchmarking/runner.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/runner.py)
+  - [src/whitzard/benchmarking/resolution.py](/Users/morinop/coding/whitzardgen/src/whitzard/benchmarking/resolution.py)
   - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
 
 ## Current Status
@@ -213,7 +213,13 @@
   - ethics benchmark cases persist `decision_options` in both metadata and non-primary input payload fields
   - evaluation-time text prompt composition can now optionally append structured A/B choices through generic `execution_policy.text_prompt_composition.append_structured_choices`
   - model-based realization validation is now config-optional via `validator.enabled`
-  - benchmark build CLI now prints a direct `aigc evaluate run --benchmark ... --targets ...` handoff hint so bundle-to-evaluation flow is explicit
+  - benchmark build CLI now prints a direct `whitzard evaluate run --benchmark ... --targets ...` handoff hint so bundle-to-evaluation flow is explicit
+- Phase 40 is now implemented for partial benchmark export after semantic realization:
+  - benchmark build no longer aborts the entire bundle when a subset of realizations fail validation
+  - valid cases are compiled into `cases.jsonl`
+  - all realization outputs are preserved in `raw_realizations.jsonl`
+  - invalid realizations are preserved in `rejected_realizations.jsonl`
+  - benchmark summary and inspect output surface these paths directly so the next evaluation step can start without extra export work
 - Benchmark bundles remain lightweight, while final case metadata now preserves:
   - `slot_assignments`
   - `slot_layers`

@@ -6,7 +6,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from aigc.utils.prompt_import import convert_legacy_prompt_csv_to_jsonl
+from whitzard.utils.prompt_import import convert_legacy_prompt_csv_to_jsonl
 
 
 class PromptImportTests(unittest.TestCase):

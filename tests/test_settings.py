@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aigc.settings import (
+from whitzard.settings import (
     get_benchmarks_root,
     get_default_seed,
     get_experiments_root,
@@ -51,12 +51,12 @@ class RuntimeSettingsTests(unittest.TestCase):
         tmpdir = Path(tempfile.mkdtemp())
         config_path = tmpdir / "local_runtime.yaml"
         config_path.write_text(
-            "paths:\n  runs_root: /tmp/aigc_runs_env\n",
+            "paths:\n  runs_root: /tmp/whitzard_runs_env\n",
             encoding="utf-8",
         )
 
         with patch.dict(os.environ, {"AIGC_LOCAL_RUNTIME_FILE": str(config_path)}, clear=False):
-            self.assertEqual(get_runs_root(), Path("/tmp/aigc_runs_env"))
+            self.assertEqual(get_runs_root(), Path("/tmp/whitzard_runs_env"))
 
     def test_benchmark_and_experiment_roots_default_under_runs_root(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())

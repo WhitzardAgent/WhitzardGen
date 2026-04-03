@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from aigc.runtime_telemetry import RunTelemetry
+from whitzard.runtime_telemetry import RunTelemetry
 
 
 class RuntimeTelemetryTests(unittest.TestCase):
