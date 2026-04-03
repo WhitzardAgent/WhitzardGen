@@ -5,9 +5,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from aigc.benchmarking.interfaces import BenchmarkBuildRequest, CaseCompiler, ParameterSampler, StructureGuard
 from aigc.benchmarking.discovery import discover_example_builder_specs
 from aigc.benchmarking.compiler import DefaultTaskCompiler
-from aigc.benchmarking.models import CaseSourceRef, EvalTask, ScoreRecord
+from aigc.benchmarking.models import BenchmarkCase, CaseSourceRef, EvalTask, RealizationResult, RealizationSpec, ScoreRecord
+from aigc.benchmarking.realization import (
+    BenchmarkBuildOutputLike,
+    SemanticRealizationError,
+    execute_semantic_realization_pipeline,
+)
 from aigc.benchmarking.service import build_benchmark, evaluate_benchmark, normalize_case_payload
 
 
@@ -31,6 +37,86 @@ def _build_run_summary(*, run_id: str, output_dir: Path, export_path: Path):
 
 
 class BenchmarkingTests(unittest.TestCase):
+    def test_semantic_realization_pipeline_retries_until_validation_passes(self) -> None:
+        class DummySampler(ParameterSampler):
+            def sample(self, request: BenchmarkBuildRequest) -> list[RealizationSpec]:
+                return [
+                    RealizationSpec(
+                        benchmark_id="suite",
+                        case_id="case_001",
+                        source_builder="dummy",
+                        slot_assignments={"decision_maker_role": "doctor", "setting_domain": "ER"},
+                        prompt_template_name="template_v1",
+                        synthesis_model="Qwen3-32B",
+                        prompt_context={},
+                    )
+                ]
+
+        class DummyGuard(StructureGuard):
+            def validate_spec(self, spec: RealizationSpec) -> list[str]:
+                return []
+
+            def validate_realization(self, spec: RealizationSpec, result: RealizationResult) -> list[str]:
+                errors: list[str] = []
+                if "benchmark" in result.synthesized_text.lower():
+                    errors.append("Forbidden exposed term found: benchmark")
+                return errors
+
+        class DummyRenderer:
+            def render(self, spec: RealizationSpec, *, validation_feedback=None) -> str:
+                if validation_feedback:
+                    return "retry prompt"
+                return "initial prompt"
+
+        class DummyBackend:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def synthesize(
+                self,
+                *,
+                specs: list[RealizationSpec],
+                renderer,
+                request: BenchmarkBuildRequest,
+                validation_feedback_by_case_id: dict[str, list[str]] | None = None,
+            ) -> list[RealizationResult]:
+                self.calls += 1
+                text = "This benchmark prompt is invalid." if self.calls == 1 else "A doctor in the ER needs advice."
+                return [
+                    RealizationResult(
+                        benchmark_id="suite",
+                        case_id="case_001",
+                        source_builder="dummy",
+                        synthesized_text=text,
+                    )
+                ]
+
+        class DummyCompiler(CaseCompiler):
+            def compile(self, spec: RealizationSpec, result: RealizationResult) -> BenchmarkCase:
+                return BenchmarkCase(
+                    benchmark_id=spec.benchmark_id,
+                    case_id=spec.case_id,
+                    input_modality="text",
+                    input_payload={"prompt": result.synthesized_text},
+                    prompt=result.synthesized_text,
+                    source_builder=spec.source_builder,
+                    metadata={"slot_assignments": dict(spec.slot_assignments)},
+                )
+
+        output = execute_semantic_realization_pipeline(
+            request=BenchmarkBuildRequest(builder_name="dummy", execution_mode="mock"),
+            sampler=DummySampler(),
+            guard=DummyGuard(),
+            renderer=DummyRenderer(),
+            compiler=DummyCompiler(),
+            synthesis_backend=DummyBackend(),
+            max_attempts=2,
+        )
+
+        self.assertIsInstance(output, BenchmarkBuildOutputLike)
+        self.assertEqual(len(output.cases), 1)
+        self.assertIn("doctor", output.cases[0].prompt.lower())
+
     def test_normalize_case_payload_supports_structured_v2_fields(self) -> None:
         case = normalize_case_payload(
             {
@@ -72,7 +158,20 @@ class BenchmarkingTests(unittest.TestCase):
     def test_build_ethics_example_benchmark_writes_structural_metadata(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         builder_config_path = tmpdir / "builder.yaml"
-        builder_config_path.write_text("realizations_per_template: 2\n", encoding="utf-8")
+        builder_config_path.write_text(
+            "\n".join(
+                [
+                    "sampling:",
+                    "  realizations_per_template: 2",
+                    "synthesis:",
+                    "  model: Qwen3-32B",
+                    "validation:",
+                    "  max_attempts: 2",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
         summary = build_benchmark(
             builder_name="ethics_sandbox",
@@ -81,6 +180,7 @@ class BenchmarkingTests(unittest.TestCase):
             benchmark_name="ethics_suite",
             builder_config_path=builder_config_path,
             build_mode="matrix",
+            execution_mode="mock",
         )
 
         self.assertEqual(summary.builder_name, "ethics_sandbox")
@@ -95,7 +195,13 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertEqual(first_case["benchmark_id"], "ethics_suite")
         self.assertIn("variant_group_id", first_case["metadata"])
         self.assertIn("slot_assignments", first_case["metadata"])
+        self.assertIn("realization_prompt_template", first_case["metadata"])
+        self.assertIn("synthesis_model", first_case["metadata"])
+        self.assertIn("realization_provenance", first_case["metadata"])
         self.assertEqual(first_case["source_builder"], "ethics_sandbox")
+        manifest = json.loads(Path(summary.manifest_path).read_text(encoding="utf-8"))
+        self.assertIn("build_artifacts", manifest)
+        self.assertTrue(manifest["semantic_realization"]["enabled"])
 
     def test_task_compiler_builds_execution_requests_with_lineage(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -154,7 +260,18 @@ class BenchmarkingTests(unittest.TestCase):
             encoding="utf-8",
         )
         builder_config_path = tmpdir / "builder.yaml"
-        builder_config_path.write_text("realizations_per_template: 1\n", encoding="utf-8")
+        builder_config_path.write_text(
+            "\n".join(
+                [
+                    "sampling:",
+                    "  realizations_per_template: 1",
+                    "synthesis:",
+                    "  model: Qwen3-32B",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
         benchmark_summary = build_benchmark(
             builder_name="ethics_sandbox",
@@ -163,6 +280,7 @@ class BenchmarkingTests(unittest.TestCase):
             benchmark_name="ethics_suite_eval",
             builder_config_path=builder_config_path,
             build_mode="static",
+            execution_mode="mock",
         )
 
         def fake_run_single_model(**kwargs):

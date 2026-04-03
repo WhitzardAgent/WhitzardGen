@@ -113,6 +113,56 @@ class BenchmarkCase:
 
 
 @dataclass(slots=True)
+class RealizationSpec:
+    benchmark_id: str
+    case_id: str
+    source_builder: str
+    input_modality: str = "text"
+    language: str = "en"
+    split: str = "default"
+    tags: list[str] = field(default_factory=list)
+    parameters: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    grouping: dict[str, str] = field(default_factory=dict)
+    execution_hints: dict[str, Any] = field(default_factory=dict)
+    evaluation_hints: dict[str, Any] = field(default_factory=dict)
+    expected_output_contract: dict[str, Any] | list[Any] | str | None = None
+    slot_assignments: dict[str, Any] = field(default_factory=dict)
+    invariants: list[str] = field(default_factory=list)
+    forbidden_transformations: list[str] = field(default_factory=list)
+    prompt_template_name: str | None = None
+    prompt_template_version: str | None = None
+    synthesis_model: str | None = None
+    synthesis_request_version: str | None = None
+    prompt_context: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class RealizationResult:
+    benchmark_id: str
+    case_id: str
+    source_builder: str
+    synthesized_text: str
+    prompt_template_name: str | None = None
+    prompt_template_version: str | None = None
+    synthesis_model: str | None = None
+    synthesis_request_version: str | None = None
+    request_prompt: str | None = None
+    validation_errors: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_valid(self) -> bool:
+        return not self.validation_errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
 class CaseSet:
     benchmark_id: str
     cases: list[BenchmarkCase]

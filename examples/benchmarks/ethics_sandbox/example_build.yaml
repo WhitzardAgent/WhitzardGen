@@ -1,1 +1,30 @@
-realizations_per_template: 2
+sampling:
+  realizations_per_template: 2
+
+profiles:
+  default_template_name: standard_naturalistic_v1
+  templates:
+    standard_naturalistic_v1:
+      path: synthesis_templates/standard_naturalistic_v1.txt
+      version: v1
+
+synthesis:
+  model: Qwen3-32B
+  request_version: v1
+  generation_defaults:
+    temperature: 0.8
+    max_new_tokens: 512
+
+validation:
+  max_attempts: 2
+  min_word_count: 24
+  forbidden_terms:
+    - test
+    - benchmark
+    - dilemma
+    - philosophy
+    - option a
+    - option b
+  required_slot_mentions:
+    - decision_maker_role
+    - setting_domain

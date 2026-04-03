@@ -14,6 +14,8 @@ from aigc.benchmarking.models import (
     ExecutionRequest,
     GroupAnalysisRecord,
     NormalizedResult,
+    RealizationResult,
+    RealizationSpec,
     ScoreRecord,
     TargetResult,
 )
@@ -31,6 +33,7 @@ class BenchmarkBuildRequest:
     builder_config_path: str | Path | None = None
     count_config_path: str | Path | None = None
     llm_model: str | None = None
+    synthesis_model: str | None = None
     execution_mode: str = "real"
     profile_path: str | Path | None = None
     template_name: str | None = None
@@ -47,6 +50,8 @@ class BenchmarkBuildOutput:
     source_path: str
     build_mode: str
     extra_manifest: dict[str, Any] = field(default_factory=dict)
+    build_artifacts: dict[str, Any] = field(default_factory=dict)
+    build_manifest_overrides: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -70,6 +75,47 @@ class BenchmarkBuilder(ABC):
 
     @abstractmethod
     def build(self, request: BenchmarkBuildRequest) -> BenchmarkBuildOutput:
+        raise NotImplementedError
+
+
+class ParameterSampler(ABC):
+    @abstractmethod
+    def sample(self, request: BenchmarkBuildRequest) -> list[RealizationSpec]:
+        raise NotImplementedError
+
+
+class StructureGuard(ABC):
+    @abstractmethod
+    def validate_spec(self, spec: RealizationSpec) -> list[str]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def validate_realization(self, spec: RealizationSpec, result: RealizationResult) -> list[str]:
+        raise NotImplementedError
+
+
+class RealizationTemplateRenderer(ABC):
+    @abstractmethod
+    def render(self, spec: RealizationSpec, *, validation_feedback: list[str] | None = None) -> str:
+        raise NotImplementedError
+
+
+class RealizationSynthesisBackend(ABC):
+    @abstractmethod
+    def synthesize(
+        self,
+        *,
+        specs: list[RealizationSpec],
+        renderer: RealizationTemplateRenderer,
+        request: BenchmarkBuildRequest,
+        validation_feedback_by_case_id: dict[str, list[str]] | None = None,
+    ) -> list[RealizationResult]:
+        raise NotImplementedError
+
+
+class CaseCompiler(ABC):
+    @abstractmethod
+    def compile(self, spec: RealizationSpec, result: RealizationResult) -> BenchmarkCase:
         raise NotImplementedError
 
 

@@ -68,6 +68,7 @@ aigc models inspect Qwen3-32B
 - benchmark builder：`ethics_sandbox`
 - source package：`docs/ethics_design/sandbox_template`
 - builder config：`examples/benchmarks/ethics_sandbox/example_build.yaml`
+- synthesis model：`Qwen3-32B`
 - target model：`Qwen3-32B`
 - normalizer：`ethics_structural_normalizer`
 - evaluator：`ethics_structural_judge`
@@ -79,13 +80,28 @@ aigc models inspect Qwen3-32B
 
 - [examples/benchmarks/ethics_sandbox/example_build.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/example_build.yaml)
 
-目前只定义：
+现在它不再只是写一个 `realizations_per_template`，而是显式区分：
 
 ```yaml
-realizations_per_template: 2
+sampling:
+  realizations_per_template: 2
+
+profiles:
+  default_template_name: standard_naturalistic_v1
+
+synthesis:
+  model: Qwen3-32B
+
+validation:
+  max_attempts: 2
 ```
 
-也就是每个模板默认生成 2 个 realization。
+也就是：
+
+- 每个模板默认生成 2 个 realization
+- 用 `standard_naturalistic_v1` build-time template 来把结构化 spec 实现成自然场景
+- 用 `Qwen3-32B` 做 benchmark build 阶段的语义合成
+- 合成失败时最多重试 2 次
 
 ## 3. 最简单的运行方式
 
@@ -98,12 +114,14 @@ aigc evaluate run \
 
 这条命令会自动做这些事情：
 
-1. 用 `ethics_sandbox` builder 从 sandbox template 包构建 benchmark
-2. 用 target model 执行这些 benchmark cases
-3. 用 `ethics_structural_normalizer` 先做规范化
-4. 跑 record-level evaluator
-5. 跑 group analysis 和 analysis plugins
-6. 写出完整 experiment bundle
+1. 用 `ethics_sandbox` builder 采样 slot assignments
+2. 用 synthesis model 把结构化 spec 实现成自然场景
+3. 构建 benchmark
+4. 用 target model 执行这些 benchmark cases
+5. 用 `ethics_structural_normalizer` 先做规范化
+6. 跑 record-level evaluator
+7. 跑 group analysis 和 analysis plugins
+8. 写出完整 experiment bundle
 
 ## 4. 分步运行方式
 
@@ -116,6 +134,7 @@ aigc benchmark build \
   --builder ethics_sandbox \
   --source docs/ethics_design/sandbox_template \
   --config examples/benchmarks/ethics_sandbox/example_build.yaml \
+  --synthesis-model Qwen3-32B \
   --build-mode matrix
 ```
 
@@ -176,7 +195,8 @@ aigc evaluate run \
 例如：
 
 ```yaml
-realizations_per_template: 8
+sampling:
+  realizations_per_template: 8
 ```
 
 ### 6.2 修改模板包本身
@@ -208,8 +228,8 @@ experiment 完成后，会写出一个 experiment bundle。核心文件包括：
 - `cases.jsonl`
 - `target_results.jsonl`
 - `normalized_results.jsonl`
-- `evaluator_results.jsonl`
-- `group_analyses.jsonl`
+- `score_records.jsonl`
+- `group_analysis_records.jsonl`
 - `analysis_plugin_results.jsonl`
 - `experiment_manifest.json`
 - `summary.json`

@@ -75,6 +75,7 @@ def build_benchmark(
     builder_config_path: str | Path | None = None,
     count_config_path: str | Path | None = None,
     llm_model: str | None = None,
+    synthesis_model: str | None = None,
     execution_mode: str = "real",
     profile_path: str | Path | None = None,
     template_name: str | None = None,
@@ -94,6 +95,7 @@ def build_benchmark(
         builder_config_path=builder_config_path,
         count_config_path=count_config_path,
         llm_model=llm_model,
+        synthesis_model=synthesis_model,
         execution_mode=execution_mode,
         profile_path=profile_path,
         template_name=template_name,
@@ -380,6 +382,10 @@ def _write_benchmark_output(
         "case_count": len(output.cases),
         **output.extra_manifest,
     }
+    if output.build_artifacts:
+        manifest["build_artifacts"] = dict(output.build_artifacts)
+    if output.build_manifest_overrides:
+        manifest.update(dict(output.build_manifest_overrides))
     paths = write_benchmark_bundle(
         benchmark_dir=benchmark_dir,
         cases=output.cases,

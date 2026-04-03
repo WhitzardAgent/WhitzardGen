@@ -1,9 +1,34 @@
 # Progress
 
 ## Current Phase
-- Phase 35 — V2 Task-First Core Refactor (`EvalTask` + `ExecutionRequest` + `RunEngineGateway`)
+- Phase 36 — Semantic Benchmark Realization Pipeline for Ethics and Safety Builders
 
 ## Completed
+- Added generic semantic-realization core contracts so benchmark builders can express sampled structured specs, synthesis requests, and realized outputs without baking workload semantics into core:
+  - [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py)
+  - [src/aigc/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/interfaces.py)
+- Implemented the reusable semantic realization pipeline and run-kernel-backed synthesis orchestration in:
+  - [src/aigc/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/realization.py)
+- Wired benchmark build and CLI to support `synthesis_model` and build-manifest realization metadata:
+  - [src/aigc/benchmarking/service.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/service.py)
+  - [src/aigc/cli/main.py](/Users/morinop/coding/whitzardgen/src/aigc/cli/main.py)
+- Reworked the ethics sandbox builder from mechanical prompt stitching to:
+  - slot sampling
+  - structure validation
+  - template-driven LLM realization
+  - final case compilation
+  in [examples/benchmarks/ethics_sandbox/builder.py](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/builder.py)
+- Added semantic-build config and realization template for the ethics example package:
+  - [examples/benchmarks/ethics_sandbox/example_build.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/example_build.yaml)
+  - [examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt)
+- Updated the ethics runbook/docs so the user-facing workflow now reflects semantic benchmark realization instead of mechanical prompt stitching:
+  - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
+  - [examples/benchmarks/ethics_sandbox/README.md](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/README.md)
+  - [examples/experiments/ethics_structural_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_structural_runbook.zh-CN.md)
+  - [examples/experiments/ethics_structural.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_structural.yaml)
+- Added regression and pipeline tests covering semantic-realization retries, metadata lineage, CLI passthrough, and mock-mode ethics benchmark build:
+  - [tests/test_benchmarking.py](/Users/morinop/coding/whitzardgen/tests/test_benchmarking.py)
+  - [tests/test_cli_benchmark.py](/Users/morinop/coding/whitzardgen/tests/test_cli_benchmark.py)
 - Replaced benchmark/evaluation core contracts with V2 task-first types in [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py):
   - `CaseSourceRef`
   - `CaseSet`
@@ -52,9 +77,11 @@
 
 ## Files Added/Modified
 - Modified:
+  - [progress.md](/Users/morinop/coding/whitzardgen/progress.md)
   - [src/aigc/benchmarking/__init__.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/__init__.py)
   - [src/aigc/benchmarking/models.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/models.py)
   - [src/aigc/benchmarking/interfaces.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/interfaces.py)
+  - [src/aigc/benchmarking/realization.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/realization.py)
   - [src/aigc/benchmarking/bundle.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/bundle.py)
   - [src/aigc/benchmarking/service.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/service.py)
   - [src/aigc/benchmarking/runner.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/runner.py)
@@ -66,12 +93,19 @@
   - [src/aigc/run_flow.py](/Users/morinop/coding/whitzardgen/src/aigc/run_flow.py)
   - [src/aigc/benchmarking/discovery.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/discovery.py)
   - [docs/ethics_benchmark_spec.md](/Users/morinop/coding/whitzardgen/docs/ethics_benchmark_spec.md)
+  - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
+  - [examples/benchmarks/ethics_sandbox/builder.py](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/builder.py)
+  - [examples/benchmarks/ethics_sandbox/example_build.yaml](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/example_build.yaml)
+  - [examples/benchmarks/ethics_sandbox/README.md](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/README.md)
+  - [examples/experiments/ethics_structural.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_structural.yaml)
+  - [examples/experiments/ethics_structural_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_structural_runbook.zh-CN.md)
   - [examples/analysis_plugins/ethics_family_consistency/plugin.py](/Users/morinop/coding/whitzardgen/examples/analysis_plugins/ethics_family_consistency/plugin.py)
   - [examples/analysis_plugins/ethics_slot_sensitivity/plugin.py](/Users/morinop/coding/whitzardgen/examples/analysis_plugins/ethics_slot_sensitivity/plugin.py)
   - [examples/normalizers/ethics_structural/normalizer.py](/Users/morinop/coding/whitzardgen/examples/normalizers/ethics_structural/normalizer.py)
   - [tests/test_benchmarking.py](/Users/morinop/coding/whitzardgen/tests/test_benchmarking.py)
   - [tests/test_cli_benchmark.py](/Users/morinop/coding/whitzardgen/tests/test_cli_benchmark.py)
 - Added:
+  - [examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt](/Users/morinop/coding/whitzardgen/examples/benchmarks/ethics_sandbox/synthesis_templates/standard_naturalistic_v1.txt)
   - [src/aigc/benchmarking/compiler.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/compiler.py)
   - [src/aigc/benchmarking/gateway.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/gateway.py)
   - [src/aigc/benchmarking/runner.py](/Users/morinop/coding/whitzardgen/src/aigc/benchmarking/runner.py)
@@ -79,24 +113,22 @@
   - [docs/ethics_conflict_eval_runbook.zh-CN.md](/Users/morinop/coding/whitzardgen/docs/ethics_conflict_eval_runbook.zh-CN.md)
 
 ## Current Status
-- Phase 35 core cutover is functionally in place:
-- Phase 35 core cutover is functionally in place:
-  - `evaluate_benchmark(...)` now resolves an `EvalTask`, compiles a `CompiledTaskPlan`, and runs it through `DefaultExperimentRunner`
-  - V2 bundle outputs now include `execution_requests.jsonl`, `score_records.jsonl`, `experiment_log.jsonl`, and `compiled_task_plan.json`
-  - examples and CLI surfaces are using V2-first names with compatibility fallbacks where needed
-- Benchmarking-focused tests and broader regression suites are passing locally.
-- `docs/` now includes a dedicated runbook for operating ethics-conflict evaluation on the current V2 architecture.
-- Example discovery is now more robust on remote machines that run from source trees or editable installs.
+- Phase 36 semantic benchmark realization is functionally in place.
+- `ethics_sandbox` no longer mechanically stitches final prompts; it now samples structured slot assignments, renders synthesis requests, calls the existing T2T run kernel, validates outputs, and compiles final `BenchmarkCase`s with realization lineage.
+- Benchmark bundles remain lightweight, while final case metadata now preserves:
+  - `slot_assignments`
+  - `realization_prompt_template`
+  - `synthesis_model`
+  - `synthesis_request_version`
+  - `realization_provenance`
+- Local regression coverage for semantic realization, ethics benchmark build, CLI passthrough, prompt generation, annotation, and run CLI paths is passing.
 
 ## Blockers
 - No confirmed blocker.
-- Remaining work is mostly polish:
-  - optionally migrate more text/UI wording from `evaluator` to `scorer`
-  - optionally add more V2-specific coverage around bundle compatibility readers and `ExperimentLog` semantics
-  - remote machine behavior should now be rechecked with a real `aigc benchmark build --builder ethics_sandbox ...` invocation
+- Remaining work is follow-up polish and expansion:
+  - update user-facing docs/runbooks to emphasize `--synthesis-model` and the new build config shape
+  - add a second non-ethics generative builder example to further validate the generic pipeline
+  - optionally add richer realization validators and retry policies
 
 ## Next Task
-- If we continue from here, the best next slice is post-cutover cleanup:
-  - tighten V2 docs/spec wording around `ScoreRecord` / `ExperimentLog`
-  - add explicit compatibility-reader tests for older `evaluator_results.jsonl` bundles
-  - standardize remaining CLI/user-facing text from “evaluator” to “scorer” where appropriate
+- Update the benchmark/ethics runbook docs for the semantic build pipeline and consider adding a second generative example builder beyond ethics.

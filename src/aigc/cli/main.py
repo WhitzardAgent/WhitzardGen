@@ -183,6 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_build_parser.add_argument("--config", dest="builder_config")
     benchmark_build_parser.add_argument("--count-config")
     benchmark_build_parser.add_argument("--llm-model")
+    benchmark_build_parser.add_argument("--synthesis-model")
     benchmark_build_parser.add_argument("--profile")
     benchmark_build_parser.add_argument("--template")
     benchmark_build_parser.add_argument("--style-family")
@@ -596,6 +597,7 @@ def handle_benchmark_build(args: argparse.Namespace) -> int:
         builder_config_path=args.builder_config,
         count_config_path=args.count_config,
         llm_model=args.llm_model,
+        synthesis_model=getattr(args, "synthesis_model", None),
         execution_mode=execution_mode,
         profile_path=args.profile,
         template_name=args.template,
@@ -654,6 +656,7 @@ def handle_evaluate_run(args: argparse.Namespace) -> int:
                 builder_config_path=_resolve_recipe_relative_path(args.recipe, benchmark_builder.get("config")),
                 count_config_path=_resolve_recipe_relative_path(args.recipe, benchmark_builder.get("count_config")),
                 llm_model=benchmark_builder.get("llm_model"),
+                synthesis_model=benchmark_builder.get("synthesis_model"),
                 execution_mode=str(benchmark_builder.get("execution_mode", "real")),
                 profile_path=_resolve_recipe_relative_path(args.recipe, benchmark_builder.get("profile")),
                 template_name=benchmark_builder.get("template"),

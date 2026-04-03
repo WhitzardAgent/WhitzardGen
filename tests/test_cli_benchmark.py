@@ -40,6 +40,7 @@ class BenchmarkCliTests(unittest.TestCase):
                 "builder_config": "/tmp/builder.yaml",
                 "count_config": None,
                 "llm_model": None,
+                "synthesis_model": None,
                 "profile": None,
                 "template": None,
                 "style_family": None,
@@ -197,6 +198,7 @@ class BenchmarkCliTests(unittest.TestCase):
                 "source": "../docs/ethics_design/sandbox_template",
                 "config": "../examples/benchmarks/ethics_sandbox/example_build.yaml",
                 "build_mode": "matrix",
+                "synthesis_model": "Qwen3-32B",
             },
             "targets": ["Qwen3-32B"],
             "normalizers": ["ethics_structural_normalizer"],
@@ -220,6 +222,7 @@ class BenchmarkCliTests(unittest.TestCase):
 
         self.assertEqual(payload["experiment_id"], "experiment_recipe_suite")
         self.assertEqual(build_mock.call_args.kwargs["builder_name"], "ethics_sandbox")
+        self.assertEqual(build_mock.call_args.kwargs["synthesis_model"], "Qwen3-32B")
         self.assertEqual(evaluate_mock.call_args.kwargs["benchmark_path"], "/tmp/benchmarks/recipe_suite")
         self.assertEqual(
             evaluate_mock.call_args.kwargs["normalizer_ids"],
