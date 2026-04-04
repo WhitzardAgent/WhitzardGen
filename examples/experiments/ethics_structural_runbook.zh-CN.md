@@ -296,6 +296,14 @@ whitzard evaluate inspect <experiment_id>
   - ethics normalizer 提取后的 schema-light 中间层
 - `evaluator_results.jsonl`
   - judge/rule evaluator 的结构化判断
+  - evaluate-time target prompt template
+  - evaluate-time judge prompt template
+
+现在更推荐用 recipe 里的模板文件来控制 evaluate 阶段的提示词，而不是只依赖旧的 `append_structured_choices` 开关。仓库里已经放了几个可以直接复制的例子：
+
+- [ethics_target_scene_with_choices.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics_target_scene_with_choices.txt)
+- [ethics_target_scene_with_instruction.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics_target_scene_with_instruction.txt)
+- [generic_judge_with_case_metadata.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/generic_judge_with_case_metadata.txt)
 - `group_analyses.jsonl`
   - core generic group aggregation 输出
 - `analysis_plugin_results.jsonl`

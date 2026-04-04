@@ -55,8 +55,25 @@ Recipes can specify:
 - normalizers
 - evaluator sets
 - analysis plugin sets
+- target-side evaluate-time prompt templates
+- judge/scorer-side evaluate-time prompt templates
 - output locations
 - optional auto-launch preferences
+
+Evaluate-time prompt templates are separate from benchmark build-time realization templates:
+
+- realization templates decide how a benchmark case is generated during `benchmark build`
+- evaluate-time templates decide how an existing case is rendered when sent to:
+  - the target model
+  - the judge/scorer model
+
+The recommended config shape is:
+
+- `execution_policy.target_prompt_template`
+- `execution_policy.judge_prompt_template`
+- optional scorer-level `prompt_template`
+
+These templates use simple `{{...}}` placeholders and only see variables that are explicitly allowlisted by config.
 
 ## Structural Benchmark Notes
 

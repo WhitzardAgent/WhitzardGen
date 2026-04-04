@@ -6,6 +6,11 @@ from typing import Any
 
 from whitzard.benchmarking.interfaces import RunEngineGateway
 from whitzard.benchmarking.models import EvalTask, ExecutionRequest, TargetResult
+from whitzard.benchmarking.prompt_templates import (
+    default_target_template_context,
+    format_structured_choices,
+    render_scoped_prompt_template,
+)
 from whitzard.prompts.models import PromptRecord
 from whitzard.run_flow import run_single_model
 from whitzard.run_store import load_run_dataset_records
@@ -166,6 +171,18 @@ def _resolve_request_prompt_text(request: ExecutionRequest) -> str:
             break
     if not prompt_text:
         prompt_text = json.dumps(payload, ensure_ascii=False)
+    template_config = dict(request.metadata.get("prompt_template", {}) or {})
+    if template_config:
+        template_context = default_target_template_context(request=request)
+        rendered, template_warnings = render_scoped_prompt_template(
+            template_config=template_config,
+            root_context=template_context,
+            warning_prefix=f"execution request {request.request_id}",
+        )
+        if template_warnings:
+            request.metadata.setdefault("prompt_template_warnings", []).extend(template_warnings)
+        if rendered:
+            return rendered
     return _compose_prompt_text(
         prompt_text=prompt_text,
         payload=payload,
@@ -200,20 +217,7 @@ def _compose_prompt_text(
 
 
 def _format_structured_choices(decision_options: Any) -> str:
-    if not isinstance(decision_options, list):
-        return ""
-    rendered: list[str] = []
-    for item in decision_options:
-        if not isinstance(item, dict):
-            return ""
-        option_id = str(item.get("id", "")).strip().upper()
-        text = str(item.get("text", "")).strip()
-        if option_id not in {"A", "B"} or not text:
-            return ""
-        rendered.append(f"{option_id}. {text}")
-    if len(rendered) != 2:
-        return ""
-    return "\n".join(rendered)
+    return format_structured_choices(decision_options)
 
 
 def _optional_text(value: Any) -> str | None:

@@ -30,6 +30,7 @@ from whitzard.benchmarking.models import (
     CaseSourceRef,
     EvalTask,
 )
+from whitzard.benchmarking.prompt_templates import resolve_prompt_template_config
 from whitzard.benchmarking.runner import (
     DefaultExperimentRunner,
     build_group_analysis_records,
@@ -153,6 +154,15 @@ def evaluate_benchmark(
     benchmark_id = str(manifest.get("benchmark_id") or benchmark_dir.name)
     resolved_execution_policy = dict(execution_policy or {})
     resolved_execution_policy.setdefault("text_prompt_composition", {})
+    recipe_base_dir = Path(recipe_path).resolve().parent if recipe_path not in (None, "") else None
+    resolved_execution_policy["target_prompt_template"] = resolve_prompt_template_config(
+        dict(resolved_execution_policy.get("target_prompt_template", {}) or {}),
+        base_dir=recipe_base_dir,
+    )
+    resolved_execution_policy["judge_prompt_template"] = resolve_prompt_template_config(
+        dict(resolved_execution_policy.get("judge_prompt_template", {}) or {}),
+        base_dir=recipe_base_dir,
+    )
     resolved_execution_policy["auto_launch"] = auto_launch
     resolved_execution_policy["launcher_config_path"] = (
         str(launcher_config_path) if launcher_config_path not in (None, "") else None

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from whitzard.benchmarking.discovery import discover_example_evaluator_specs
+from whitzard.benchmarking.prompt_templates import resolve_prompt_template_config
 from whitzard.evaluators.models import EvaluatorSpec
 
 
@@ -29,6 +30,10 @@ def load_evaluator_catalog(path: str | Path = DEFAULT_EVALUATORS_CONFIG_PATH) ->
     for evaluator_id, config in profiles_payload.items():
         if not isinstance(config, dict):
             raise EvaluatorConfigError(f"Evaluator {evaluator_id} must be an object.")
+        prompt_template = resolve_prompt_template_config(
+            dict(config.get("prompt_template", {}) or {}),
+            base_dir=profiles_path.parent,
+        )
         evaluators[str(evaluator_id)] = EvaluatorSpec(
             evaluator_id=str(evaluator_id),
             evaluator_type=str(config.get("type", "judge")),
@@ -39,9 +44,15 @@ def load_evaluator_catalog(path: str | Path = DEFAULT_EVALUATORS_CONFIG_PATH) ->
             judge_model=_normalize_optional_text(config.get("judge_model")),
             annotation_profile=_normalize_optional_text(config.get("annotation_profile")),
             annotation_template=_normalize_optional_text(config.get("annotation_template")),
+            prompt_template=prompt_template,
             generation_defaults=dict(config.get("generation_defaults", {}) or {}),
         )
     for evaluator_id, config in discover_example_evaluator_specs().items():
+        manifest_path = Path(str(config.get("manifest_path") or ""))
+        prompt_template = resolve_prompt_template_config(
+            dict(config.get("prompt_template", {}) or {}),
+            base_dir=manifest_path.parent if manifest_path else None,
+        )
         evaluators[evaluator_id] = EvaluatorSpec(
             evaluator_id=str(evaluator_id),
             evaluator_type=str(config.get("type", "judge")),
@@ -52,6 +63,7 @@ def load_evaluator_catalog(path: str | Path = DEFAULT_EVALUATORS_CONFIG_PATH) ->
             judge_model=_normalize_optional_text(config.get("judge_model")),
             annotation_profile=_normalize_optional_text(config.get("annotation_profile")),
             annotation_template=_normalize_optional_text(config.get("annotation_template")),
+            prompt_template=prompt_template,
             generation_defaults=dict(config.get("generation_defaults", {}) or {}),
         )
     return evaluators

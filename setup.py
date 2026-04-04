@@ -9,7 +9,7 @@ README = ROOT / "README.md"
 
 setup(
     name="whitzard",
-    version="0.1.0",
+    version="0.5",
     description="Multimodal AIGC synthetic data generation framework MVP",
     long_description=README.read_text(encoding="utf-8") if README.exists() else "",
     long_description_content_type="text/markdown",

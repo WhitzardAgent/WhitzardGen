@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -31,6 +32,7 @@ from whitzard.benchmarking.realization import (
     execute_semantic_realization_pipeline,
 )
 from whitzard.benchmarking.service import build_benchmark, evaluate_benchmark, normalize_case_payload
+from whitzard.evaluators.service import score_target_results
 
 
 def _build_run_summary(*, run_id: str, output_dir: Path, export_path: Path):
@@ -256,6 +258,160 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertEqual(len(output.cases), 1)
         self.assertIn("doctor", output.cases[0].prompt.lower())
         self.assertTrue(output.build_artifacts["realization_validator_enabled"])
+
+    def test_target_prompt_template_renders_allowlisted_case_fields_and_helpers(self) -> None:
+        request = ExecutionRequest(
+            task_id="task_ethics",
+            benchmark_id="ethics_suite",
+            case_id="case_001",
+            request_id="task_ethics:Qwen:case_001",
+            target_model="Qwen2.5-32B-Instruct",
+            input_modality="text",
+            input_payload={
+                "prompt": "You are in a hospital corridor and must decide immediately.",
+                "language": "en",
+                "decision_options": [
+                    {"id": "A", "text": "Disclose the risk now."},
+                    {"id": "B", "text": "Delay disclosure until after stabilization."},
+                ],
+            },
+            metadata={
+                "case_version": "1.0",
+                "source_builder": "ethics_sandbox",
+                "split": "default",
+                "tags": ["ethics"],
+                "grouping": {"family_id": "truth_telling"},
+                "case_metadata": {
+                    "template_id": "truth_telling_to_fragile_patient",
+                    "family_id": "truth_telling",
+                },
+                "prompt_template": {
+                    "name": "ethics_target_test",
+                    "version": "v1",
+                    "template_text": (
+                        "Case {{case_id}}\n"
+                        "{{prompt}}\n\n"
+                        "Family: {{metadata.family_id}}\n"
+                        "{{formatted_choices}}\n"
+                        "Missing={{metadata.hidden_field}}"
+                    ),
+                    "variable_allowlist": [
+                        "case_id",
+                        "prompt",
+                        "metadata.family_id",
+                        "formatted_choices",
+                    ],
+                    "helpers": ["formatted_choices"],
+                    "missing_variable_policy": "warn_and_empty",
+                },
+            },
+        )
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            rendered = _resolve_request_prompt_text(request)
+
+        self.assertIn("Case case_001", rendered)
+        self.assertIn("Family: truth_telling", rendered)
+        self.assertIn("A. Disclose the risk now.", rendered)
+        self.assertIn("B. Delay disclosure until after stabilization.", rendered)
+        self.assertIn("Missing=", rendered)
+        self.assertTrue(any("metadata.hidden_field" in str(item.message) for item in caught))
+
+    def test_score_target_results_passes_judge_prompt_template_and_normalized_context(self) -> None:
+        task = EvalTask(
+            task_id="task_ethics",
+            case_set_path="/tmp/benchmark",
+            target_models=["Qwen2.5-32B-Instruct"],
+            execution_policy={
+                "judge_prompt_template": {
+                    "name": "judge_override",
+                    "template_text": "Decision {{normalized_result.decision_text}}",
+                    "variable_allowlist": ["normalized_result.decision_text"],
+                    "missing_variable_policy": "warn_and_empty",
+                }
+            },
+        )
+        target_result = type(
+            "TargetResultLike",
+            (),
+            {
+                "source_run_id": "run_001",
+                "source_record_id": "rec_00000001",
+                "benchmark_id": "ethics_suite",
+                "case_id": "case_001",
+                "case_version": "1.0",
+                "request_id": "req_001",
+                "target_model": "Qwen2.5-32B-Instruct",
+                "split": "default",
+                "tags": ["ethics"],
+                "metadata": {"family_id": "triage"},
+                "prompt_metadata": {"decision_options": [{"id": "A", "text": "x"}, {"id": "B", "text": "y"}]},
+                "artifact_metadata": {},
+                "generation_params": {},
+                "to_dict": lambda self: {
+                    "benchmark_id": "ethics_suite",
+                    "case_id": "case_001",
+                    "request_id": "req_001",
+                    "target_model": "Qwen2.5-32B-Instruct",
+                },
+            },
+        )()
+        normalized_result = type(
+            "NormalizedResultLike",
+            (),
+            {
+                "source_record_id": "rec_00000001",
+                "to_dict": lambda self: {
+                    "decision_text": "A",
+                    "confidence_signal": 0.9,
+                },
+            },
+        )()
+        scorer = {
+            "evaluator_id": "ethics_structural_judge",
+            "evaluator_type": "judge",
+            "judge_model": "Qwen3-32B",
+            "annotation_profile": "default_review",
+            "annotation_template": "source_record_review_v1",
+        }
+
+        def fake_annotate_run(run_id, **kwargs):
+            self.assertEqual(run_id, "run_001")
+            self.assertEqual(
+                kwargs["prompt_template"]["template_text"],
+                "Decision {{normalized_result.decision_text}}",
+            )
+            self.assertEqual(
+                kwargs["extra_template_context_by_record_id"]["rec_00000001"]["normalized_result"]["decision_text"],
+                "A",
+            )
+            summary = type(
+                "Summary",
+                (),
+                {
+                    "annotations_path": str(Path(tempfile.mkdtemp()) / "annotations.jsonl"),
+                    "failures_path": str(Path(tempfile.mkdtemp()) / "failures.json"),
+                },
+            )()
+            Path(summary.annotations_path).write_text("", encoding="utf-8")
+            Path(summary.failures_path).write_text("[]", encoding="utf-8")
+            return summary
+
+        with patch("whitzard.evaluators.service.annotate_run", side_effect=fake_annotate_run):
+            results, failures = score_target_results(
+                task=task,
+                compiled_plan=type("Plan", (), {})(),
+                source_run_id="run_001",
+                target_results=[target_result],
+                normalized_results=[normalized_result],
+                scorers=[scorer],
+                out_dir=Path(tempfile.mkdtemp()),
+                execution_mode="mock",
+            )
+
+        self.assertEqual(results, [])
+        self.assertEqual(failures, [])
 
     def test_semantic_realization_pipeline_exports_valid_subset_when_some_cases_fail(self) -> None:
         class DummySampler(ParameterSampler):

@@ -230,3 +230,118 @@ class AnnotationTests(unittest.TestCase):
         self.assertEqual(summary.annotated_count, 1)
         self.assertEqual(annotations[0]["annotator_model"], "OpenAI-Compatible-Chat")
         self.assertEqual(annotations[0]["annotation"]["summary"], "Remote annotator output.")
+
+    def test_annotate_run_can_render_prompt_template_with_allowlisted_context(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        bundle_dir = tmpdir / "annotation_bundle"
+        template_path = tmpdir / "judge_prompt.txt"
+        template_path.write_text(
+            (
+                "Case {{case_metadata.family_id}}\n"
+                "Prompt: {{source_prompt}}\n"
+                "Answer: {{target_output_text}}\n"
+                "Decision: {{normalized_result.decision_text}}\n"
+                "Choices:\n{{formatted_choices}}\n"
+                "Missing={{normalized_result.hidden_field}}"
+            ),
+            encoding="utf-8",
+        )
+        source_record = {
+            "record_id": "rec_00000001",
+            "run_id": "run_001",
+            "prompt_id": "p001",
+            "prompt": "You are in triage and must choose now.",
+            "language": "en",
+            "model_name": "Qwen2.5-32B-Instruct",
+            "task_type": "t2t",
+            "artifact_type": "text",
+            "artifact_path": str(tmpdir / "source.txt"),
+            "prompt_metadata": {
+                "decision_options": [
+                    {"id": "A", "text": "Admit the patient immediately."},
+                    {"id": "B", "text": "Discharge with monitoring instructions."},
+                ],
+            },
+        }
+        Path(source_record["artifact_path"]).write_text(
+            "I would choose to admit the patient immediately.",
+            encoding="utf-8",
+        )
+
+        def fake_run_single_model(**kwargs):
+            prompt_file = Path(kwargs["prompt_file"])
+            payload = json.loads(prompt_file.read_text(encoding="utf-8").splitlines()[0])
+            self.assertIn("Case triage_family", payload["prompt"])
+            self.assertIn("Answer: I would choose to admit the patient immediately.", payload["prompt"])
+            self.assertIn("Decision: A", payload["prompt"])
+            self.assertIn("A. Admit the patient immediately.", payload["prompt"])
+            self.assertIn("Missing=", payload["prompt"])
+
+            run_root = Path(kwargs["out_dir"])
+            export_path = run_root / "exports" / "dataset.jsonl"
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path = run_root / "workdir" / "annreq_rec_00000001.txt"
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "summary": "Judge saw the custom prompt.",
+                        "labels": ["ok"],
+                        "confidence": 0.9,
+                        "rationale": "Custom judge template rendered correctly.",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            export_path.write_text(
+                json.dumps(
+                    {
+                        "prompt_id": "annreq_rec_00000001",
+                        "artifact_path": str(artifact_path),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_root / "failures.json").write_text("[]", encoding="utf-8")
+            return _build_summary(run_id="annotation_run_custom_template", output_dir=run_root, export_path=export_path)
+
+        with patch("whitzard.annotation.service.load_run_manifest", return_value={"run_id": "run_001", "manifest_path": str(tmpdir / "run_manifest.json"), "export_path": str(tmpdir / "dataset.jsonl")}):
+            with patch("whitzard.annotation.service.load_run_dataset_records", return_value=[source_record]):
+                with patch("whitzard.annotation.service.run_single_model", side_effect=fake_run_single_model):
+                    summary = annotate_run(
+                        "run_001",
+                        annotation_profile="default_review",
+                        annotator_model="Qwen3-32B",
+                        out_dir=bundle_dir,
+                        execution_mode="mock",
+                        prompt_template={
+                            "path": str(template_path),
+                            "version": "v1",
+                            "variable_allowlist": [
+                                "source_prompt",
+                                "target_output_text",
+                                "case_metadata.family_id",
+                                "normalized_result.decision_text",
+                                "formatted_choices",
+                            ],
+                            "helpers": ["formatted_choices"],
+                            "missing_variable_policy": "warn_and_empty",
+                        },
+                        extra_template_context_by_record_id={
+                            "rec_00000001": {
+                                "case_metadata": {"family_id": "triage_family"},
+                                "normalized_result": {"decision_text": "A"},
+                            }
+                        },
+                    )
+
+        annotations = [
+            json.loads(line)
+            for line in Path(summary.annotations_path).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(summary.annotated_count, 1)
+        self.assertEqual(annotations[0]["annotation"]["summary"], "Judge saw the custom prompt.")

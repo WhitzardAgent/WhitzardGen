@@ -1,0 +1,4 @@
+{{prompt}}
+
+Choose exactly one of the following actions:
+{{formatted_choices}}

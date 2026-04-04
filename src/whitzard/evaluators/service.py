@@ -7,6 +7,7 @@ from typing import Any
 
 from whitzard.annotation import annotate_run
 from whitzard.benchmarking.models import CompiledTaskPlan, EvalTask, NormalizedResult, ScoreRecord, TargetResult
+from whitzard.benchmarking.prompt_templates import resolve_prompt_template_config
 from whitzard.evaluators.models import EvaluatorSpec
 from whitzard.utils.progress import NullRunProgress, RunProgress
 
@@ -28,7 +29,7 @@ def score_target_results(
     progress: RunProgress | None = None,
 ) -> tuple[list[ScoreRecord], list[dict[str, Any]]]:
     progress = progress or NullRunProgress()
-    del compiled_plan, normalized_results
+    del compiled_plan
     results: list[ScoreRecord] = []
     failures: list[dict[str, Any]] = []
     if not scorers:
@@ -40,6 +41,11 @@ def score_target_results(
     target_results_by_run_id: dict[str, list[TargetResult]] = {}
     for result in target_results:
         target_results_by_run_id.setdefault(result.source_run_id, []).append(result)
+    normalized_by_record_id = {
+        str(result.source_record_id or ""): result
+        for result in normalized_results
+        if str(result.source_record_id or "").strip()
+    }
 
     for raw_scorer in scorers:
         scorer = raw_scorer if isinstance(raw_scorer, EvaluatorSpec) else EvaluatorSpec(**raw_scorer)
@@ -62,6 +68,14 @@ def score_target_results(
                     f"[evaluate] source_run={current_run_id} scorer={scorer.scorer_id} type=judge"
                 )
                 bundle_dir = Path(out_dir) / scorer.scorer_id / current_run_id
+                judge_prompt_template = _resolve_judge_prompt_template(
+                    task=task,
+                    scorer=scorer,
+                )
+                extra_template_context_by_record_id = _build_judge_extra_context_by_record_id(
+                    target_results=target_results_by_run_id.get(current_run_id, []),
+                    normalized_by_record_id=normalized_by_record_id,
+                )
                 annotation_summary = annotate_run(
                     current_run_id,
                     annotation_profile=scorer.annotation_profile,
@@ -70,6 +84,8 @@ def score_target_results(
                     out_dir=bundle_dir,
                     execution_mode=execution_mode,
                     progress=progress,
+                    prompt_template=judge_prompt_template,
+                    extra_template_context_by_record_id=extra_template_context_by_record_id,
                 )
                 annotation_rows = _load_jsonl_rows(annotation_summary.annotations_path)
                 for row in annotation_rows:
@@ -247,6 +263,58 @@ def _coerce_rationale(annotation: dict[str, Any]) -> str | None:
         if value not in (None, ""):
             return str(value)
     return None
+
+
+def _resolve_judge_prompt_template(*, task: EvalTask, scorer: EvaluatorSpec) -> dict[str, Any]:
+    task_template = dict(task.execution_policy.get("judge_prompt_template", {}) or {})
+    scorer_template = dict(scorer.prompt_template or {})
+    merged = dict(task_template)
+    if scorer_template:
+        merged.update(scorer_template)
+        if task_template.get("variable_allowlist") and scorer_template.get("variable_allowlist"):
+            merged["variable_allowlist"] = list(scorer_template.get("variable_allowlist", []))
+        if task_template.get("helpers") and scorer_template.get("helpers"):
+            merged["helpers"] = list(scorer_template.get("helpers", []))
+    return resolve_prompt_template_config(merged)
+
+
+def _build_judge_extra_context_by_record_id(
+    *,
+    target_results: list[TargetResult],
+    normalized_by_record_id: dict[str, NormalizedResult],
+) -> dict[str, dict[str, Any]]:
+    payload: dict[str, dict[str, Any]] = {}
+    for target_result in target_results:
+        record_id = str(target_result.source_record_id or "").strip()
+        if not record_id:
+            continue
+        normalized = normalized_by_record_id.get(record_id)
+        payload[record_id] = {
+            "benchmark_id": target_result.benchmark_id,
+            "case_id": target_result.case_id,
+            "case_version": target_result.case_version,
+            "request_id": target_result.request_id,
+            "target_model": target_result.target_model,
+            "split": target_result.split,
+            "tags": list(target_result.tags),
+            "case_metadata": dict(target_result.metadata),
+            "prompt_metadata": dict(target_result.prompt_metadata),
+            "artifact_metadata": dict(target_result.artifact_metadata),
+            "generation_params": dict(target_result.generation_params),
+            "target_result": target_result.to_dict(),
+            "target_result_json": json.dumps(
+                target_result.to_dict(),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            "normalized_result": normalized.to_dict() if normalized is not None else {},
+            "normalized_result_json": json.dumps(
+                normalized.to_dict() if normalized is not None else {},
+                ensure_ascii=False,
+                indent=2,
+            ),
+        }
+    return payload
 
 
 def _read_text_artifact(path: str | Path) -> str:

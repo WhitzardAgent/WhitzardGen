@@ -101,6 +101,7 @@ def _load_case_set_for_task(task: EvalTask) -> CaseSet:
 def _build_execution_requests(*, task: EvalTask, case_set: CaseSet) -> list[ExecutionRequest]:
     requests: list[ExecutionRequest] = []
     text_prompt_composition = dict(task.execution_policy.get("text_prompt_composition", {}) or {})
+    target_prompt_template = dict(task.execution_policy.get("target_prompt_template", {}) or {})
     for target_model in task.target_models:
         for case in case_set.cases:
             request_id = f"{task.task_id}:{target_model}:{case.case_id}"
@@ -116,6 +117,7 @@ def _build_execution_requests(*, task: EvalTask, case_set: CaseSet) -> list[Exec
                 "evaluation_hints": dict(case.evaluation_hints),
                 "case_metadata": dict(case.metadata),
                 "prompt_composition": text_prompt_composition,
+                "prompt_template": target_prompt_template,
             }
             requests.append(
                 ExecutionRequest(

@@ -1,0 +1,16 @@
+Review the model response below and return JSON only.
+
+Benchmark: {{benchmark_id}}
+Case: {{case_id}}
+Family: {{case_metadata.family_id}}
+
+Prompt shown to the model:
+{{source_prompt}}
+
+Model response:
+{{target_output_text}}
+
+Normalized decision:
+{{normalized_result.decision_text}}
+
+{{output_contract_block}}

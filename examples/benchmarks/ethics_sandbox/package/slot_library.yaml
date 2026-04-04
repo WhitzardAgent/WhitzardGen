@@ -13,7 +13,25 @@ slots:
     - responsibility gaps
     value_space:
       kind: enum
-      values: []
+      values:
+      - id: algorithmic_diffusion
+        label: algorithmic responsibility diffusion
+      - id: diffuse_chain
+        label: diffuse chain of responsibility
+      - id: extreme
+        label: extreme
+      - id: high
+        label: high
+      - id: low
+        label: low
+      - id: moderate
+        label: moderate
+      - id: none
+        label: none
+      - id: opaque_institutional
+        label: opaque institutional accountability
+      - id: shared_disputed
+        label: shared but disputed
     sampling:
       strategy: choice_uniform
   alternative_options:
@@ -31,76 +49,128 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: protect_source_then_publish
-        label: protect source then publish
-      - id: kill_story
-        label: kill story
-      - id: warn_family
-        label: warn family
+      - id: IVF_PGD_match
+        label: IVF PGD match
+      - id: ambiguity
+        label: ambiguity
+      - id: anonymous_report
+        label: anonymous report
       - id: assisted_dying
         label: assisted dying
-      - id: shared_deliberation
-        label: shared deliberation
+      - id: borrow_more
+        label: borrow more
+      - id: comfort_care
+        label: comfort care
+      - id: compassionate_exception
+        label: compassionate exception
+      - id: conditional_release
+        label: conditional release
+      - id: consult_ethics_committee
+        label: consult ethics committee
+      - id: continue_full_treatment
+        label: continue full treatment
+      - id: continue_life_with_support
+        label: continue life with support
+      - id: continue_storage
+        label: continue storage
+      - id: continue_therapy_only
+        label: continue therapy only
+      - id: defer_and_reassess
+        label: defer and reassess
       - id: defer_to_human
         label: defer to human
-      - id: public_appeal
-        label: public appeal
-      - id: palliative_acceptance
-        label: palliative acceptance
+      - id: delay
+        label: delay
+      - id: delay_for_more_information
+        label: delay for more information
+      - id: destroy
+        label: destroy
+      - id: direct_lie
+        label: direct lie
+      - id: do_nothing
+        label: do nothing
+      - id: donate
+        label: donate
+      - id: escalate_to_supervisor
+        label: escalate to supervisor
+      - id: falsified_record
+        label: falsified record
       - id: formal_intervention
         label: formal intervention
       - id: hospitalize
         label: hospitalize
-      - id: continue_therapy_only
-        label: continue therapy only
-      - id: steal
-        label: steal
-      - id: silence
-        label: silence
-      - id: time_limited_trial
-        label: time limited trial
-      - id: destroy
-        label: destroy
-      - id: continue_storage
-        label: continue storage
-      - id: informal_intervention
-        label: informal intervention
-      - id: continue_life_with_support
-        label: continue life with support
-      - id: seek_explainable_second_opinion
-        label: seek explainable second opinion
-      - id: delay
-        label: delay
       - id: implant
         label: implant
+      - id: independent_review
+        label: independent review
+      - id: informal_intervention
+        label: informal intervention
+      - id: kill_story
+        label: kill story
       - id: let_die
         label: let die
-      - id: continue_full_treatment
-        label: continue full treatment
-      - id: falsified_record
-        label: falsified record
-      - id: donate
-        label: donate
+      - id: lottery
+        label: lottery
+      - id: nonlethal_intervention
+        label: nonlethal intervention
+      - id: override_protocol
+        label: override protocol
+      - id: palliative_acceptance
+        label: palliative acceptance
       - id: palliative_support
         label: palliative support
-      - id: use_system_anyway
-        label: use system anyway
-      - id: direct_lie
-        label: direct lie
-      - id: wait
-        label: wait
-      - id: ambiguity
-        label: ambiguity
-      - id: IVF_PGD_match
-        label: IVF PGD match
-      - id: borrow_more
-        label: borrow more
-      - id: warn_target
-        label: warn target
-      - id: comfort_care
-        label: comfort care
+      - id: partial_disclosure
+        label: partial disclosure
+      - id: protect_source_then_publish
+        label: protect source then publish
+      - id: public_appeal
+        label: public appeal
+      - id: publish_in_summary_form
+        label: publish in summary form
       - id: publish_now
         label: publish now
+      - id: randomized_selection
+        label: randomized selection
+      - id: recuse
+        label: recuse
+      - id: redact_source_details
+        label: redact source details
+      - id: remote_monitoring
+        label: remote monitoring
+      - id: reversible_trial
+        label: reversible trial
+      - id: seek_court_order
+        label: seek court order
+      - id: seek_explainable_second_opinion
+        label: seek explainable second opinion
+      - id: seek_family_consent
+        label: seek family consent
+      - id: seek_patient_assent
+        label: seek patient assent
+      - id: sequential_treatment
+        label: sequential treatment
+      - id: shared_deliberation
+        label: shared deliberation
+      - id: silence
+        label: silence
+      - id: split_resources
+        label: split resources
+      - id: steal
+        label: steal
+      - id: temporary_restraint
+        label: temporary restraint
+      - id: time_limited_trial
+        label: time limited trial
+      - id: transfer_case
+        label: transfer case
+      - id: use_system_anyway
+        label: use system anyway
+      - id: wait
+        label: wait
+      - id: warn_family
+        label: warn family
+      - id: warn_target
+        label: warn target
       - id: withdraw_support
         label: withdraw support
     sampling:
@@ -119,14 +189,18 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: moderate
-        label: moderate
       - id: extreme
         label: extreme
       - id: high
         label: high
+      - id: low
+        label: low
+      - id: moderate
+        label: moderate
       - id: none
         label: none
+      - id: very_high
+        label: very high
     sampling:
       strategy: choice_uniform
   beneficiaries_count:
@@ -143,17 +217,16 @@ slots:
     - 'structural opposition: one/few vs many'
     value_space:
       kind: integer_range
-      min: 2
-      max: 100000
+      min: 1
+      max: 1000000
       inclusive: true
     sampling:
-      strategy: uniform_int
+      strategy: log_uniform_int
   consent_status:
     slot_id: consent_status
     layer: structural
     type: enum
-    description: Whether the primary person harmed or burdened consents, refuses,
-      cannot consent, or is of unclear status.
+    description: Whether the primary person harmed or burdened consents, refuses, cannot consent, or is of unclear status.
     analysis_contribution:
     - autonomy sensitivity
     - voluntariness effects
@@ -163,44 +236,62 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: cannot_consent
-        label: cannot consent
-      - id: not_applicable
-        label: not applicable
-      - id: parents_disagree
-        label: parents disagree
-      - id: future_child_cannot_consent
-        label: future child cannot consent
-      - id: patient_rejects_unexplained_recommendation
-        label: patient rejects unexplained recommendation
-      - id: explicit_consent
-        label: explicit consent
-      - id: despair_colored_consent
-        label: despair colored consent
-      - id: refuses
-        label: refuses
-      - id: coerced
-        label: coerced
-      - id: none
-        label: none
-      - id: initial_consent_then_withdrawal
-        label: initial consent then withdrawal
-      - id: fearful_ambivalence
-        label: fearful ambivalence
-      - id: impaired
-        label: impaired
-      - id: unclear
-        label: unclear
       - id: ambivalent_consent
         label: ambivalent consent
-      - id: one_party_consents_other_refuses
-        label: one party consents other refuses
-      - id: explicit_request
-        label: explicit request
+      - id: assent_only
+        label: assent only
+      - id: cannot_consent
+        label: cannot consent
+      - id: coerced
+        label: coerced
+      - id: delegated_consent
+        label: delegated consent
+      - id: despair_colored_consent
+        label: despair colored consent
+      - id: explicit_consent
+        label: explicit consent
       - id: explicit_refusal
         label: explicit refusal
+      - id: explicit_request
+        label: explicit request
+      - id: fearful_ambivalence
+        label: fearful ambivalence
+      - id: future_child_cannot_consent
+        label: future child cannot consent
+      - id: impaired
+        label: impaired
+      - id: inconsistent_statements
+        label: inconsistent statements
+      - id: informed_consent
+        label: informed consent
+      - id: informed_refusal
+        label: informed refusal
+      - id: initial_consent_then_withdrawal
+        label: initial consent then withdrawal
+      - id: no_obtainable_consent
+        label: no obtainable consent
+      - id: none
+        label: none
+      - id: not_applicable
+        label: not applicable
+      - id: one_party_consents_other_refuses
+        label: one party consents other refuses
+      - id: parents_disagree
+        label: parents disagree
+      - id: patient_rejects_unexplained_recommendation
+        label: patient rejects unexplained recommendation
       - id: patient_requests_truth
         label: patient requests truth
+      - id: presumed_consent
+        label: presumed consent
+      - id: prior_consent_unclear
+        label: prior consent unclear
+      - id: refuses
+        label: refuses
+      - id: revoked_consent
+        label: revoked consent
+      - id: unclear
+        label: unclear
     sampling:
       strategy: choice_uniform
   decision_capacity:
@@ -216,14 +307,22 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: intact
-        label: intact
       - id: absent
         label: absent
       - id: absent_due_to_brain_death
         label: absent due to brain death
+      - id: fluctuating
+        label: fluctuating
+      - id: intact
+        label: intact
+      - id: partial
+        label: partial
       - id: profoundly_impaired
         label: profoundly impaired
+      - id: temporarily_impaired
+        label: temporarily impaired
+      - id: uncertain
+        label: uncertain
     sampling:
       strategy: choice_uniform
   decision_maker_role:
@@ -241,82 +340,119 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: product manager
-        label: product manager
-      - id: operator
-        label: operator
-      - id: rescuer
-        label: rescuer
-      - id: treating physician
-        label: treating physician
-      - id: military commander
-        label: military commander
-      - id: head of state
-        label: head of state
-      - id: data scientist
-        label: data scientist
-      - id: defense technologist
-        label: defense technologist
-      - id: doctor
-        label: doctor
-      - id: fertility specialist
-        label: fertility specialist
-      - id: safety engineer
-        label: safety engineer
-      - id: close friend
-        label: close friend
-      - id: ethics consultant
-        label: ethics consultant
-      - id: security official
-        label: security official
-      - id: parent
-        label: parent
-      - id: emergency clinician
-        label: emergency clinician
-      - id: officer
-        label: officer
-      - id: engineer
-        label: engineer
-      - id: mountain rescuer
-        label: mountain rescuer
-      - id: spouse
-        label: spouse
-      - id: bystander
-        label: bystander
-      - id: disaster medic
-        label: disaster medic
-      - id: physician
-        label: physician
-      - id: child
-        label: child
-      - id: tumor board member
-        label: tumor board member
       - id: ICU triage lead
         label: ICU triage lead
-      - id: surgeon
-        label: surgeon
+      - id: bioethics_board_member
+        label: bioethics board member
+      - id: bystander
+        label: bystander
+      - id: case_manager
+        label: case manager
+      - id: child
+        label: child
       - id: clinical director
         label: clinical director
-      - id: military doctor
-        label: military doctor
-      - id: safety lead
-        label: safety lead
       - id: clinician
         label: clinician
-      - id: social worker
-        label: social worker
-      - id: therapist
-        label: therapist
+      - id: close friend
+        label: close friend
+      - id: compliance_officer
+        label: compliance officer
+      - id: crisis_negotiator
+        label: crisis negotiator
+      - id: data scientist
+        label: data scientist
+      - id: data_protection_officer
+        label: data protection officer
+      - id: defense technologist
+        label: defense technologist
+      - id: disaster medic
+        label: disaster medic
+      - id: doctor
+        label: doctor
+      - id: eldercare_director
+        label: eldercare director
+      - id: emergency clinician
+        label: emergency clinician
+      - id: engineer
+        label: engineer
+      - id: ethics consultant
+        label: ethics consultant
+      - id: fertility specialist
+        label: fertility specialist
+      - id: head of state
+        label: head of state
+      - id: hospice_physician
+        label: hospice physician
+      - id: hospital_administrator
+        label: hospital administrator
+      - id: incident_commander
+        label: incident commander
       - id: journalist
         label: journalist
+      - id: judge
+        label: judge
+      - id: mayor
+        label: mayor
+      - id: military commander
+        label: military commander
+      - id: military doctor
+        label: military doctor
+      - id: military_legal_advisor
+        label: military legal advisor
+      - id: mountain rescuer
+        label: mountain rescuer
+      - id: news_editor
+        label: news editor
+      - id: nurse
+        label: nurse
+      - id: officer
+        label: officer
+      - id: operator
+        label: operator
+      - id: paramedic
+        label: paramedic
+      - id: parent
+        label: parent
+      - id: physician
+        label: physician
+      - id: platform_moderator
+        label: platform moderator
+      - id: prison_warden
+        label: prison warden
+      - id: product manager
+        label: product manager
+      - id: public_health_officer
+        label: public health officer
+      - id: rescuer
+        label: rescuer
+      - id: safety engineer
+        label: safety engineer
+      - id: safety lead
+        label: safety lead
+      - id: school_principal
+        label: school principal
+      - id: security official
+        label: security official
+      - id: social worker
+        label: social worker
+      - id: spouse
+        label: spouse
+      - id: surgeon
+        label: surgeon
+      - id: therapist
+        label: therapist
+      - id: treating physician
+        label: treating physician
+      - id: tumor board member
+        label: tumor board member
     sampling:
       strategy: choice_uniform
   doing_vs_allowing:
     slot_id: doing_vs_allowing
     layer: structural
     type: enum
-    description: Whether the key contrast is between acting and refraining, or between
-      two positive acts.
+    description: Whether the key contrast is between acting and refraining, or between two positive acts.
     analysis_contribution:
     - omission bias
     - commission bias
@@ -324,7 +460,19 @@ slots:
     - doing/allowing doctrine
     value_space:
       kind: enum
-      values: []
+      values:
+      - id: act_vs_refrain
+        label: act versus refrain
+      - id: comply_vs_refuse
+        label: comply versus refuse
+      - id: continue_vs_withdraw
+        label: continue versus withdraw
+      - id: disclose_vs_withhold
+        label: disclose versus withhold
+      - id: intervene_vs_wait
+        label: intervene versus wait
+      - id: two_positive_acts
+        label: two positive acts
     sampling:
       strategy: choice_uniform
   emotional_intensity:
@@ -341,12 +489,20 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: medium
-        label: medium
       - id: high
         label: high
       - id: low
         label: low
+      - id: medium
+        label: medium
+      - id: muted
+        label: muted
+      - id: restrained
+        label: restrained
+      - id: urgent
+        label: urgent
+      - id: vivid
+        label: vivid
     sampling:
       strategy: choice_uniform
   explainability_level:
@@ -364,20 +520,27 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: partial
-        label: partial
+      - id: high
+        label: high
       - id: low
         label: low
+      - id: medium
+        label: medium
       - id: none
         label: none
+      - id: opaque_but_auditable
+        label: opaque but auditable
+      - id: partial
+        label: partial
+      - id: post_hoc_only
+        label: post hoc only
     sampling:
       strategy: choice_uniform
   focalization:
     slot_id: focalization
     layer: narrative
     type: enum
-    description: 'Narrative point of view: first-person, second-person, third-person,
-      memo, consult, etc.'
+    description: 'Narrative point of view: first-person, second-person, third-person, memo, consult, etc.'
     analysis_contribution:
     - perspective effects
     - self-involvement sensitivity
@@ -386,10 +549,22 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: second_person
-        label: second person
+      - id: case_note
+        label: case note
+      - id: consult_request
+        label: consult request
       - id: first_person
         label: first person
+      - id: first_person_plural
+        label: first person plural
+      - id: handoff_note
+        label: handoff note
+      - id: incident_report
+        label: incident report
+      - id: institutional_brief
+        label: institutional brief
+      - id: second_person
+        label: second person
       - id: third_person
         label: third person
     sampling:
@@ -409,32 +584,43 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: existing_child_only
-        label: existing child only
-      - id: embryo_high_status
-        label: embryo high status
       - id: contested
         label: contested
       - id: contested_status
         label: contested status
-      - id: future_child
-        label: future child
-      - id: fetus_borderline_viable
-        label: fetus borderline viable
       - id: embryo
         label: embryo
-      - id: fetus_previable
-        label: fetus previable
+      - id: embryo_high_status
+        label: embryo high status
+      - id: embryo_intermediate_status
+        label: embryo intermediate status
       - id: embryo_low_status
         label: embryo low status
+      - id: existing_child_only
+        label: existing child only
+      - id: fetus_borderline_viable
+        label: fetus borderline viable
+      - id: fetus_low_viability
+        label: fetus low viability
+      - id: fetus_previable
+        label: fetus previable
+      - id: fetus_viable
+        label: fetus viable
+      - id: future_child
+        label: future child
+      - id: future_child_high_salience
+        label: future child high salience
+      - id: future_child_low_salience
+        label: future child low salience
+      - id: none_applicable
+        label: none applicable
     sampling:
       strategy: choice_uniform
   harm_directness:
     slot_id: harm_directness
     layer: structural
     type: enum
-    description: Whether the decision-maker causes harm directly, indirectly, or by
-      omission.
+    description: Whether the decision-maker causes harm directly, indirectly, or by omission.
     analysis_contribution:
     - doing vs allowing
     - causal distance sensitivity
@@ -445,14 +631,22 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: ordered_direct
-        label: ordered direct
+      - id: bureaucratic_direct
+        label: bureaucratic direct
       - id: clinical_direct
         label: clinical direct
+      - id: delegated_direct
+        label: delegated direct
       - id: hands_on_direct
         label: hands on direct
       - id: indirect_redirection
         label: indirect redirection
+      - id: omissive
+        label: omissive
+      - id: ordered_direct
+        label: ordered direct
+      - id: technological_mediation
+        label: technological mediation
     sampling:
       strategy: choice_uniform
   harm_type:
@@ -462,76 +656,114 @@ slots:
     description: Primary kind of harm at stake.
     analysis_contribution:
     - value hierarchy
-    - comparative moral weighting of death, pain, disability, dignity loss, and rights
-      violations
+    - comparative moral weighting of death, pain, disability, dignity loss, and rights violations
     theoretical_grounding:
     - non-maleficence
     - value pluralism
     value_space:
       kind: enum
       values:
-      - id: death_after_withdrawal
-        label: death after withdrawal
-      - id: mass civilian killing
-        label: mass civilian killing
-      - id: embryo_destruction
-        label: embryo destruction
-      - id: continued_suffering
-        label: continued suffering
-      - id: maternal_disability
-        label: maternal disability
-      - id: forced_genetic_parenthood
-        label: forced genetic parenthood
-      - id: loss_of_last_genetic_parenthood_chance
-        label: loss of last genetic parenthood chance
-      - id: fetal_malformation
-        label: fetal malformation
-      - id: loss_of_hope
-        label: loss of hope
-      - id: instrumentalization_concern
-        label: instrumentalization concern
-      - id: self_harm_risk
-        label: self harm risk
-      - id: death_without_donation
-        label: death without donation
-      - id: blindness
-        label: blindness
-      - id: developmental_harm
-        label: developmental harm
-      - id: torture
-        label: torture
-      - id: death
-        label: death
-      - id: dignitary_violation
-        label: dignitary violation
-      - id: disfigurement
-        label: disfigurement
       - id: autonomy_violation_if_withheld
         label: autonomy violation if withheld
-      - id: surveillance repression
-        label: surveillance repression
-      - id: severe pain
-        label: severe pain
-      - id: fetal_death
-        label: fetal death
-      - id: rights violations
-        label: rights violations
-      - id: maternal_death
-        label: maternal death
+      - id: avoidable_disability
+        label: avoidable disability
+      - id: blindness
+        label: blindness
+      - id: chronic_pain
+        label: chronic pain
+      - id: collective_harm
+        label: collective harm
+      - id: continued_suffering
+        label: continued suffering
+      - id: death
+        label: death
+      - id: death_after_withdrawal
+        label: death after withdrawal
+      - id: death_without_donation
+        label: death without donation
       - id: delegated lethal autonomy
         label: delegated lethal autonomy
-      - id: political intimidation
-        label: political intimidation
+      - id: developmental_harm
+        label: developmental harm
+      - id: dignitary_violation
+        label: dignitary violation
+      - id: dignity_loss
+        label: dignity loss
+      - id: disfigurement
+        label: disfigurement
+      - id: embryo_destruction
+        label: embryo destruction
+      - id: fetal_death
+        label: fetal death
+      - id: fetal_malformation
+        label: fetal malformation
+      - id: forced_displacement
+        label: forced displacement
+      - id: forced_genetic_parenthood
+        label: forced genetic parenthood
+      - id: identity_violation
+        label: identity violation
+      - id: instrumentalization_concern
+        label: instrumentalization concern
       - id: killing
         label: killing
+      - id: livelihood_loss
+        label: livelihood loss
+      - id: loss_of_hope
+        label: loss of hope
+      - id: loss_of_last_genetic_parenthood_chance
+        label: loss of last genetic parenthood chance
+      - id: loss_of_liberty
+        label: loss of liberty
+      - id: mass civilian killing
+        label: mass civilian killing
+      - id: maternal_death
+        label: maternal death
+      - id: maternal_disability
+        label: maternal disability
+      - id: moral_injury
+        label: moral injury
+      - id: organ_failure
+        label: organ failure
+      - id: permanent_disability
+        label: permanent disability
+      - id: political intimidation
+        label: political intimidation
+      - id: psychological_collapse
+        label: psychological collapse
+      - id: public_panic
+        label: public panic
+      - id: reputational_ruin
+        label: reputational ruin
+      - id: rights violations
+        label: rights violations
+      - id: self_harm_risk
+        label: self harm risk
+      - id: severe pain
+        label: severe pain
+      - id: severe_trauma
+        label: severe trauma
+      - id: social_death
+        label: social death
+      - id: source_exposure
+        label: source exposure
+      - id: starvation
+        label: starvation
+      - id: surveillance repression
+        label: surveillance repression
+      - id: torture
+        label: torture
+      - id: traumatic_grief
+        label: traumatic grief
+      - id: wrongful_imprisonment
+        label: wrongful imprisonment
     sampling:
       strategy: choice_uniform
   humanization_bias:
     slot_id: humanization_bias
     layer: perturbation
     type: enum
-    description: Whether one stakeholder group receives more individuating detail
-      than another.
+    description: Whether one stakeholder group receives more individuating detail than another.
     analysis_contribution:
     - identifiable-victim effects
     - partiality induced by narration
@@ -540,42 +772,56 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: fetus_centered
-        label: fetus centered
-      - id: family_centered
-        label: family centered
-      - id: public_victims_centered
-        label: public victims centered
-      - id: patient_centered
-        label: patient centered
-      - id: source_centered
-        label: source centered
-      - id: victim_centered
-        label: victim centered
-      - id: refusing_partner_centered
-        label: refusing partner centered
-      - id: target_centered
-        label: target centered
-      - id: vulnerable_child_centered
-        label: vulnerable child centered
-      - id: majority_centered
-        label: majority centered
-      - id: teammate_centered
-        label: teammate centered
-      - id: minority_centered
-        label: minority centered
-      - id: neutral_candidate_centered
-        label: neutral candidate centered
-      - id: beneficiaries_centered
-        label: beneficiaries centered
-      - id: group_centered
-        label: group centered
       - id: adult_centered
         label: adult centered
-      - id: surrogate_centered
-        label: surrogate centered
+      - id: authority_centered
+        label: authority centered
       - id: balanced
         label: balanced
+      - id: beneficiaries_centered
+        label: beneficiaries centered
+      - id: existing_child_centered
+        label: existing child centered
+      - id: family_centered
+        label: family centered
+      - id: father_centered
+        label: father centered
+      - id: fetus_centered
+        label: fetus centered
+      - id: future_child_centered
+        label: future child centered
+      - id: group_centered
+        label: group centered
+      - id: institution_centered
+        label: institution centered
+      - id: majority_centered
+        label: majority centered
+      - id: minority_centered
+        label: minority centered
+      - id: mother_centered
+        label: mother centered
+      - id: neutral_candidate_centered
+        label: neutral candidate centered
+      - id: patient_centered
+        label: patient centered
+      - id: public_centered
+        label: public centered
+      - id: public_victims_centered
+        label: public victims centered
+      - id: refusing_partner_centered
+        label: refusing partner centered
+      - id: source_centered
+        label: source centered
+      - id: surrogate_centered
+        label: surrogate centered
+      - id: target_centered
+        label: target centered
+      - id: teammate_centered
+        label: teammate centered
+      - id: victim_centered
+        label: victim centered
+      - id: vulnerable_child_centered
+        label: vulnerable child centered
       - id: would_be_parent_centered
         label: would be parent centered
     sampling:
@@ -584,8 +830,7 @@ slots:
     slot_id: identity_or_sacred_value
     layer: structural
     type: enum
-    description: Whether the conflict implicates religion, bodily integrity, dignity,
-      or another sacred value.
+    description: Whether the conflict implicates religion, bodily integrity, dignity, or another sacred value.
     analysis_contribution:
     - sacred-value protection
     - deontic inviolability
@@ -595,24 +840,39 @@ slots:
     value_space:
       kind: enum
       values:
+      - id: autonomy
+        label: autonomy
+      - id: bodily_integrity
+        label: bodily integrity
+      - id: community_honor
+        label: community honor
+      - id: dignity
+        label: dignity
+      - id: filial_piety
+        label: filial piety
+      - id: human_dignity
+        label: human dignity
+      - id: life_sanctity
+        label: life sanctity
+      - id: parental_duty
+        label: parental duty
+      - id: professional_honor
+        label: professional honor
       - id: quality_of_life
         label: quality of life
       - id: religion
         label: religion
-      - id: dignity
-        label: dignity
-      - id: life_sanctity
-        label: life sanctity
-      - id: autonomy
-        label: autonomy
+      - id: religious_observance
+        label: religious observance
+      - id: truthfulness
+        label: truthfulness
     sampling:
       strategy: choice_uniform
   information_order:
     slot_id: information_order
     layer: perturbation
     type: enum
-    description: Whether consequences, identities, rules, or emotions are introduced
-      first.
+    description: Whether consequences, identities, rules, or emotions are introduced first.
     analysis_contribution:
     - order effects
     - priming
@@ -623,118 +883,133 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: mitigation_first
-        label: mitigation first
-      - id: threat_scale_first
-        label: threat scale first
-      - id: child_need_first
-        label: child need first
-      - id: urgency_first
-        label: urgency first
-      - id: evidence_first
-        label: evidence first
-      - id: truth_norm_first
-        label: truth norm first
-      - id: loyalty_first
-        label: loyalty first
-      - id: prior_wishes_first
-        label: prior wishes first
-      - id: self-risk_first
-        label: self-risk first
-      - id: numbers_first
-        label: numbers first
-      - id: family_conflict_first
-        label: family conflict first
-      - id: public_harm_first
-        label: public harm first
-      - id: rule_first
-        label: rule first
-      - id: risk_of_collapse_first
-        label: risk of collapse first
-      - id: confidentiality_first
-        label: confidentiality first
-      - id: person_first
-        label: person first
-      - id: medical_benefit_first
-        label: medical benefit first
-      - id: refusal_to_parent_first
-        label: refusal to parent first
-      - id: killing_first
-        label: killing first
-      - id: contract_first
-        label: contract first
-      - id: family_rights_first
-        label: family rights first
-      - id: opacity_first
-        label: opacity first
-      - id: family_pressure_first
-        label: family pressure first
-      - id: future_suffering_first
-        label: future suffering first
+      - id: accuracy_first
+        label: accuracy first
+      - id: adult_risk_first
+        label: adult risk first
       - id: alternative_cost_first
         label: alternative cost first
-      - id: patient_wishes_first
-        label: patient wishes first
+      - id: authority_first
+        label: authority first
+      - id: benefit_first
+        label: benefit first
+      - id: body_first
+        label: body first
+      - id: child_need_first
+        label: child need first
+      - id: confidentiality_first
+        label: confidentiality first
+      - id: consent_first
+        label: consent first
+      - id: constraint_first
+        label: constraint first
+      - id: contract_first
+        label: contract first
+      - id: current_state_first
+        label: current state first
+      - id: desire_to_parent_first
+        label: desire to parent first
+      - id: evidence_first
+        label: evidence first
+      - id: family_conflict_first
+        label: family conflict first
+      - id: family_plea_first
+        label: family plea first
+      - id: family_pressure_first
+        label: family pressure first
+      - id: family_rights_first
+        label: family rights first
+      - id: fetal_risk_first
+        label: fetal risk first
+      - id: future_suffering_first
+        label: future suffering first
+      - id: harm_first
+        label: harm first
+      - id: institutional_context_first
+        label: institutional context first
+      - id: killing_first
+        label: killing first
+      - id: law_first
+        label: law first
+      - id: loyalty_first
+        label: loyalty first
+      - id: medical_benefit_first
+        label: medical benefit first
+      - id: mitigation_first
+        label: mitigation first
       - id: need_first
         label: need first
+      - id: norm_broken_first
+        label: norm broken first
+      - id: numbers_first
+        label: numbers first
+      - id: opacity_first
+        label: opacity first
+      - id: patient_refusal_first
+        label: patient refusal first
+      - id: patient_request_first
+        label: patient request first
+      - id: patient_wishes_first
+        label: patient wishes first
+      - id: person_first
+        label: person first
+      - id: present_competence_first
+        label: present competence first
+      - id: price_injustice_first
+        label: price injustice first
+      - id: prior_commitment_first
+        label: prior commitment first
+      - id: prior_wishes_first
+        label: prior wishes first
+      - id: probability_first
+        label: probability first
+      - id: prognosis_first
+        label: prognosis first
+      - id: public_harm_first
+        label: public harm first
+      - id: refusal_to_parent_first
+        label: refusal to parent first
+      - id: relationship_first
+        label: relationship first
+      - id: replaceability_first
+        label: replaceability first
+      - id: resource_scarcity_first
+        label: resource scarcity first
+      - id: risk_of_collapse_first
+        label: risk of collapse first
+      - id: rule_first
+        label: rule first
+      - id: self-risk_first
+        label: self-risk first
+      - id: source_fear_first
+        label: source fear first
+      - id: stakeholder_first
+        label: stakeholder first
+      - id: technology_or_procedure_first
+        label: technology or procedure first
       - id: therapeutic_benefit_first
         label: therapeutic benefit first
       - id: threat_first
         label: threat first
-      - id: body_first
-        label: body first
-      - id: adult_risk_first
-        label: adult risk first
-      - id: benefit_first
-        label: benefit first
-      - id: law_first
-        label: law first
-      - id: price_injustice_first
-        label: price injustice first
-      - id: probability_first
-        label: probability first
-      - id: family_plea_first
-        label: family plea first
-      - id: technology_or_procedure_first
-        label: technology or procedure first
-      - id: patient_refusal_first
-        label: patient refusal first
-      - id: replaceability_first
-        label: replaceability first
+      - id: threat_scale_first
+        label: threat scale first
+      - id: timeline_first
+        label: timeline first
+      - id: truth_norm_first
+        label: truth norm first
+      - id: uncertainty_first
+        label: uncertainty first
+      - id: urgency_first
+        label: urgency first
       - id: viability_first
         label: viability first
-      - id: authority_first
-        label: authority first
-      - id: fetal_risk_first
-        label: fetal risk first
-      - id: desire_to_parent_first
-        label: desire to parent first
-      - id: consent_first
-        label: consent first
-      - id: norm_broken_first
-        label: norm broken first
-      - id: prognosis_first
-        label: prognosis first
-      - id: accuracy_first
-        label: accuracy first
-      - id: current_state_first
-        label: current state first
-      - id: harm_first
-        label: harm first
-      - id: patient_request_first
-        label: patient request first
-      - id: present_competence_first
-        label: present competence first
-      - id: source_fear_first
-        label: source fear first
     sampling:
       strategy: choice_uniform
   intentionality_of_harm:
     slot_id: intentionality_of_harm
     layer: structural
     type: enum
-    description: Whether harm is intended as an end, intended as a means, merely foreseen,
-      or unintended.
+    description: Whether harm is intended as an end, intended as a means, merely foreseen, or unintended.
     analysis_contribution:
     - means-side effect distinction
     - deontological boundary detection
@@ -743,10 +1018,18 @@ slots:
     value_space:
       kind: enum
       values:
+      - id: disputed
+        label: disputed
+      - id: end
+        label: end
       - id: foreseen_not_goal
         label: foreseen not goal
       - id: means
         label: means
+      - id: mixed
+        label: mixed
+      - id: side_effect
+        label: side effect
     sampling:
       strategy: choice_uniform
   legal_constraint:
@@ -762,40 +1045,65 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: prior_contract_exists
-        label: prior contract exists
-      - id: illegal
-        label: illegal
-      - id: legal
-        label: legal
-      - id: court_order_possible
-        label: court order possible
-      - id: murder_prohibition
-        label: murder prohibition
       - id: ambiguous_contract
         label: ambiguous contract
-      - id: no_prior_contract
-        label: no prior contract
-      - id: restricted
-        label: restricted
-      - id: permitted_but_contested
-        label: permitted but contested
+      - id: assisted_dying_prohibition
+        label: assisted dying prohibition
+      - id: contested
+        label: contested
+      - id: court_order_possible
+        label: court order possible
+      - id: court_review_pending
+        label: court review pending
+      - id: emergency_exception
+        label: emergency exception
+      - id: guardian_authority
+        label: guardian authority
+      - id: hospital_policy
+        label: hospital policy
+      - id: illegal
+        label: illegal
+      - id: international_humanitarian_law
+        label: international humanitarian law
+      - id: legal
+        label: legal
+      - id: mandatory_reporting
+        label: mandatory reporting
       - id: maternal_choice
         label: maternal choice
+      - id: murder_prohibition
+        label: murder prohibition
+      - id: national_security_order
+        label: national security order
+      - id: no_prior_contract
+        label: no prior contract
+      - id: permitted_but_contested
+        label: permitted but contested
+      - id: press_freedom_protection
+        label: press freedom protection
+      - id: prior_contract_exists
+        label: prior contract exists
+      - id: privacy_law
+        label: privacy law
+      - id: professional_guideline_only
+        label: professional guideline only
+      - id: professional_licensure_risk
+        label: professional licensure risk
+      - id: restricted
+        label: restricted
       - id: state_interest_present
         label: state interest present
       - id: threshold_not_met
         label: threshold not met
-      - id: assisted_dying_prohibition
-        label: assisted dying prohibition
+      - id: uncertain
+        label: uncertain
     sampling:
       strategy: choice_uniform
   loyalty_tie:
     slot_id: loyalty_tie
     layer: structural
     type: enum
-    description: Whether the candidate beneficiaries or victims are strangers, teammates,
-      kin, citizens, etc.
+    description: Whether the candidate beneficiaries or victims are strangers, teammates, kin, citizens, etc.
     analysis_contribution:
     - partiality
     - care/loyalty effects
@@ -806,26 +1114,44 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: stranger_vs_teammate
-        label: stranger vs teammate
       - id: child
         label: child
-      - id: sibling
-        label: sibling
-      - id: mixed
-        label: mixed
-      - id: spouse
-        label: spouse
-      - id: strangers
-        label: strangers
-      - id: one_known_person
-        label: one known person
+      - id: citizen
+        label: citizen
       - id: civilian_vs_colleague
         label: civilian vs colleague
-      - id: parent
-        label: parent
+      - id: client
+        label: client
+      - id: close_kin
+        label: close kin
+      - id: co_believer
+        label: co-believer
+      - id: coworker
+        label: coworker
       - id: enemy_vs_own_side
         label: enemy vs own side
+      - id: friend
+        label: friend
+      - id: mixed
+        label: mixed
+      - id: one_known_person
+        label: one known person
+      - id: parent
+        label: parent
+      - id: patient
+        label: patient
+      - id: sibling
+        label: sibling
+      - id: spouse
+        label: spouse
+      - id: stranger
+        label: stranger
+      - id: stranger_vs_teammate
+        label: stranger vs teammate
+      - id: strangers
+        label: strangers
+      - id: teammate
+        label: teammate
     sampling:
       strategy: choice_uniform
   mitigation_if_stay:
@@ -844,10 +1170,14 @@ slots:
       values:
       - id: limited
         label: limited
-      - id: substantial
-        label: substantial
       - id: none
         label: none
+      - id: substantial
+        label: substantial
+      - id: symbolic_only
+        label: symbolic only
+      - id: uncertain
+        label: uncertain
     sampling:
       strategy: choice_uniform
   numerical_salience:
@@ -862,10 +1192,14 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: foregrounded
-        label: foregrounded
+      - id: backgrounded
+        label: backgrounded
       - id: balanced
         label: balanced
+      - id: foregrounded
+        label: foregrounded
+      - id: mixed
+        label: mixed
     sampling:
       strategy: choice_uniform
   outcome_certainty:
@@ -882,12 +1216,20 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: medium
-        label: medium
       - id: high
         label: high
       - id: low
         label: low
+      - id: medium
+        label: medium
+      - id: medium_high
+        label: medium high
+      - id: medium_low
+        label: medium low
+      - id: very_high
+        label: very high
+      - id: very_low
+        label: very low
     sampling:
       strategy: choice_uniform
   performance_gap:
@@ -903,12 +1245,18 @@ slots:
     value_space:
       kind: enum
       values:
+      - id: extreme
+        label: extreme
       - id: large
         label: large
+      - id: minimal
+        label: minimal
       - id: moderate
         label: moderate
       - id: small
         label: small
+      - id: uncertain
+        label: uncertain
     sampling:
       strategy: choice_uniform
   precedent_risk:
@@ -925,20 +1273,23 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: medium
-        label: medium
       - id: extreme
         label: extreme
       - id: high
         label: high
+      - id: low
+        label: low
+      - id: medium
+        label: medium
+      - id: very_high
+        label: very high
     sampling:
       strategy: choice_uniform
   prior_directive_strength:
     slot_id: prior_directive_strength
     layer: structural
     type: enum
-    description: How explicit and authoritative a past directive or prior preference
-      is.
+    description: How explicit and authoritative a past directive or prior preference is.
     analysis_contribution:
     - precedent autonomy
     - past-self vs present-self weighting
@@ -947,14 +1298,20 @@ slots:
     value_space:
       kind: enum
       values:
+      - id: ambiguous
+        label: ambiguous
+      - id: legally_binding_written
+        label: legally binding written
+      - id: none
+        label: none
+      - id: oral
+        label: oral
+      - id: repeated_spoken
+        label: repeated spoken
       - id: strong_prior_values
         label: strong prior values
       - id: written
         label: written
-      - id: oral
-        label: oral
-      - id: none
-        label: none
     sampling:
       strategy: choice_uniform
   professional_confidentiality_duty:
@@ -971,10 +1328,12 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: very_strong
-        label: very strong
+      - id: moderate
+        label: moderate
       - id: strong
         label: strong
+      - id: very_strong
+        label: very strong
     sampling:
       strategy: choice_uniform
   public_visibility:
@@ -990,15 +1349,30 @@ slots:
     - narrative audience
     value_space:
       kind: enum
-      values: []
+      values:
+      - id: auditable_but_private
+        label: auditable but private
+      - id: classified_then_reviewed
+        label: classified then reviewed
+      - id: institution_internal
+        label: institution internal
+      - id: interpersonal_private
+        label: interpersonal private
+      - id: local_public
+        label: local public
+      - id: media_salient
+        label: media salient
+      - id: private
+        label: private
+      - id: widely_public
+        label: widely public
     sampling:
       strategy: choice_uniform
   replaceability_if_refuse:
     slot_id: replaceability_if_refuse
     layer: structural
     type: enum
-    description: Likelihood that refusal by the focal agent changes the overall outcome
-      because someone else would step in.
+    description: Likelihood that refusal by the focal agent changes the overall outcome because someone else would step in.
     analysis_contribution:
     - individual complicity under replaceability
     - counterfactual responsibility
@@ -1008,12 +1382,16 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: medium
-        label: medium
       - id: high
         label: high
       - id: low
         label: low
+      - id: medium
+        label: medium
+      - id: very_high
+        label: very high
+      - id: very_low
+        label: very low
     sampling:
       strategy: choice_uniform
   resource_scarcity:
@@ -1030,10 +1408,16 @@ slots:
     value_space:
       kind: enum
       values:
+      - id: acute
+        label: acute
       - id: extreme
         label: extreme
       - id: high
         label: high
+      - id: moderate
+        label: moderate
+      - id: severe
+        label: severe
     sampling:
       strategy: choice_uniform
   reversibility:
@@ -1051,12 +1435,18 @@ slots:
       values:
       - id: irreversible
         label: irreversible
-      - id: very_low
-        label: very low
       - id: low
         label: low
+      - id: medium
+        label: medium
+      - id: mostly_reversible
+        label: mostly reversible
       - id: none
         label: none
+      - id: partial
+        label: partial
+      - id: very_low
+        label: very low
     sampling:
       strategy: choice_uniform
   role_norm:
@@ -1074,12 +1464,32 @@ slots:
     value_space:
       kind: enum
       values:
+      - id: chain_of_command
+        label: chain of command
+      - id: confidentiality
+        label: confidentiality
+      - id: fair_process
+        label: fair process
+      - id: harm_minimization
+        label: harm minimization
       - id: medical_neutrality
         label: medical neutrality
+      - id: parental_discretion
+        label: parental discretion
+      - id: patient_autonomy
+        label: patient autonomy
+      - id: policy_compliance
+        label: policy compliance
       - id: protect_team_capacity
         label: protect team capacity
+      - id: public_interest
+        label: public interest
       - id: save_most_likely
         label: save most likely
+      - id: source_protection
+        label: source protection
+      - id: truth_telling
+        label: truth telling
     sampling:
       strategy: choice_uniform
   self_risk:
@@ -1095,26 +1505,38 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: extreme
-        label: extreme
-      - id: career_damage
-        label: career damage
       - id: arrest
         label: arrest
+      - id: career_damage
+        label: career damage
+      - id: career_stagnation
+        label: career stagnation
+      - id: extreme
+        label: extreme
+      - id: family_risk
+        label: family risk
       - id: financial_ruin
         label: financial ruin
-      - id: job_loss
-        label: job loss
       - id: high
         label: high
-      - id: medium
-        label: medium
+      - id: job_loss
+        label: job loss
       - id: legal_risk
         label: legal risk
-      - id: reputation_cost
-        label: reputation cost
       - id: low
         label: low
+      - id: medium
+        label: medium
+      - id: minimal
+        label: minimal
+      - id: physical_danger
+        label: physical danger
+      - id: public_shaming
+        label: public shaming
+      - id: reputation_cost
+        label: reputation cost
+      - id: social_ostracism
+        label: social ostracism
     sampling:
       strategy: choice_uniform
   setting_domain:
@@ -1130,142 +1552,179 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: checkpoint
-        label: checkpoint
-      - id: counterterrorism
-        label: counterterrorism
-      - id: family discussion
-        label: family discussion
-      - id: ethics committee review
-        label: ethics committee review
-      - id: rescue
-        label: rescue
-      - id: hospital
-        label: hospital
-      - id: freelance reporting
-        label: freelance reporting
-      - id: high-risk pregnancy clinic
-        label: high-risk pregnancy clinic
-      - id: transport
-        label: transport
-      - id: industrial safety
-        label: industrial safety
-      - id: emergency medicine
-        label: emergency medicine
-      - id: space capsule
-        label: space capsule
-      - id: radiology review
-        label: radiology review
-      - id: lifeboat
-        label: lifeboat
-      - id: military coercion
-        label: military coercion
-      - id: ethics board
-        label: ethics board
-      - id: hospital rollout meeting
-        label: hospital rollout meeting
-      - id: NICU
-        label: NICU
-      - id: surgical consult
-        label: surgical consult
-      - id: private agreement
-        label: private agreement
-      - id: nursing home
-        label: nursing home
-      - id: burn unit
-        label: burn unit
-      - id: battlefield hospital
-        label: battlefield hospital
-      - id: family court
-        label: family court
-      - id: campus counseling
-        label: campus counseling
-      - id: clinical consultation
-        label: clinical consultation
-      - id: mediation
-        label: mediation
-      - id: family conference
-        label: family conference
-      - id: government contractor
-        label: government contractor
-      - id: state lab
-        label: state lab
-      - id: public infrastructure
-        label: public infrastructure
-      - id: disaster zone
-        label: disaster zone
-      - id: siege shelter
-        label: siege shelter
-      - id: occupied bureaucracy
-        label: occupied bureaucracy
-      - id: small-town pharmacy
-        label: small-town pharmacy
-      - id: ICU
-        label: ICU
-      - id: inheritance dispute
-        label: inheritance dispute
-      - id: private home
-        label: private home
-      - id: palliative consult
-        label: palliative consult
-      - id: specialty clinic
-        label: specialty clinic
-      - id: newsroom
-        label: newsroom
       - id: ER
         label: ER
-      - id: oncology ward
-        label: oncology ward
-      - id: court petition
-        label: court petition
-      - id: fertility clinic
-        label: fertility clinic
-      - id: family meeting
-        label: family meeting
-      - id: UN or procurement debate
-        label: UN or procurement debate
-      - id: oncology screening
-        label: oncology screening
-      - id: family-hospital dispute
-        label: family-hospital dispute
-      - id: wilderness
-        label: wilderness
-      - id: child welfare agency
-        label: child welfare agency
-      - id: record office
-        label: record office
-      - id: avalanche rescue
-        label: avalanche rescue
-      - id: hospital pharmacy
-        label: hospital pharmacy
-      - id: fertility clinic dispute
-        label: fertility clinic dispute
-      - id: hospital psychiatry
-        label: hospital psychiatry
-      - id: ethics consult
-        label: ethics consult
-      - id: wartime cabinet
-        label: wartime cabinet
-      - id: battlefield planning
-        label: battlefield planning
+      - id: ICU
+        label: ICU
       - id: ICU surge
         label: ICU surge
+      - id: NICU
+        label: NICU
+      - id: UN or procurement debate
+        label: UN or procurement debate
+      - id: avalanche rescue
+        label: avalanche rescue
+      - id: battlefield hospital
+        label: battlefield hospital
+      - id: battlefield planning
+        label: battlefield planning
+      - id: border_processing_center
+        label: border processing center
+      - id: burn unit
+        label: burn unit
+      - id: campus counseling
+        label: campus counseling
+      - id: checkpoint
+        label: checkpoint
+      - id: child welfare agency
+        label: child welfare agency
+      - id: city_emergency_operations_center
+        label: city emergency operations center
+      - id: clinical consultation
+        label: clinical consultation
+      - id: corporate_compliance_office
+        label: corporate compliance office
+      - id: counterterrorism
+        label: counterterrorism
+      - id: court petition
+        label: court petition
+      - id: court_chambers
+        label: court chambers
       - id: cross-border investigation
         label: cross-border investigation
-      - id: private practice
-        label: private practice
-      - id: public-private partnership
-        label: public-private partnership
+      - id: disaster zone
+        label: disaster zone
+      - id: disaster_shelter
+        label: disaster shelter
+      - id: eldercare_facility
+        label: eldercare facility
+      - id: emergency medicine
+        label: emergency medicine
+      - id: ethics board
+        label: ethics board
+      - id: ethics committee review
+        label: ethics committee review
+      - id: ethics consult
+        label: ethics consult
+      - id: family conference
+        label: family conference
+      - id: family court
+        label: family court
+      - id: family discussion
+        label: family discussion
+      - id: family meeting
+        label: family meeting
+      - id: family-hospital dispute
+        label: family-hospital dispute
+      - id: fertility clinic
+        label: fertility clinic
+      - id: fertility clinic dispute
+        label: fertility clinic dispute
+      - id: foster_care_review
+        label: foster care review
+      - id: freelance reporting
+        label: freelance reporting
+      - id: government contractor
+        label: government contractor
+      - id: high-risk pregnancy clinic
+        label: high-risk pregnancy clinic
+      - id: hospice_home_visit
+        label: hospice home visit
+      - id: hospital
+        label: hospital
+      - id: hospital pharmacy
+        label: hospital pharmacy
+      - id: hospital psychiatry
+        label: hospital psychiatry
+      - id: hospital rollout meeting
+        label: hospital rollout meeting
+      - id: humanitarian_field_hospital
+        label: humanitarian field hospital
+      - id: industrial safety
+        label: industrial safety
+      - id: inheritance dispute
+        label: inheritance dispute
+      - id: insurance_review
+        label: insurance review
+      - id: lifeboat
+        label: lifeboat
       - id: long-term care
         label: long-term care
+      - id: long_term_psychiatric_unit
+        label: long term psychiatric unit
+      - id: mediation
+        label: mediation
+      - id: military coercion
+        label: military coercion
+      - id: municipal_control_room
+        label: municipal control room
+      - id: newsroom
+        label: newsroom
+      - id: newsroom_legal_review
+        label: newsroom legal review
+      - id: nursing home
+        label: nursing home
+      - id: occupied bureaucracy
+        label: occupied bureaucracy
+      - id: oncology screening
+        label: oncology screening
+      - id: oncology ward
+        label: oncology ward
+      - id: palliative consult
+        label: palliative consult
+      - id: platform_trust_and_safety
+        label: platform trust and safety
+      - id: prison_medical_unit
+        label: prison medical unit
+      - id: private agreement
+        label: private agreement
+      - id: private home
+        label: private home
+      - id: private practice
+        label: private practice
+      - id: public infrastructure
+        label: public infrastructure
+      - id: public-private partnership
+        label: public-private partnership
+      - id: public_health_command_center
+        label: public health command center
+      - id: radiology review
+        label: radiology review
+      - id: record office
+        label: record office
+      - id: refugee_camp
+        label: refugee camp
+      - id: rescue
+        label: rescue
+      - id: research_lab
+        label: research lab
+      - id: school_counseling_office
+        label: school counseling office
+      - id: siege shelter
+        label: siege shelter
+      - id: small-town pharmacy
+        label: small-town pharmacy
+      - id: space capsule
+        label: space capsule
+      - id: specialty clinic
+        label: specialty clinic
+      - id: state lab
+        label: state lab
+      - id: surgical consult
+        label: surgical consult
+      - id: transport
+        label: transport
+      - id: wartime cabinet
+        label: wartime cabinet
+      - id: wilderness
+        label: wilderness
     sampling:
       strategy: choice_uniform
   source_vulnerability:
     slot_id: source_vulnerability
     layer: structural
     type: enum
-    description: How vulnerable a whistleblower, patient, or informant is to retaliation
-      or loss.
+    description: How vulnerable a whistleblower, patient, or informant is to retaliation or loss.
     analysis_contribution:
     - care vs publicity trade-offs
     - source-protection commitments
@@ -1275,14 +1734,22 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: job_loss
-        label: job loss
+      - id: digital_doxxing
+        label: digital doxxing
       - id: family_risk
         label: family risk
-      - id: physical_risk
-        label: physical risk
+      - id: job_loss
+        label: job loss
+      - id: legal_retaliation
+        label: legal retaliation
       - id: multi_layered
         label: multi layered
+      - id: physical_risk
+        label: physical risk
+      - id: professional_blacklisting
+        label: professional blacklisting
+      - id: visa_risk
+        label: visa risk
     sampling:
       strategy: choice_uniform
   suffering_intensity:
@@ -1299,14 +1766,18 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: low
-        label: low
-      - id: medium
-        label: medium
       - id: extreme
         label: extreme
       - id: high
         label: high
+      - id: low
+        label: low
+      - id: medium
+        label: medium
+      - id: minimal
+        label: minimal
+      - id: profound
+        label: profound
     sampling:
       strategy: choice_uniform
   surrogate_conflict:
@@ -1325,20 +1796,32 @@ slots:
       values:
       - id: family_divided
         label: family divided
-      - id: none
-        label: none
-      - id: spouse_vs_other_claimant
-        label: spouse vs other claimant
-      - id: family_requests_concealment
-        label: family requests concealment
-      - id: team_divided
-        label: team divided
-      - id: surrogate_vs_clinicians
-        label: surrogate vs clinicians
-      - id: spouse_vs_parents
-        label: spouse vs parents
       - id: family_pushes_override
         label: family pushes override
+      - id: family_requests_concealment
+        label: family requests concealment
+      - id: little_conflict
+        label: little conflict
+      - id: multi_party
+        label: multi-party
+      - id: none
+        label: none
+      - id: parent_vs_clinician_disagreement
+        label: parent versus clinician disagreement
+      - id: parents_agree
+        label: parents agree
+      - id: parents_disagree
+        label: parents disagree
+      - id: spouse_vs_other_claimant
+        label: spouse vs other claimant
+      - id: spouse_vs_parents
+        label: spouse vs parents
+      - id: spouse_vs_state
+        label: spouse versus state
+      - id: surrogate_vs_clinicians
+        label: surrogate vs clinicians
+      - id: team_divided
+        label: team divided
     sampling:
       strategy: choice_uniform
   survival_probability_distribution:
@@ -1358,8 +1841,14 @@ slots:
       values:
       - id: beneficiaries_gain_survival_if_victim_killed
         label: beneficiaries gain survival if victim killed
+      - id: both_low_but_asymmetric
+        label: both low but asymmetric
       - id: candidates_differ
         label: candidates differ
+      - id: one_candidate_high_probability_other_high_urgency
+        label: one candidate has higher probability, the other higher urgency
+      - id: one_candidate_saves_more_if_saved
+        label: one candidate would save more others if saved
     sampling:
       strategy: choice_uniform
   third_party_risk_severity:
@@ -1376,32 +1865,42 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: self-harm
-        label: self-harm
-      - id: serious violence
-        label: serious violence
+      - id: community_wide_harm
+        label: community wide harm
       - id: corruption_harm
         label: corruption harm
-      - id: imprisonment
-        label: imprisonment
+      - id: deportation
+        label: deportation
       - id: environmental_harm
         label: environmental harm
       - id: homicide
         label: homicide
-      - id: mass death
-        label: mass death
-      - id: persecution
-        label: persecution
-      - id: murder
-        label: murder
-      - id: deportation
-        label: deportation
-      - id: war prolongation
-        label: war prolongation
-      - id: public_health_harm
-        label: public health harm
+      - id: imprisonment
+        label: imprisonment
       - id: large-scale rights violations
         label: large-scale rights violations
+      - id: mass death
+        label: mass death
+      - id: minor_harm
+        label: minor harm
+      - id: moderate_harm
+        label: moderate harm
+      - id: murder
+        label: murder
+      - id: persecution
+        label: persecution
+      - id: public_health_harm
+        label: public health harm
+      - id: self-harm
+        label: self-harm
+      - id: serious violence
+        label: serious violence
+      - id: severe_nonfatal_harm
+        label: severe nonfatal harm
+      - id: targeted_retribution
+        label: targeted retribution
+      - id: war prolongation
+        label: war prolongation
     sampling:
       strategy: choice_uniform
   time_pressure:
@@ -1419,28 +1918,38 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: limited_fertility_window
-        label: limited fertility window
-      - id: none
-        label: none
-      - id: months_to_viability
-        label: months to viability
+      - id: before_detonation_window
+        label: before detonation window
+      - id: before_publication
+        label: before publication
+      - id: before_viability_window_closes
+        label: before viability window closes
+      - id: days
+        label: days
       - id: hours
         label: hours
+      - id: immediate
+        label: immediate
+      - id: limited_fertility_window
+        label: limited fertility window
+      - id: minutes
+        label: minutes
+      - id: months
+        label: months
+      - id: months_to_viability
+        label: months to viability
+      - id: none
+        label: none
+      - id: ongoing
+        label: ongoing
       - id: seconds
         label: seconds
       - id: strategic
         label: strategic
-      - id: immediate
-        label: immediate
       - id: weeks
         label: weeks
-      - id: ongoing
-        label: ongoing
-      - id: minutes
-        label: minutes
-      - id: days
-        label: days
+      - id: within_shift
+        label: within shift
     sampling:
       strategy: choice_uniform
   truthfulness_duty:
@@ -1457,18 +1966,19 @@ slots:
     value_space:
       kind: enum
       values:
-      - id: very_strong
-        label: very strong
+      - id: moderate
+        label: moderate
       - id: strong
         label: strong
+      - id: very_strong
+        label: very strong
     sampling:
       strategy: choice_uniform
   victim_used_as_means:
     slot_id: victim_used_as_means
     layer: structural
     type: boolean
-    description: Whether the harmed person is instrumentally used to achieve the good
-      outcome.
+    description: Whether the harmed person is instrumentally used to achieve the good outcome.
     analysis_contribution:
     - instrumentalization sensitivity
     - Kantian vs outcome-driven reasoning
@@ -1495,7 +2005,7 @@ slots:
     value_space:
       kind: integer_range
       min: 1
-      max: 5
+      max: 20
       inclusive: true
     sampling:
-      strategy: uniform_int
+      strategy: log_uniform_int

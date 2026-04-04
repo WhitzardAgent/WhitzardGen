@@ -21,6 +21,11 @@ from whitzard.annotation.config import (
     validate_annotation_payload,
 )
 from whitzard.annotation.models import AnnotationBundleSummary
+from whitzard.benchmarking.prompt_templates import (
+    default_judge_template_context,
+    render_scoped_prompt_template,
+    resolve_prompt_template_config,
+)
 from whitzard.prompts.models import PromptRecord
 from whitzard.registry import load_registry
 from whitzard.run_flow import run_single_model
@@ -47,6 +52,8 @@ def annotate_run(
     execution_mode: str = "real",
     progress: RunProgress | None = None,
     config_path: str | Path | None = None,
+    prompt_template: dict[str, Any] | None = None,
+    extra_template_context_by_record_id: dict[str, dict[str, Any]] | None = None,
 ) -> AnnotationBundleSummary:
     progress = progress or NullRunProgress()
     created_at = datetime.now(UTC).isoformat()
@@ -56,6 +63,7 @@ def annotate_run(
         profile_name=annotation_profile,
         template_name=template_name,
     )
+    resolved_prompt_template = resolve_prompt_template_config(prompt_template)
     resolved_annotator_model = annotator_model or profile.default_model
     if not resolved_annotator_model:
         raise AnnotationError(
@@ -155,6 +163,10 @@ def annotate_run(
                 annotator_model=resolved_annotator_model,
                 annotation_profile=profile.name,
                 annotation_template=template.name,
+                prompt_template=resolved_prompt_template,
+                extra_template_context=(extra_template_context_by_record_id or {}).get(
+                    str(record.get("record_id", "")).strip()
+                ),
             )
             for record in compatible_records
         ]
@@ -344,6 +356,8 @@ def _build_annotation_request_prompt(
     annotator_model: str,
     annotation_profile: str,
     annotation_template: str,
+    prompt_template: dict[str, Any] | None = None,
+    extra_template_context: dict[str, Any] | None = None,
 ) -> PromptRecord:
     source_prompt_metadata = dict(source_record.get("prompt_metadata", {}))
     annotation_source_record = {
@@ -361,37 +375,51 @@ def _build_annotation_request_prompt(
         "source_prompt_metadata": source_prompt_metadata,
         "source_generation_params": dict(source_record.get("generation_params", {})),
     }
-    prompt_text = render_annotation_template(
-        template_text,
-        values={
-            "source_run_id": source_run_id,
-            "source_record_id": source_record.get("record_id", ""),
-            "source_prompt_id": source_record.get("prompt_id", ""),
-            "source_prompt": source_record.get("prompt", ""),
-            "source_negative_prompt": source_record.get("negative_prompt") or "",
-            "source_language": source_record.get("language", ""),
-            "source_model_name": source_record.get("model_name", ""),
-            "source_task_type": source_record.get("task_type", ""),
-            "source_artifact_type": source_record.get("artifact_type", ""),
-            "source_artifact_path": source_record.get("artifact_path", ""),
-            "source_artifact_metadata_json": json.dumps(
-                source_record.get("artifact_metadata", {}),
-                ensure_ascii=False,
-                sort_keys=True,
+    resolved_prompt_template = dict(prompt_template or {})
+    template_warnings: list[str] = []
+    if resolved_prompt_template:
+        prompt_text, template_warnings = render_scoped_prompt_template(
+            template_config=resolved_prompt_template,
+            root_context=default_judge_template_context(
+                source_record=source_record,
+                source_run_id=source_run_id,
+                output_contract=output_contract,
+                extra_context=extra_template_context,
             ),
-            "source_prompt_metadata_json": json.dumps(
-                source_prompt_metadata,
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-            "source_generation_params_json": json.dumps(
-                source_record.get("generation_params", {}),
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-            "output_contract_block": render_output_contract(output_contract),
-        },
-    )
+            warning_prefix=f"annotation request {source_record.get('record_id', '')}",
+        )
+    else:
+        prompt_text = render_annotation_template(
+            template_text,
+            values={
+                "source_run_id": source_run_id,
+                "source_record_id": source_record.get("record_id", ""),
+                "source_prompt_id": source_record.get("prompt_id", ""),
+                "source_prompt": source_record.get("prompt", ""),
+                "source_negative_prompt": source_record.get("negative_prompt") or "",
+                "source_language": source_record.get("language", ""),
+                "source_model_name": source_record.get("model_name", ""),
+                "source_task_type": source_record.get("task_type", ""),
+                "source_artifact_type": source_record.get("artifact_type", ""),
+                "source_artifact_path": source_record.get("artifact_path", ""),
+                "source_artifact_metadata_json": json.dumps(
+                    source_record.get("artifact_metadata", {}),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "source_prompt_metadata_json": json.dumps(
+                    source_prompt_metadata,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "source_generation_params_json": json.dumps(
+                    source_record.get("generation_params", {}),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "output_contract_block": render_output_contract(output_contract),
+            },
+        )
     prompt_id = f"annreq_{_slugify(str(source_record.get('record_id', 'record')))}"
     metadata = {
         "annotation_profile": annotation_profile,
@@ -399,6 +427,19 @@ def _build_annotation_request_prompt(
         "annotator_model": annotator_model,
         "annotation_source_record": annotation_source_record,
     }
+    if resolved_prompt_template:
+        metadata["prompt_template"] = {
+            "name": resolved_prompt_template.get("name"),
+            "version": resolved_prompt_template.get("version"),
+            "path": resolved_prompt_template.get("path"),
+            "variable_allowlist": list(
+                resolved_prompt_template.get("variable_allowlist", []) or []
+            ),
+            "missing_variable_policy": resolved_prompt_template.get(
+                "missing_variable_policy"
+            ),
+            "warnings": list(template_warnings),
+        }
     return PromptRecord(
         prompt_id=prompt_id,
         prompt=prompt_text,
