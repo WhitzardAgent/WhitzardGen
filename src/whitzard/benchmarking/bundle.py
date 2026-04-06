@@ -78,6 +78,9 @@ def inspect_benchmark_bundle(path: str | Path) -> dict[str, Any]:
         "case_set_path": str(cases_path),
         "raw_realizations_path": str(bundle_dir / "raw_realizations.jsonl") if (bundle_dir / "raw_realizations.jsonl").exists() else None,
         "rejected_realizations_path": str(bundle_dir / "rejected_realizations.jsonl") if (bundle_dir / "rejected_realizations.jsonl").exists() else None,
+        "request_previews_path": str(bundle_dir / "request_previews.jsonl") if (bundle_dir / "request_previews.jsonl").exists() else None,
+        "request_preview_summary_path": str(bundle_dir / "request_preview_summary.json") if (bundle_dir / "request_preview_summary.json").exists() else None,
+        "request_previews_markdown_path": str(bundle_dir / "request_previews.md") if (bundle_dir / "request_previews.md").exists() else None,
     }
 
 
@@ -169,6 +172,9 @@ def inspect_experiment_bundle(path: str | Path) -> dict[str, Any]:
         "manifest": manifest,
         "summary": summary,
         "report_path": str(report_path) if report_path.exists() else None,
+        "request_previews_path": str(bundle_dir / "request_previews.jsonl") if (bundle_dir / "request_previews.jsonl").exists() else None,
+        "request_preview_summary_path": str(bundle_dir / "request_preview_summary.json") if (bundle_dir / "request_preview_summary.json").exists() else None,
+        "request_previews_markdown_path": str(bundle_dir / "request_previews.md") if (bundle_dir / "request_previews.md").exists() else None,
     }
 
 

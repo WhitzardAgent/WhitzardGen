@@ -21,6 +21,8 @@ from whitzard.annotation.config import (
     validate_annotation_payload,
 )
 from whitzard.annotation.models import AnnotationBundleSummary
+from whitzard.benchmarking.models import RequestPreviewRecord
+from whitzard.benchmarking.preview import PreviewCollector
 from whitzard.benchmarking.prompt_templates import (
     default_judge_template_context,
     render_scoped_prompt_template,
@@ -55,6 +57,7 @@ def annotate_run(
     prompt_template: dict[str, Any] | None = None,
     output_spec: dict[str, Any] | None = None,
     extra_template_context_by_record_id: dict[str, dict[str, Any]] | None = None,
+    preview_collector: PreviewCollector | None = None,
 ) -> AnnotationBundleSummary:
     progress = progress or NullRunProgress()
     created_at = datetime.now(UTC).isoformat()
@@ -156,23 +159,23 @@ def annotate_run(
         compatible_records.append(record)
 
     if compatible_records:
-        request_prompts = [
-            _build_annotation_request_prompt(
-                source_record=record,
-                source_run_id=source_run_id,
-                template_text=template.instruction_template,
-                output_contract=profile.output_contract,
-                output_spec=resolved_output_spec,
-                annotator_model=resolved_annotator_model,
-                annotation_profile=profile.name,
-                annotation_template=template.name,
-                prompt_template=resolved_prompt_template,
-                extra_template_context=(extra_template_context_by_record_id or {}).get(
-                    str(record.get("record_id", "")).strip()
-                ),
-            )
-            for record in compatible_records
-        ]
+        request_prompts = build_annotation_request_prompts(
+            source_run_id=source_run_id,
+            source_records=compatible_records,
+            annotation_profile=profile.name,
+            annotation_template=template.name,
+            annotator_model=resolved_annotator_model,
+            template_text=template.instruction_template,
+            output_contract=profile.output_contract,
+            output_spec=resolved_output_spec,
+            prompt_template=resolved_prompt_template,
+            extra_template_context_by_record_id=extra_template_context_by_record_id,
+        )
+        _collect_annotation_preview_records(
+            preview_collector=preview_collector,
+            request_prompts=request_prompts,
+            judge_model=resolved_annotator_model,
+        )
         requests_path = bundle_dir / "_annotation_inputs" / "prompts.jsonl"
         _write_annotation_request_prompts(requests_path, request_prompts)
         annotation_run_dir = bundle_dir / "_annotation_run"
@@ -278,6 +281,78 @@ def annotate_run(
         failed_count=len(failures),
         annotation_run_id=run_summary.run_id if run_summary is not None else None,
     )
+
+
+def build_annotation_request_prompts(
+    *,
+    source_run_id: str,
+    source_records: list[dict[str, Any]],
+    annotation_profile: str,
+    annotation_template: str,
+    annotator_model: str,
+    template_text: str,
+    output_contract: dict[str, Any],
+    output_spec: dict[str, Any] | None = None,
+    prompt_template: dict[str, Any] | None = None,
+    extra_template_context_by_record_id: dict[str, dict[str, Any]] | None = None,
+) -> list[PromptRecord]:
+    return [
+        _build_annotation_request_prompt(
+            source_record=record,
+            source_run_id=source_run_id,
+            template_text=template_text,
+            output_contract=output_contract,
+            output_spec=dict(output_spec or {}),
+            annotator_model=annotator_model,
+            annotation_profile=annotation_profile,
+            annotation_template=annotation_template,
+            prompt_template=prompt_template,
+            extra_template_context=(extra_template_context_by_record_id or {}).get(
+                str(record.get("record_id", "")).strip()
+            ),
+        )
+        for record in source_records
+    ]
+
+
+def build_annotation_preview_prompts(
+    *,
+    source_run_id: str,
+    source_records: list[dict[str, Any]],
+    scorers: list[dict[str, Any] | Any],
+    preview_collector: PreviewCollector,
+    extra_template_context_by_record_id: dict[str, dict[str, Any]] | None = None,
+    config_path: str | Path | None = None,
+) -> None:
+    if not preview_collector.supports("judge"):
+        return
+    catalog = load_annotation_catalog(config_path) if config_path is not None else load_annotation_catalog()
+    for raw_scorer in scorers:
+        scorer = raw_scorer if isinstance(raw_scorer, dict) else raw_scorer.to_dict()
+        if str(scorer.get("evaluator_type", scorer.get("type", "")) or "").strip() != "judge":
+            continue
+        profile, template = resolve_annotation_profile(
+            catalog,
+            profile_name=str(scorer.get("annotation_profile") or "") or None,
+            template_name=str(scorer.get("annotation_template") or "") or None,
+        )
+        prompts = build_annotation_request_prompts(
+            source_run_id=source_run_id,
+            source_records=source_records,
+            annotation_profile=profile.name,
+            annotation_template=template.name,
+            annotator_model=str(scorer.get("judge_model") or profile.default_model or ""),
+            template_text=template.instruction_template,
+            output_contract=profile.output_contract,
+            output_spec=dict(scorer.get("output_spec", {}) or profile.output_spec or {}),
+            prompt_template=dict(scorer.get("prompt_template", {}) or {}),
+            extra_template_context_by_record_id=extra_template_context_by_record_id,
+        )
+        _collect_annotation_preview_records(
+            preview_collector=preview_collector,
+            request_prompts=prompts,
+            judge_model=str(scorer.get("judge_model") or profile.default_model or ""),
+        )
 
 
 def _collect_annotation_results(
@@ -465,6 +540,43 @@ def _build_annotation_request_prompt(
     )
 
 
+def _collect_annotation_preview_records(
+    *,
+    preview_collector: PreviewCollector | None,
+    request_prompts: list[PromptRecord],
+    judge_model: str,
+) -> None:
+    if preview_collector is None or not preview_collector.supports("judge"):
+        return
+    for prompt in request_prompts:
+        source_info = dict(prompt.metadata.get("annotation_source_record", {}) or {})
+        preview_collector.collect(
+            RequestPreviewRecord(
+                stage="judge",
+                entity_id=str(prompt.metadata.get("annotation_template") or "judge"),
+                case_id=_optional_text(
+                    dict(source_info.get("source_prompt_metadata", {}) or {}).get("case_id")
+                    or dict(source_info.get("source_prompt_metadata", {}) or {}).get("case_id")
+                    or source_info.get("source_record_id")
+                ),
+                request_id=_optional_text(source_info.get("source_record_id")),
+                target_model=_optional_text(source_info.get("source_model_name")),
+                judge_model=_optional_text(judge_model),
+                template_name=_optional_text(prompt.metadata.get("annotation_template")),
+                template_version=_optional_text(
+                    dict(prompt.metadata.get("prompt_template", {}) or {}).get("version")
+                )
+                or None,
+                rendered_prompt=prompt.prompt,
+                metadata={
+                    "annotation_profile": prompt.metadata.get("annotation_profile"),
+                    "annotation_template": prompt.metadata.get("annotation_template"),
+                    "prompt_template": dict(prompt.metadata.get("prompt_template", {}) or {}),
+                },
+            )
+        )
+
+
 def _write_annotation_request_prompts(path: Path, prompts: list[PromptRecord]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -541,3 +653,10 @@ def _default_annotation_bundle_dir(source_run_id: str, bundle_id: str) -> Path:
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", value).strip("_").lower()
     return slug or "annotation"
+
+
+def _optional_text(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    return text or None

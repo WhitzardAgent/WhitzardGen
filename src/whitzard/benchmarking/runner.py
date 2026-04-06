@@ -25,6 +25,7 @@ from whitzard.benchmarking.models import (
     SummaryReport,
     TargetResult,
 )
+from whitzard.benchmarking.preview import PreviewCollector, parse_preview_stage, write_request_preview_bundle
 from whitzard.evaluators.service import score_target_results
 from whitzard.launching import plan_model_launch
 from whitzard.normalizers.service import normalize_target_results
@@ -77,11 +78,30 @@ class DefaultExperimentRunner(ExperimentRunner):
             status="started",
             payload={"target_models": list(task.target_models)},
         )
+        preview_config = dict(task.execution_policy.get("request_preview", {}) or {})
+        preview_collector = (
+            PreviewCollector(
+                enabled_stages=parse_preview_stage(
+                    str(preview_config.get("preview_stage") or "all"),
+                    allowed_stages={"target", "judge", "all"},
+                ),
+                source_context={
+                    "task_id": task.task_id,
+                    "benchmark_id": benchmark_id,
+                    "benchmark_path": compiled_plan.case_set.case_set_path,
+                    "target_models": list(task.target_models),
+                    "preview_only": False,
+                },
+            )
+            if bool(preview_config.get("enabled", False))
+            else None
+        )
         target_results, target_failures, target_run_ids = self.gateway.execute_requests(
             task=task,
             requests=compiled_plan.execution_requests,
             experiment_dir=experiment_path,
             execution_mode=execution_mode,
+            preview_collector=preview_collector,
             progress=progress,
         )
         failures.extend(target_failures)
@@ -151,6 +171,7 @@ class DefaultExperimentRunner(ExperimentRunner):
                 scorers=current_scorers,
                 out_dir=experiment_path / "scorers",
                 execution_mode=execution_mode,
+                preview_collector=preview_collector,
                 progress=progress,
             )
             failures.extend(scoring_failures)
@@ -278,6 +299,21 @@ class DefaultExperimentRunner(ExperimentRunner):
             report_markdown=report_markdown,
             failures=failures,
         )
+        preview_summary = None
+        if preview_collector is not None and preview_collector.records:
+            preview_summary = write_request_preview_bundle(
+                preview_dir=experiment_path,
+                bundle=preview_collector.to_bundle(),
+                preview_only=False,
+                preview_stage=str(preview_config.get("preview_stage") or "all"),
+                preview_count=int(preview_config.get("preview_count", 5)),
+            )
+            manifest_path = Path(bundle_paths["manifest_path"])
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_payload["request_previews_path"] = preview_summary.request_previews_path
+            manifest_payload["request_preview_summary_path"] = preview_summary.request_preview_summary_path
+            manifest_payload["request_previews_markdown_path"] = preview_summary.request_previews_markdown_path
+            manifest_path.write_text(json.dumps(manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
         return EvaluationExperimentSummary(
             experiment_id=experiment_id,
             experiment_dir=str(experiment_path),
@@ -310,6 +346,9 @@ class DefaultExperimentRunner(ExperimentRunner):
             summary_path=bundle_paths["summary_path"],
             report_path=bundle_paths["report_path"],
             failures_path=bundle_paths["failures_path"],
+            request_previews_path=preview_summary.request_previews_path if preview_summary is not None else None,
+            request_preview_summary_path=preview_summary.request_preview_summary_path if preview_summary is not None else None,
+            request_previews_markdown_path=preview_summary.request_previews_markdown_path if preview_summary is not None else None,
         )
 
 

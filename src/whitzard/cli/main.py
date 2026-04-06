@@ -196,8 +196,43 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_build_parser.add_argument("--mock", action="store_true")
     benchmark_build_parser.add_argument("--execution-mode", choices=["mock", "real"])
     benchmark_build_parser.add_argument("--build-mode", choices=["static", "matrix"], default="static")
+    _add_preview_arguments(
+        benchmark_build_parser,
+        stage_choices=["writer", "validator", "all"],
+    )
     benchmark_build_parser.add_argument("--output", choices=["text", "json"], default="text")
     benchmark_build_parser.set_defaults(handler=handle_benchmark_build)
+
+    benchmark_preview_parser = benchmark_subparsers.add_parser(
+        "preview",
+        help="Preview rendered benchmark-build requests without executing models.",
+    )
+    benchmark_preview_parser.add_argument("--builder", required=True)
+    benchmark_preview_parser.add_argument("--source")
+    benchmark_preview_parser.add_argument("--package")
+    benchmark_preview_parser.add_argument("--entrypoint")
+    benchmark_preview_parser.add_argument("--builder-config", dest="builder_config")
+    benchmark_preview_parser.add_argument("--config", dest="builder_config")
+    benchmark_preview_parser.add_argument("--count-config")
+    benchmark_preview_parser.add_argument("--llm-model")
+    benchmark_preview_parser.add_argument("--synthesis-model")
+    benchmark_preview_parser.add_argument("--profile")
+    benchmark_preview_parser.add_argument("--template")
+    benchmark_preview_parser.add_argument("--style-family")
+    benchmark_preview_parser.add_argument("--target-model")
+    benchmark_preview_parser.add_argument("--intended-modality")
+    benchmark_preview_parser.add_argument("--out")
+    benchmark_preview_parser.add_argument("--benchmark-name")
+    benchmark_preview_parser.add_argument("--seed", type=int, default=42)
+    benchmark_preview_parser.add_argument("--realizations-per-template", type=int, default=1)
+    benchmark_preview_parser.add_argument("--mock", action="store_true")
+    benchmark_preview_parser.add_argument("--execution-mode", choices=["mock", "real"])
+    benchmark_preview_parser.add_argument("--build-mode", choices=["static", "matrix"], default="static")
+    benchmark_preview_parser.add_argument("--preview-count", type=int, default=5)
+    benchmark_preview_parser.add_argument("--preview-stage", choices=["writer", "validator", "all"], default="all")
+    benchmark_preview_parser.add_argument("--preview-format", choices=["text", "json", "md"], default="text")
+    benchmark_preview_parser.add_argument("--output", choices=["text", "json"], default="text")
+    benchmark_preview_parser.set_defaults(handler=handle_benchmark_preview)
 
     benchmark_inspect_parser = benchmark_subparsers.add_parser(
         "inspect",
@@ -234,8 +269,39 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_run_parser.add_argument("--out")
     evaluate_run_parser.add_argument("--mock", action="store_true")
     evaluate_run_parser.add_argument("--execution-mode", choices=["mock", "real"])
+    _add_preview_arguments(
+        evaluate_run_parser,
+        stage_choices=["target", "judge", "all"],
+    )
     evaluate_run_parser.add_argument("--output", choices=["text", "json"], default="text")
     evaluate_run_parser.set_defaults(handler=handle_evaluate_run)
+
+    evaluate_preview_parser = evaluate_subparsers.add_parser(
+        "preview",
+        help="Preview rendered evaluation requests without executing target or judge models.",
+    )
+    evaluate_preview_parser.add_argument("--recipe")
+    evaluate_preview_parser.add_argument("--benchmark")
+    evaluate_preview_parser.add_argument("--targets", nargs="+")
+    evaluate_preview_parser.add_argument("--normalizers", nargs="+")
+    evaluate_preview_parser.add_argument("--evaluators", nargs="+")
+    evaluate_preview_parser.add_argument("--analysis-plugins", nargs="+")
+    evaluate_preview_parser.add_argument("--normalizer-config")
+    evaluate_preview_parser.add_argument("--evaluator-model")
+    evaluate_preview_parser.add_argument("--evaluator-profile")
+    evaluate_preview_parser.add_argument("--evaluator-template")
+    evaluate_preview_parser.add_argument("--evaluator-config")
+    evaluate_preview_parser.add_argument("--analysis-config")
+    evaluate_preview_parser.add_argument("--launcher-config")
+    evaluate_preview_parser.add_argument("--auto-launch", action="store_true")
+    evaluate_preview_parser.add_argument("--out")
+    evaluate_preview_parser.add_argument("--mock", action="store_true")
+    evaluate_preview_parser.add_argument("--execution-mode", choices=["mock", "real"])
+    evaluate_preview_parser.add_argument("--preview-count", type=int, default=5)
+    evaluate_preview_parser.add_argument("--preview-stage", choices=["target", "judge", "all"], default="all")
+    evaluate_preview_parser.add_argument("--preview-format", choices=["text", "json", "md"], default="text")
+    evaluate_preview_parser.add_argument("--output", choices=["text", "json"], default="text")
+    evaluate_preview_parser.set_defaults(handler=handle_evaluate_preview)
 
     evaluate_inspect_parser = evaluate_subparsers.add_parser(
         "inspect",
@@ -328,6 +394,18 @@ def build_parser() -> argparse.ArgumentParser:
     version_parser.set_defaults(handler=handle_version)
 
     return parser
+
+
+def _add_preview_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    stage_choices: list[str],
+) -> None:
+    parser.add_argument("--preview", action="store_true")
+    parser.add_argument("--preview-only", action="store_true")
+    parser.add_argument("--preview-count", type=int, default=5)
+    parser.add_argument("--preview-stage", choices=stage_choices, default="all")
+    parser.add_argument("--preview-format", choices=["text", "json", "md"], default="text")
 
 
 def handle_version(_args: argparse.Namespace) -> int:
@@ -605,10 +683,18 @@ def handle_benchmark_build(args: argparse.Namespace) -> int:
         target_model_name=args.target_model,
         intended_modality=args.intended_modality,
         entrypoint=args.entrypoint,
+        preview_enabled=bool(getattr(args, "preview", False) or getattr(args, "preview_only", False)),
+        preview_only=bool(getattr(args, "preview_only", False)),
+        preview_count=int(getattr(args, "preview_count", 5)),
+        preview_stage=str(getattr(args, "preview_stage", "all")),
+        preview_format=str(getattr(args, "preview_format", "text")),
         progress=progress,
     )
     if args.output == "json":
         print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
+        return 0
+    if _is_preview_summary(summary):
+        _print_preview_summary(summary)
         return 0
     print(f"Benchmark: {summary.benchmark_id}")
     print(f"Builder: {summary.builder_name}")
@@ -622,8 +708,15 @@ def handle_benchmark_build(args: argparse.Namespace) -> int:
         print(f"Raw Realizations: {summary.raw_realizations_path}")
     if summary.rejected_realizations_path:
         print(f"Rejected Realizations: {summary.rejected_realizations_path}")
+    _print_summary_preview_artifacts(summary)
     print("Next Evaluate: whitzard evaluate run --benchmark " f"{summary.benchmark_dir} --targets <MODEL_NAME>")
     return 0
+
+
+def handle_benchmark_preview(args: argparse.Namespace) -> int:
+    args.preview = True
+    args.preview_only = True
+    return handle_benchmark_build(args)
 
 
 def handle_benchmark_inspect(args: argparse.Namespace) -> int:
@@ -646,6 +739,12 @@ def handle_benchmark_inspect(args: argparse.Namespace) -> int:
         print(f"Raw Realizations: {payload['raw_realizations_path']}")
     if payload.get("rejected_realizations_path"):
         print(f"Rejected Realizations: {payload['rejected_realizations_path']}")
+    if payload.get("request_previews_path"):
+        print(f"Request Previews: {payload['request_previews_path']}")
+    if payload.get("request_preview_summary_path"):
+        print(f"Preview Summary: {payload['request_preview_summary_path']}")
+    if payload.get("request_previews_markdown_path"):
+        print(f"Preview Markdown: {payload['request_previews_markdown_path']}")
     return 0
 
 
@@ -702,9 +801,17 @@ def handle_evaluate_run(args: argparse.Namespace) -> int:
         auto_launch=bool(args.auto_launch or recipe.get("auto_launch", False)),
         launcher_config_path=args.launcher_config or _resolve_recipe_relative_path(args.recipe, recipe.get("launcher_config")),
         execution_policy=dict(recipe.get("execution_policy") or {}),
+        preview_enabled=bool(getattr(args, "preview", False) or getattr(args, "preview_only", False)),
+        preview_only=bool(getattr(args, "preview_only", False)),
+        preview_count=int(getattr(args, "preview_count", 5)),
+        preview_stage=str(getattr(args, "preview_stage", "all")),
+        preview_format=str(getattr(args, "preview_format", "text")),
     )
     if args.output == "json":
         print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
+        return 0
+    if _is_preview_summary(summary):
+        _print_preview_summary(summary)
         return 0
     print(f"Experiment: {summary.experiment_id}")
     print(f"Benchmark: {summary.benchmark_id}")
@@ -721,7 +828,14 @@ def handle_evaluate_run(args: argparse.Namespace) -> int:
     print(f"Analysis Plugin Results: {summary.analysis_plugin_result_count}")
     print(f"Experiment Dir: {summary.experiment_dir}")
     print(f"Report: {summary.report_path}")
+    _print_summary_preview_artifacts(summary)
     return 0
+
+
+def handle_evaluate_preview(args: argparse.Namespace) -> int:
+    args.preview = True
+    args.preview_only = True
+    return handle_evaluate_run(args)
 
 
 def handle_evaluate_inspect(args: argparse.Namespace) -> int:
@@ -748,6 +862,12 @@ def handle_evaluate_inspect(args: argparse.Namespace) -> int:
     print(f"Analysis Plugin Result Count: {summary.get('analysis_plugin_result_count', 0)}")
     if payload.get("report_path"):
         print(f"Report: {payload['report_path']}")
+    if payload.get("request_previews_path"):
+        print(f"Request Previews: {payload['request_previews_path']}")
+    if payload.get("request_preview_summary_path"):
+        print(f"Preview Summary: {payload['request_preview_summary_path']}")
+    if payload.get("request_previews_markdown_path"):
+        print(f"Preview Markdown: {payload['request_previews_markdown_path']}")
     return 0
 
 
@@ -794,6 +914,12 @@ def handle_experiments_report(args: argparse.Namespace) -> int:
     print(f"Analysis Plugin Result Count: {summary.get('analysis_plugin_result_count', 0)}")
     if payload.get("report_path"):
         print(f"Report: {payload['report_path']}")
+    if payload.get("request_previews_path"):
+        print(f"Request Previews: {payload['request_previews_path']}")
+    if payload.get("request_preview_summary_path"):
+        print(f"Preview Summary: {payload['request_preview_summary_path']}")
+    if payload.get("request_previews_markdown_path"):
+        print(f"Preview Markdown: {payload['request_previews_markdown_path']}")
     return 0
 
 
@@ -1039,6 +1165,68 @@ def handle_annotate(args: argparse.Namespace) -> int:
     print(f"Annotations: {summary.annotations_path}")
     print(f"Manifest: {summary.manifest_path}")
     return 0
+
+
+def _is_preview_summary(summary: object) -> bool:
+    return hasattr(summary, "request_previews_path") and hasattr(summary, "preview_only")
+
+
+def _print_summary_preview_artifacts(summary: object) -> None:
+    request_previews_path = getattr(summary, "request_previews_path", None)
+    request_preview_summary_path = getattr(summary, "request_preview_summary_path", None)
+    request_previews_markdown_path = getattr(summary, "request_previews_markdown_path", None)
+    if request_previews_path:
+        print(f"Request Previews: {request_previews_path}")
+    if request_preview_summary_path:
+        print(f"Preview Summary: {request_preview_summary_path}")
+    if request_previews_markdown_path:
+        print(f"Preview Markdown: {request_previews_markdown_path}")
+    if request_preview_summary_path:
+        _print_preview_samples_from_path(request_preview_summary_path)
+
+
+def _print_preview_summary(summary: object) -> None:
+    print(f"Preview Dir: {getattr(summary, 'preview_dir', '-')}")
+    print(f"Preview Only: {'yes' if bool(getattr(summary, 'preview_only', False)) else 'no'}")
+    print(f"Preview Stage: {getattr(summary, 'preview_stage', '-')}")
+    print(f"Preview Count: {getattr(summary, 'preview_count', 0)}")
+    print(f"Request Previews: {getattr(summary, 'request_previews_path', '-')}")
+    print(f"Preview Summary: {getattr(summary, 'request_preview_summary_path', '-')}")
+    markdown_path = getattr(summary, "request_previews_markdown_path", None)
+    if markdown_path:
+        print(f"Preview Markdown: {markdown_path}")
+    counts_by_stage = dict(getattr(summary, "counts_by_stage", {}) or {})
+    if counts_by_stage:
+        print(f"Counts By Stage: {counts_by_stage}")
+    sample_records = list(getattr(summary, "sample_records", []) or [])
+    if sample_records:
+        _print_preview_samples(sample_records)
+
+
+def _print_preview_samples_from_path(path: str) -> None:
+    preview_summary_path = Path(path)
+    if not preview_summary_path.exists():
+        return
+    payload = json.loads(preview_summary_path.read_text(encoding="utf-8"))
+    sample_records = list(payload.get("sample_records", []) or [])
+    if sample_records:
+        _print_preview_samples(sample_records)
+
+
+def _print_preview_samples(sample_records: list[dict[str, object]]) -> None:
+    print("Preview Samples:")
+    for record in sample_records:
+        stage = str(record.get("stage", "unknown"))
+        entity_id = str(record.get("entity_id", ""))
+        case_id = str(record.get("case_id", "") or "-")
+        request_id = str(record.get("request_id", "") or "-")
+        template_name = str(record.get("template_name", "") or "-")
+        print(f"  [{stage}] case={case_id} request={request_id} entity={entity_id} template={template_name}")
+        rendered_prompt = str(record.get("rendered_prompt", "") or "").strip()
+        if rendered_prompt:
+            snippet = rendered_prompt if len(rendered_prompt) <= 400 else rendered_prompt[:400] + "..."
+            print(snippet)
+            print("")
 
 
 def _resolve_recipe_text(payload: object, key: str) -> str | None:

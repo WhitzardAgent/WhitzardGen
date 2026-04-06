@@ -6,6 +6,66 @@ from unittest.mock import patch
 
 
 class BenchmarkCliTests(unittest.TestCase):
+    def test_handle_benchmark_preview_prints_preview_summary(self) -> None:
+        from whitzard.cli.main import handle_benchmark_preview
+
+        summary = type(
+            "PreviewSummary",
+            (),
+            {
+                "preview_dir": "/tmp/benchmarks/ethics_preview",
+                "preview_only": True,
+                "preview_stage": "all",
+                "preview_count": 2,
+                "request_previews_path": "/tmp/benchmarks/ethics_preview/request_previews.jsonl",
+                "request_preview_summary_path": "/tmp/benchmarks/ethics_preview/request_preview_summary.json",
+                "request_previews_markdown_path": "/tmp/benchmarks/ethics_preview/request_previews.md",
+                "counts_by_stage": {"writer": 2, "validator": 2},
+                "sample_records": [],
+                "to_dict": lambda self: {
+                    "preview_dir": "/tmp/benchmarks/ethics_preview",
+                    "preview_only": True,
+                },
+            },
+        )()
+        args = type(
+            "Args",
+            (),
+            {
+                "builder": "ethics_sandbox",
+                "source": "examples/benchmarks/ethics_sandbox/package",
+                "package": None,
+                "entrypoint": None,
+                "builder_config": "/tmp/builder.yaml",
+                "count_config": None,
+                "llm_model": None,
+                "synthesis_model": None,
+                "profile": None,
+                "template": None,
+                "style_family": None,
+                "target_model": None,
+                "intended_modality": None,
+                "out": None,
+                "benchmark_name": "ethics_suite",
+                "seed": 42,
+                "realizations_per_template": 2,
+                "mock": False,
+                "execution_mode": None,
+                "build_mode": "matrix",
+                "preview_count": 2,
+                "preview_stage": "all",
+                "preview_format": "text",
+                "output": "text",
+            },
+        )()
+
+        with patch("whitzard.cli.main.build_benchmark", return_value=summary):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_benchmark_preview(args), 0)
+        output = stream.getvalue()
+        self.assertIn("Preview Dir: /tmp/benchmarks/ethics_preview", output)
+        self.assertIn("Request Previews: /tmp/benchmarks/ethics_preview/request_previews.jsonl", output)
+
     def test_handle_benchmark_build_prints_summary(self) -> None:
         from whitzard.cli.main import handle_benchmark_build
 
@@ -194,6 +254,63 @@ class BenchmarkCliTests(unittest.TestCase):
             payload = json.loads(stream.getvalue())
 
         self.assertEqual(payload["experiment_id"], "experiment_ethics_suite")
+
+    def test_handle_evaluate_preview_prints_preview_summary(self) -> None:
+        from whitzard.cli.main import handle_evaluate_preview
+
+        summary = type(
+            "PreviewSummary",
+            (),
+            {
+                "preview_dir": "/tmp/experiments/ethics_preview",
+                "preview_only": True,
+                "preview_stage": "all",
+                "preview_count": 2,
+                "request_previews_path": "/tmp/experiments/ethics_preview/request_previews.jsonl",
+                "request_preview_summary_path": "/tmp/experiments/ethics_preview/request_preview_summary.json",
+                "request_previews_markdown_path": "/tmp/experiments/ethics_preview/request_previews.md",
+                "counts_by_stage": {"target": 2, "judge": 2},
+                "sample_records": [],
+                "to_dict": lambda self: {
+                    "preview_dir": "/tmp/experiments/ethics_preview",
+                    "preview_only": True,
+                },
+            },
+        )()
+        args = type(
+            "Args",
+            (),
+            {
+                "recipe": None,
+                "benchmark": "/tmp/benchmarks/ethics_suite",
+                "targets": ["Qwen3-32B", "Helios"],
+                "normalizers": ["ethics_structural_normalizer"],
+                "evaluators": ["ethics_structural_judge"],
+                "analysis_plugins": ["ethics_family_consistency"],
+                "normalizer_config": None,
+                "evaluator_model": None,
+                "evaluator_profile": None,
+                "evaluator_template": None,
+                "evaluator_config": None,
+                "analysis_config": None,
+                "launcher_config": None,
+                "auto_launch": False,
+                "out": None,
+                "mock": True,
+                "execution_mode": None,
+                "preview_count": 2,
+                "preview_stage": "all",
+                "preview_format": "text",
+                "output": "text",
+            },
+        )()
+
+        with patch("whitzard.cli.main.evaluate_benchmark", return_value=summary):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_evaluate_preview(args), 0)
+        output = stream.getvalue()
+        self.assertIn("Preview Dir: /tmp/experiments/ethics_preview", output)
+        self.assertIn("Request Previews: /tmp/experiments/ethics_preview/request_previews.jsonl", output)
 
     def test_handle_evaluate_run_recipe_builds_benchmark_and_uses_recipe_layers(self) -> None:
         from whitzard.cli.main import handle_evaluate_run

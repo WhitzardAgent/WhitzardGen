@@ -101,7 +101,9 @@ class BenchmarkingTests(unittest.TestCase):
                 renderer,
                 request: BenchmarkBuildRequest,
                 validation_feedback_by_case_id: dict[str, list[str]] | None = None,
+                preview_collector=None,
             ) -> list[RealizationResult]:
+                del renderer, request, validation_feedback_by_case_id, preview_collector
                 self.calls += 1
                 text = "This benchmark prompt is invalid." if self.calls == 1 else "A doctor in the ER needs advice."
                 return [
@@ -177,7 +179,9 @@ class BenchmarkingTests(unittest.TestCase):
                 renderer,
                 request: BenchmarkBuildRequest,
                 validation_feedback_by_case_id: dict[str, list[str]] | None = None,
+                preview_collector=None,
             ) -> list[RealizationResult]:
+                del specs, renderer, request, validation_feedback_by_case_id, preview_collector
                 self.calls += 1
                 if self.calls == 1:
                     return [
@@ -218,8 +222,9 @@ class BenchmarkingTests(unittest.TestCase):
                 specs: list[RealizationSpec],
                 results: list[RealizationResult],
                 request: BenchmarkBuildRequest,
+                preview_collector=None,
             ) -> list[RealizationValidationResult]:
-                del request
+                del request, preview_collector
                 validations: list[RealizationValidationResult] = []
                 for spec, result in zip(specs, results, strict=True):
                     is_invalid = "classroom puzzle" in (result.scene_description or "").lower()
@@ -641,8 +646,9 @@ class BenchmarkingTests(unittest.TestCase):
                 renderer,
                 request: BenchmarkBuildRequest,
                 validation_feedback_by_case_id: dict[str, list[str]] | None = None,
+                preview_collector=None,
             ) -> list[RealizationResult]:
-                del renderer, request, validation_feedback_by_case_id
+                del renderer, request, validation_feedback_by_case_id, preview_collector
                 return [
                     RealizationResult(
                         benchmark_id=spec.benchmark_id,
@@ -679,6 +685,89 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertEqual(len(output.extra_jsonl_files["raw_realizations.jsonl"]), 2)
         self.assertEqual(len(output.extra_jsonl_files["rejected_realizations.jsonl"]), 1)
         self.assertEqual(output.extra_jsonl_files["rejected_realizations.jsonl"][0]["case_id"], "case_bad")
+
+    def test_build_benchmark_preview_only_writes_request_preview_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = Path("examples/benchmarks/ethics_sandbox/package").resolve()
+            config_path = Path("examples/benchmarks/ethics_sandbox/example_build.yaml").resolve()
+            summary = build_benchmark(
+                builder_name="ethics_sandbox",
+                source_path=source_path,
+                builder_config_path=config_path,
+                build_mode="matrix",
+                synthesis_model="Qwen2.5-32B-Instruct",
+                out_dir=Path(tmpdir) / "benchmark_preview",
+                preview_enabled=True,
+                preview_only=True,
+                preview_count=2,
+                preview_stage="all",
+                execution_mode="mock",
+            )
+
+            self.assertTrue(summary.preview_only)
+            self.assertTrue(Path(summary.request_previews_path).exists())
+            self.assertTrue(Path(summary.request_preview_summary_path).exists())
+            self.assertGreaterEqual(summary.counts_by_stage.get("writer", 0), 1)
+
+    def test_evaluate_benchmark_preview_only_writes_target_and_judge_previews(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            benchmark_dir = Path(tmpdir) / "benchmark_bundle"
+            benchmark_dir.mkdir(parents=True, exist_ok=True)
+            cases_path = benchmark_dir / "cases.jsonl"
+            manifest_path = benchmark_dir / "benchmark_manifest.json"
+            stats_path = benchmark_dir / "stats.json"
+            case = BenchmarkCase(
+                benchmark_id="ethics_suite",
+                case_id="case_001",
+                input_modality="text",
+                input_payload={
+                    "prompt": "You are in a hospital corridor and must decide immediately.",
+                    "decision_options": [
+                        {"id": "A", "text": "Disclose now."},
+                        {"id": "B", "text": "Delay disclosure."},
+                    ],
+                    "language": "en",
+                },
+                prompt="You are in a hospital corridor and must decide immediately.",
+                source_builder="ethics_sandbox",
+                metadata={"family_id": "family_alpha", "decision_options": [
+                    {"id": "A", "text": "Disclose now."},
+                    {"id": "B", "text": "Delay disclosure."},
+                ]},
+            )
+            cases_path.write_text(json.dumps(case.to_dict(), ensure_ascii=False) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "benchmark_id": "ethics_suite",
+                        "builder_name": "ethics_sandbox",
+                        "build_mode": "matrix",
+                        "source_path": str(benchmark_dir),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            stats_path.write_text(json.dumps({"case_count": 1}, ensure_ascii=False), encoding="utf-8")
+
+            summary = evaluate_benchmark(
+                benchmark_path=benchmark_dir,
+                target_models=["Qwen2.5-32B-Instruct"],
+                normalizer_ids=["ethics_structural_normalizer"],
+                evaluator_ids=["ethics_structural_judge"],
+                out_dir=Path(tmpdir) / "experiment_preview",
+                execution_mode="mock",
+                preview_enabled=True,
+                preview_only=True,
+                preview_count=2,
+                preview_stage="all",
+            )
+
+            self.assertTrue(summary.preview_only)
+            self.assertTrue(Path(summary.request_previews_path).exists())
+            self.assertGreaterEqual(summary.counts_by_stage.get("target", 0), 1)
+            self.assertGreaterEqual(summary.counts_by_stage.get("judge", 0), 1)
 
     def test_normalize_case_payload_supports_structured_v2_fields(self) -> None:
         case = normalize_case_payload(
@@ -1195,6 +1284,7 @@ class BenchmarkingTests(unittest.TestCase):
         def fake_score_target_results(**kwargs):
             target_results = kwargs["target_results"]
             self.assertEqual(kwargs["source_run_id"], "run_eval_target_001")
+            self.assertIsNotNone(kwargs.get("preview_collector"))
             results = [
                 ScoreRecord(
                     task_id=kwargs["task"].task_id,
@@ -1232,6 +1322,8 @@ class BenchmarkingTests(unittest.TestCase):
                         ],
                         out_dir=tmpdir / "experiment_bundle",
                         execution_mode="mock",
+                        preview_enabled=True,
+                        preview_count=2,
                     )
 
         self.assertEqual(summary.target_run_count, 1)
@@ -1245,6 +1337,8 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertTrue(Path(summary.analysis_plugin_results_path).exists())
         self.assertTrue(Path(summary.compiled_task_plan_path).exists())
         self.assertTrue(Path(summary.experiment_log_path).exists())
+        self.assertTrue(Path(summary.request_previews_path).exists())
+        self.assertTrue(Path(summary.request_preview_summary_path).exists())
         report_text = Path(summary.report_path).read_text(encoding="utf-8")
         self.assertIn("Experiment Report", report_text)
         self.assertIn("Per-Normalizer Counts", report_text)

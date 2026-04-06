@@ -29,7 +29,10 @@ from whitzard.benchmarking.models import (
     BenchmarkCase,
     CaseSourceRef,
     EvalTask,
+    PreviewSummary,
+    RequestPreviewRecord,
 )
+from whitzard.benchmarking.preview import PreviewCollector, parse_preview_stage, write_request_preview_bundle
 from whitzard.benchmarking.prompt_templates import resolve_prompt_template_config
 from whitzard.benchmarking.runner import (
     DefaultExperimentRunner,
@@ -84,8 +87,13 @@ def build_benchmark(
     target_model_name: str | None = None,
     intended_modality: str | None = None,
     entrypoint: str | None = None,
+    preview_enabled: bool = False,
+    preview_only: bool = False,
+    preview_count: int = 5,
+    preview_stage: str = "all",
+    preview_format: str = "text",
     progress: RunProgress | None = None,
-) -> BenchmarkBuildSummary:
+) -> BenchmarkBuildSummary | PreviewSummary:
     request = BenchmarkBuildRequest(
         builder_name=builder_name,
         source_path=source_path,
@@ -104,8 +112,20 @@ def build_benchmark(
         target_model_name=target_model_name,
         intended_modality=intended_modality,
         entrypoint=entrypoint,
+        preview_enabled=preview_enabled,
+        preview_only=preview_only,
+        preview_count=preview_count,
+        preview_stage=preview_stage,
+        preview_format=preview_format,
         progress=progress,
     )
+    if preview_only:
+        return _preview_benchmark_build(
+            request=request,
+            out_dir=out_dir,
+            benchmark_name=benchmark_name,
+            builder_name=builder_name,
+        )
     if builder_name == "static_jsonl":
         output = _build_static_jsonl(request)
     elif builder_name == "python_custom":
@@ -121,6 +141,9 @@ def build_benchmark(
         output=output,
         out_dir=out_dir,
         builder_name=builder_name,
+        preview_enabled=preview_enabled,
+        preview_stage=preview_stage,
+        preview_count=preview_count,
     )
 
 
@@ -144,7 +167,12 @@ def evaluate_benchmark(
     auto_launch: bool = False,
     launcher_config_path: str | Path | None = None,
     execution_policy: dict[str, Any] | None = None,
-):
+    preview_enabled: bool = False,
+    preview_only: bool = False,
+    preview_count: int = 5,
+    preview_stage: str = "all",
+    preview_format: str = "text",
+) -> Any:
     progress = progress or NullRunProgress()
     benchmark_bundle = inspect_benchmark_bundle(benchmark_path)
     benchmark_dir = Path(benchmark_path)
@@ -167,6 +195,13 @@ def evaluate_benchmark(
     resolved_execution_policy["launcher_config_path"] = (
         str(launcher_config_path) if launcher_config_path not in (None, "") else None
     )
+    resolved_execution_policy["request_preview"] = {
+        "enabled": bool(preview_enabled),
+        "preview_only": bool(preview_only),
+        "preview_count": int(preview_count),
+        "preview_stage": str(preview_stage or "all"),
+        "preview_format": str(preview_format or "text"),
+    }
     task = EvalTask(
         task_id=f"task_{slugify(benchmark_id)}",
         case_source=CaseSourceRef(
@@ -208,6 +243,12 @@ def evaluate_benchmark(
         )
     experiment_id = f"experiment_{slugify(benchmark_id)}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
     experiment_dir = Path(out_dir) if out_dir is not None else get_experiments_root() / experiment_id
+    if preview_only:
+        return _preview_evaluation(
+            task=task,
+            compiled_plan=compiled_plan,
+            experiment_dir=experiment_dir,
+        )
     runner = DefaultExperimentRunner()
     return runner.run(
         task=task,
@@ -378,6 +419,9 @@ def _write_benchmark_output(
     output: BenchmarkBuildOutput,
     out_dir: str | Path | None,
     builder_name: str,
+    preview_enabled: bool,
+    preview_stage: str,
+    preview_count: int,
 ) -> BenchmarkBuildSummary:
     if output.cases:
         benchmark_id = output.cases[0].benchmark_id
@@ -409,6 +453,21 @@ def _write_benchmark_output(
         stats=stats,
         extra_jsonl_files=output.extra_jsonl_files,
     )
+    preview_summary = _write_preview_bundle_if_needed(
+        target_dir=benchmark_dir,
+        preview_records=output.request_preview_records,
+        source_context=output.request_preview_source_context,
+        preview_only=False,
+        preview_stage=preview_stage if preview_enabled else "all",
+        preview_count=preview_count if preview_enabled else 0,
+    )
+    if preview_summary is not None:
+        manifest_path = Path(paths["manifest_path"])
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_payload["request_previews_path"] = preview_summary.request_previews_path
+        manifest_payload["request_preview_summary_path"] = preview_summary.request_preview_summary_path
+        manifest_payload["request_previews_markdown_path"] = preview_summary.request_previews_markdown_path
+        manifest_path.write_text(json.dumps(manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return BenchmarkBuildSummary(
         benchmark_id=benchmark_id,
         benchmark_dir=str(benchmark_dir),
@@ -421,7 +480,211 @@ def _write_benchmark_output(
         build_mode=output.build_mode,
         raw_realizations_path=paths.get("raw_realizations.jsonl"),
         rejected_realizations_path=paths.get("rejected_realizations.jsonl"),
+        request_previews_path=preview_summary.request_previews_path if preview_summary else None,
+        request_preview_summary_path=preview_summary.request_preview_summary_path if preview_summary else None,
+        request_previews_markdown_path=preview_summary.request_previews_markdown_path if preview_summary else None,
     )
+
+
+def _preview_benchmark_build(
+    *,
+    request: BenchmarkBuildRequest,
+    out_dir: str | Path | None,
+    benchmark_name: str | None,
+    builder_name: str,
+) -> PreviewSummary:
+    preview_dir = _resolve_preview_dir(
+        out_dir=out_dir,
+        fallback_root=get_benchmarks_root(),
+        prefix=f"{slugify(benchmark_name or builder_name)}_preview",
+    )
+    if builder_name == "static_jsonl":
+        return write_request_preview_bundle(
+            preview_dir=preview_dir,
+            bundle=PreviewCollector(
+                enabled_stages={"all"},
+                source_context={
+                    "builder_name": builder_name,
+                    "source_path": str(request.source_path or ""),
+                    "note": "No request templates are produced by static_jsonl.",
+                },
+            ).to_bundle(),
+            preview_only=True,
+            preview_stage=request.preview_stage,
+            preview_count=request.preview_count,
+        )
+    if builder_name == "python_custom":
+        return write_request_preview_bundle(
+            preview_dir=preview_dir,
+            bundle=PreviewCollector(
+                enabled_stages={"all"},
+                source_context={
+                    "builder_name": builder_name,
+                    "source_path": str(request.source_path or request.entrypoint or ""),
+                    "note": "python_custom preview requires a builder-specific preview implementation.",
+                },
+            ).to_bundle(),
+            preview_only=True,
+            preview_stage=request.preview_stage,
+            preview_count=request.preview_count,
+        )
+    try:
+        builder = load_example_builder(builder_name)
+    except BenchmarkDiscoveryError as exc:
+        raise BenchmarkingError(str(exc)) from exc
+    preview_method = getattr(builder, "preview", None)
+    if callable(preview_method):
+        preview_bundle = preview_method(request)
+        return write_request_preview_bundle(
+            preview_dir=preview_dir,
+            bundle=preview_bundle,
+            preview_only=True,
+            preview_stage=request.preview_stage,
+            preview_count=request.preview_count,
+        )
+    return write_request_preview_bundle(
+        preview_dir=preview_dir,
+        bundle=PreviewCollector(
+            enabled_stages={"all"},
+            source_context={
+                "builder_name": builder_name,
+                "source_path": str(request.source_path or ""),
+                "note": "Builder does not expose a preview implementation.",
+            },
+        ).to_bundle(),
+        preview_only=True,
+        preview_stage=request.preview_stage,
+        preview_count=request.preview_count,
+    )
+
+
+def _preview_evaluation(
+    *,
+    task: EvalTask,
+    compiled_plan,
+    experiment_dir: str | Path,
+) -> PreviewSummary:
+    from whitzard.annotation.service import build_annotation_preview_prompts
+    from whitzard.benchmarking.gateway import PromptRecordRunEngineGateway, build_prompt_record_from_execution_request
+    from whitzard.evaluators.models import EvaluatorSpec
+    from whitzard.evaluators.service import _resolve_judge_prompt_template
+
+    preview_config = dict(task.execution_policy.get("request_preview", {}) or {})
+    preview_stage = str(preview_config.get("preview_stage") or "all")
+    preview_count = int(preview_config.get("preview_count", 5))
+    collector = PreviewCollector(
+        enabled_stages=parse_preview_stage(preview_stage, allowed_stages={"target", "judge", "all"}),
+        source_context={
+            "task_id": task.task_id,
+            "benchmark_id": compiled_plan.case_set.benchmark_id,
+            "benchmark_path": compiled_plan.case_set.case_set_path,
+            "target_models": list(task.target_models),
+            "preview_only": True,
+        },
+    )
+    gateway = PromptRecordRunEngineGateway()
+    gateway.preview_requests(
+        task=task,
+        requests=compiled_plan.execution_requests,
+        preview_collector=collector,
+    )
+    synthetic_records = []
+    for request in compiled_plan.execution_requests:
+        prompt_record = build_prompt_record_from_execution_request(request)
+        synthetic_records.append(
+            {
+                "record_id": request.request_id,
+                "prompt_id": request.request_id,
+                "task_id": request.task_id,
+                "model_name": request.target_model,
+                "task_type": "t2t",
+                "artifact_type": "text",
+                "artifact_path": "",
+                "prompt": prompt_record.prompt,
+                "negative_prompt": prompt_record.negative_prompt,
+                "prompt_metadata": dict(prompt_record.metadata),
+                "artifact_metadata": {},
+                "generation_params": dict(prompt_record.parameters),
+                "language": prompt_record.language,
+            }
+        )
+    scorer_payloads: list[dict[str, Any]] = []
+    for raw_scorer in list(compiled_plan.scorer_specs):
+        scorer = raw_scorer if isinstance(raw_scorer, EvaluatorSpec) else EvaluatorSpec(**raw_scorer)
+        scorer_payload = scorer.to_dict()
+        scorer_payload["prompt_template"] = _resolve_judge_prompt_template(task=task, scorer=scorer)
+        scorer_payloads.append(scorer_payload)
+    build_annotation_preview_prompts(
+        source_run_id="preview_only",
+        source_records=synthetic_records,
+        scorers=scorer_payloads,
+        preview_collector=collector,
+        extra_template_context_by_record_id={
+            str(item["record_id"]): {
+                "target_output_text": "<target output unavailable during preview-only>",
+                "normalized_result": {},
+                "case_metadata": dict(item.get("prompt_metadata", {}) or {}),
+            }
+            for item in synthetic_records
+        },
+    )
+    return write_request_preview_bundle(
+        preview_dir=experiment_dir,
+        bundle=collector.to_bundle(),
+        preview_only=True,
+        preview_stage=preview_stage,
+        preview_count=preview_count,
+    )
+
+
+def _write_preview_bundle_if_needed(
+    *,
+    target_dir: str | Path,
+    preview_records: list[dict[str, Any]],
+    source_context: dict[str, Any],
+    preview_only: bool,
+    preview_stage: str,
+    preview_count: int,
+) -> PreviewSummary | None:
+    if not preview_records:
+        return None
+    collector = PreviewCollector(
+        enabled_stages={"all"},
+        source_context=source_context,
+    )
+    for item in preview_records:
+        collector.collect(
+            RequestPreviewRecord(
+                stage=str(item.get("stage", "unknown")),
+                entity_id=str(item.get("entity_id", "")),
+                case_id=_optional_text(item.get("case_id")),
+                request_id=_optional_text(item.get("request_id")),
+                target_model=_optional_text(item.get("target_model")),
+                judge_model=_optional_text(item.get("judge_model")),
+                template_name=_optional_text(item.get("template_name")),
+                template_version=_optional_text(item.get("template_version")),
+                rendered_prompt=str(item.get("rendered_prompt", "")),
+                metadata=dict(item.get("metadata", {}) or {}),
+            )
+        )
+    return write_request_preview_bundle(
+        preview_dir=target_dir,
+        bundle=collector.to_bundle(),
+        preview_only=preview_only,
+        preview_stage=preview_stage,
+        preview_count=preview_count,
+    )
+
+
+def _resolve_preview_dir(
+    *,
+    out_dir: str | Path | None,
+    fallback_root: Path,
+    prefix: str,
+) -> Path:
+    if out_dir is not None:
+        return Path(out_dir)
+    return fallback_root / f"{prefix}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
 
 
 def _load_static_cases(*, source_path: Path, benchmark_id: str) -> list[BenchmarkCase]:

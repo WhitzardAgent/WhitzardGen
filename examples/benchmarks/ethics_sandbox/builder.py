@@ -23,7 +23,10 @@ from whitzard.benchmarking.models import (
     RealizationResult,
     RealizationSpec,
     RealizationValidationResult,
+    RequestPreviewBundle,
+    RequestPreviewRecord,
 )
+from whitzard.benchmarking.preview import PreviewCollector, parse_preview_stage
 from whitzard.benchmarking.packages import GenerativeBenchmarkPackage, SlotDefinition, load_generative_benchmark_package
 from whitzard.benchmarking.prompt_io import write_prompt_records_jsonl
 from whitzard.benchmarking.realization import (
@@ -90,6 +93,25 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
             build_mode=request.build_mode,
             seed=request.seed,
         )
+        preview_collector = (
+            PreviewCollector(
+                enabled_stages={"all"}
+                if request.preview_stage in {"", "all"}
+                else {
+                    item.strip()
+                    for item in str(request.preview_stage).replace(",", "+").split("+")
+                    if item.strip()
+                },
+                source_context={
+                    "builder_name": self.builder_id,
+                    "benchmark_id": benchmark_id,
+                    "source_path": str(request.source_path),
+                    "preview_only": bool(request.preview_only),
+                },
+            )
+            if request.preview_enabled
+            else None
+        )
         pipeline_output = execute_semantic_realization_pipeline(
             request=_apply_request_synthesis_defaults(request, build_config),
             sampler=sampler,
@@ -98,6 +120,7 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
             validator=validator,
             compiler=compiler,
             max_attempts=int(build_config.validation.get("max_attempts", 1)),
+            preview_collector=preview_collector,
         )
         synthesis_model = str(
             request.synthesis_model
@@ -153,7 +176,97 @@ class EthicsSandboxBuilder(BenchmarkBuilder):
             build_artifacts=pipeline_output.build_artifacts,
             build_manifest_overrides=pipeline_output.build_manifest_overrides,
             extra_jsonl_files=pipeline_output.extra_jsonl_files,
+            request_preview_records=list(pipeline_output.request_preview_records),
+            request_preview_source_context=dict(pipeline_output.request_preview_source_context),
         )
+
+    def preview(self, request: BenchmarkBuildRequest) -> RequestPreviewBundle:
+        if request.source_path is None:
+            raise RuntimeError("ethics_sandbox builder requires --source <package_dir>.")
+
+        package = load_ethics_template_package(request.source_path)
+        build_config = _load_ethics_build_config(request.builder_config_path)
+        benchmark_id = slugify(
+            request.benchmark_name
+            or build_config.raw.get("benchmark_name")
+            or package.manifest.get("package_name")
+            or Path(package.canonical_package_path).name
+        )
+        sampler = EthicsRealizationSampler(
+            package=package,
+            benchmark_id=benchmark_id,
+            build_config=build_config,
+        )
+        guard = EthicsRealizationGuard(build_config=build_config)
+        renderer = EthicsWriterRenderer(build_config=build_config)
+        validator = EthicsPromptValidator(build_config=build_config) if _validator_enabled(build_config) else None
+        collector = PreviewCollector(
+            enabled_stages=parse_preview_stage(
+                request.preview_stage,
+                allowed_stages={"writer", "validator", "all"},
+            ),
+            source_context={
+                "builder_name": self.builder_id,
+                "benchmark_id": benchmark_id,
+                "source_path": str(request.source_path),
+                "preview_only": True,
+            },
+        )
+        specs = sampler.sample(_apply_request_synthesis_defaults(request, build_config))
+        for spec in specs:
+            validation_errors = guard.validate_spec(spec)
+            if validation_errors:
+                raise RuntimeError(
+                    f"Realization spec validation failed for {spec.case_id}: {'; '.join(validation_errors)}"
+                )
+            writer_prompt = renderer.render(spec)
+            collector.collect(
+                RequestPreviewRecord(
+                    stage="writer",
+                    entity_id=str(spec.prompt_template_name or "writer"),
+                    case_id=spec.case_id,
+                    request_id=f"writer:{spec.case_id}",
+                    template_name=spec.prompt_template_name,
+                    template_version=spec.prompt_template_version,
+                    rendered_prompt=writer_prompt,
+                    metadata={
+                        "benchmark_id": spec.benchmark_id,
+                        "template_id": spec.metadata.get("template_id"),
+                        "family_id": spec.metadata.get("family_id"),
+                        "slot_assignments": dict(spec.slot_assignments),
+                        "source_builder": spec.source_builder,
+                    },
+                )
+            )
+            if validator is not None and collector.supports("validator"):
+                mock_result = _build_preview_realization_result(spec=spec, request_prompt=writer_prompt)
+                validation_spec = validator._build_validation_spec(spec=spec, result=mock_result)
+                collector.collect(
+                    RequestPreviewRecord(
+                        stage="validator",
+                        entity_id=validator.template_name,
+                        case_id=spec.case_id,
+                        request_id=f"validator:{spec.case_id}",
+                        judge_model=str(
+                            build_config.validator.get("model")
+                            or request.synthesis_model
+                            or request.llm_model
+                            or build_config.synthesis.get("model")
+                            or ""
+                        ).strip()
+                        or None,
+                        template_name=validator.template_name,
+                        template_version=validator.template_version,
+                        rendered_prompt=validator.renderer.render(validation_spec),
+                        metadata={
+                            "benchmark_id": spec.benchmark_id,
+                            "template_id": spec.metadata.get("template_id"),
+                            "family_id": spec.metadata.get("family_id"),
+                            "source_builder": spec.source_builder,
+                        },
+                    )
+                )
+        return collector.to_bundle()
 
 
 class EthicsFamilyConsistencyAnalyzer(GroupAnalyzer):
@@ -510,6 +623,7 @@ class EthicsPromptValidator(RealizationValidator):
         specs: list[RealizationSpec],
         results: list[RealizationResult],
         request: BenchmarkBuildRequest,
+        preview_collector: PreviewCollector | None = None,
     ) -> list[RealizationValidationResult]:
         if request.execution_mode == "mock":
             return [
@@ -552,6 +666,26 @@ class EthicsPromptValidator(RealizationValidator):
             prompts=prompts,
             output_path=(run_dir / "requests.jsonl") if run_dir is not None else None,
         )
+        if preview_collector is not None:
+            for spec, prompt in zip(specs, prompts, strict=True):
+                preview_collector.collect(
+                    RequestPreviewRecord(
+                        stage="validator",
+                        entity_id=self.template_name,
+                        case_id=spec.case_id,
+                        request_id=prompt.prompt_id,
+                        judge_model=validator_model,
+                        template_name=self.template_name,
+                        template_version=self.template_version,
+                        rendered_prompt=prompt.prompt,
+                        metadata={
+                            "benchmark_id": spec.benchmark_id,
+                            "template_id": spec.metadata.get("template_id"),
+                            "family_id": spec.metadata.get("family_id"),
+                            "source_builder": spec.source_builder,
+                        },
+                    )
+                )
         summary = run_single_model(
             model_name=validator_model,
             prompt_file=requests_path,
@@ -973,7 +1107,65 @@ def _apply_request_synthesis_defaults(
         target_model_name=request.target_model_name,
         intended_modality=request.intended_modality,
         entrypoint=request.entrypoint,
+        preview_enabled=request.preview_enabled,
+        preview_only=request.preview_only,
+        preview_count=request.preview_count,
+        preview_stage=request.preview_stage,
+        preview_format=request.preview_format,
         progress=request.progress,
+    )
+
+
+def _build_preview_realization_result(
+    *,
+    spec: RealizationSpec,
+    request_prompt: str,
+) -> RealizationResult:
+    role = str(
+        spec.slot_assignments.get("decision_maker_role")
+        or spec.slot_assignments.get("role")
+        or "person"
+    ).replace("_", " ")
+    domain = str(spec.slot_assignments.get("setting_domain") or "real-world setting").replace("_", " ")
+    conflict = str(spec.metadata.get("key_moral_conflict") or "").strip()
+    scene_description = (
+        f"You are in a live decision context in {domain}. "
+        f"As the {role}, you need to decide what to do now. "
+        f"{conflict}"
+    ).strip()
+    explicit_binary_required = bool(
+        dict(spec.metadata.get("decision_frame_requirements", {}) or {}).get(
+            "explicit_binary_required",
+            False,
+        )
+    )
+    decision_frame = {
+        "explicit_binary_required": explicit_binary_required,
+        "action_structure": "explicit_binary" if explicit_binary_required else "implicit_binary",
+    }
+    decision_options = [
+        {"id": "A", "text": "Take the first admissible action available in this situation."},
+        {"id": "B", "text": "Take the second admissible action available in this situation."},
+    ]
+    return RealizationResult(
+        benchmark_id=spec.benchmark_id,
+        case_id=spec.case_id,
+        source_builder=spec.source_builder,
+        synthesized_text=scene_description,
+        scene_description=scene_description,
+        structured_output={
+            "scene_description": scene_description,
+            "decision_frame": decision_frame,
+            "decision_options": decision_options,
+        },
+        decision_frame=decision_frame,
+        decision_options=decision_options,
+        prompt_template_name=spec.prompt_template_name,
+        prompt_template_version=spec.prompt_template_version,
+        synthesis_model=spec.synthesis_model,
+        synthesis_request_version=spec.synthesis_request_version,
+        request_prompt=request_prompt,
+        metadata={"mode": "preview"},
     )
 
 

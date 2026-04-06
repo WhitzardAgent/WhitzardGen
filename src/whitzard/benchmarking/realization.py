@@ -19,7 +19,9 @@ from whitzard.benchmarking.models import (
     RealizationResult,
     RealizationSpec,
     RealizationValidationResult,
+    RequestPreviewRecord,
 )
+from whitzard.benchmarking.preview import PreviewCollector
 from whitzard.benchmarking.prompt_io import write_prompt_records_jsonl
 from whitzard.prompt_generation.config import render_instruction_template
 from whitzard.prompts.models import PromptRecord
@@ -52,6 +54,7 @@ def execute_semantic_realization_pipeline(
     synthesis_backend: RealizationSynthesisBackend | None = None,
     validator: RealizationValidator | None = None,
     max_attempts: int = 1,
+    preview_collector: PreviewCollector | None = None,
 ) -> BenchmarkBuildOutputLike:
     progress = request.progress or NullRunProgress()
     specs = sampler.sample(request)
@@ -84,6 +87,7 @@ def execute_semantic_realization_pipeline(
             renderer=renderer,
             request=request,
             validation_feedback_by_case_id=feedback_by_case_id,
+            preview_collector=preview_collector,
         )
         if len(batch_results) != len(pending_specs):
             raise SemanticRealizationError(
@@ -98,6 +102,7 @@ def execute_semantic_realization_pipeline(
                 specs=pending_specs,
                 results=batch_results,
                 request=request,
+                preview_collector=preview_collector,
             )
             if len(validation_records) != len(pending_specs):
                 raise SemanticRealizationError(
@@ -193,6 +198,12 @@ def execute_semantic_realization_pipeline(
             "raw_realizations.jsonl": raw_realizations,
             "rejected_realizations.jsonl": rejected_realizations,
         },
+        request_preview_records=[
+            item.to_dict() for item in (preview_collector.records if preview_collector is not None else [])
+        ],
+        request_preview_source_context=(
+            dict(preview_collector.source_context) if preview_collector is not None else {}
+        ),
     )
 
 
@@ -253,18 +264,43 @@ class RunKernelRealizationSynthesisBackend(RealizationSynthesisBackend):
         renderer: RealizationTemplateRenderer,
         request: BenchmarkBuildRequest,
         validation_feedback_by_case_id: dict[str, list[str]] | None = None,
+        preview_collector: PreviewCollector | None = None,
     ) -> list[RealizationResult]:
         feedback_by_case_id = dict(validation_feedback_by_case_id or {})
+        rendered_prompts = [
+            renderer.render(
+                spec,
+                validation_feedback=feedback_by_case_id.get(spec.case_id),
+            )
+            for spec in specs
+        ]
+        if preview_collector is not None:
+            for spec, prompt_text in zip(specs, rendered_prompts, strict=True):
+                preview_collector.collect(
+                    RequestPreviewRecord(
+                        stage="writer",
+                        entity_id=str(spec.prompt_template_name or "writer"),
+                        case_id=spec.case_id,
+                        request_id=f"writer:{spec.case_id}",
+                        template_name=spec.prompt_template_name,
+                        template_version=spec.prompt_template_version,
+                        rendered_prompt=prompt_text,
+                        metadata={
+                            "benchmark_id": spec.benchmark_id,
+                            "template_id": spec.metadata.get("template_id"),
+                            "family_id": spec.metadata.get("family_id"),
+                            "slot_assignments": dict(spec.slot_assignments),
+                            "source_builder": spec.source_builder,
+                        },
+                    )
+                )
         if request.execution_mode == "mock":
             return [
                 _build_mock_realization_result(
                     spec=spec,
-                    request_prompt=renderer.render(
-                        spec,
-                        validation_feedback=feedback_by_case_id.get(spec.case_id),
-                    ),
+                    request_prompt=request_prompt,
                 )
-                for spec in specs
+                for spec, request_prompt in zip(specs, rendered_prompts, strict=True)
             ]
 
         synthesis_model = str(request.synthesis_model or request.llm_model or "").strip()
@@ -279,10 +315,7 @@ class RunKernelRealizationSynthesisBackend(RealizationSynthesisBackend):
         request_prompts = [
             PromptRecord(
                 prompt_id=f"realize_{index:06d}",
-                prompt=renderer.render(
-                    spec,
-                    validation_feedback=feedback_by_case_id.get(spec.case_id),
-                ),
+                prompt=rendered_prompt,
                 language=spec.language,
                 metadata={
                     "benchmark_id": spec.benchmark_id,
@@ -294,7 +327,7 @@ class RunKernelRealizationSynthesisBackend(RealizationSynthesisBackend):
                 },
                 parameters=dict(spec.parameters),
             )
-            for index, spec in enumerate(specs, start=1)
+            for index, (spec, rendered_prompt) in enumerate(zip(specs, rendered_prompts, strict=True), start=1)
         ]
         requests_path = write_prompt_records_jsonl(
             prompts=request_prompts,
@@ -513,8 +546,12 @@ class BenchmarkBuildOutputLike:
         build_artifacts: dict[str, Any] | None = None,
         build_manifest_overrides: dict[str, Any] | None = None,
         extra_jsonl_files: dict[str, list[dict[str, Any]]] | None = None,
+        request_preview_records: list[dict[str, Any]] | None = None,
+        request_preview_source_context: dict[str, Any] | None = None,
     ) -> None:
         self.cases = cases
         self.build_artifacts = dict(build_artifacts or {})
         self.build_manifest_overrides = dict(build_manifest_overrides or {})
         self.extra_jsonl_files = dict(extra_jsonl_files or {})
+        self.request_preview_records = list(request_preview_records or [])
+        self.request_preview_source_context = dict(request_preview_source_context or {})

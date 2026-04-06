@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from whitzard.benchmarking.interfaces import RunEngineGateway
-from whitzard.benchmarking.models import EvalTask, ExecutionRequest, TargetResult
+from whitzard.benchmarking.models import EvalTask, ExecutionRequest, RequestPreviewRecord, TargetResult
+from whitzard.benchmarking.preview import PreviewCollector
 from whitzard.benchmarking.prompt_templates import (
     default_target_template_context,
     format_structured_choices,
@@ -25,6 +26,7 @@ class PromptRecordRunEngineGateway(RunEngineGateway):
         requests: list[ExecutionRequest],
         experiment_dir: str | Path,
         execution_mode: str,
+        preview_collector: PreviewCollector | None = None,
         progress: RunProgress | None = None,
     ) -> tuple[list[TargetResult], list[dict[str, Any]], list[str]]:
         progress = progress or NullRunProgress()
@@ -39,6 +41,12 @@ class PromptRecordRunEngineGateway(RunEngineGateway):
         for target_model, target_requests in sorted(grouped_requests.items()):
             prompt_path = experiment_path / "_execution_inputs" / f"{_slugify(target_model)}.jsonl"
             request_lookup = {request.request_id: request for request in target_requests}
+            if preview_collector is not None:
+                self.preview_requests(
+                    task=task,
+                    requests=target_requests,
+                    preview_collector=preview_collector,
+                )
             _write_execution_prompts(prompt_path, target_requests)
             progress.env_message(
                 f"[benchmark] task={task.task_id} target={target_model} requests={len(target_requests)}"
@@ -104,6 +112,40 @@ class PromptRecordRunEngineGateway(RunEngineGateway):
                 )
         return target_results, failures, target_run_ids
 
+    def preview_requests(
+        self,
+        *,
+        task: EvalTask,
+        requests: list[ExecutionRequest],
+        preview_collector: PreviewCollector,
+    ) -> None:
+        del task
+        if not preview_collector.supports("target"):
+            return
+        for request in requests:
+            prompt_record = build_prompt_record_from_execution_request(request)
+            preview_collector.collect(
+                RequestPreviewRecord(
+                    stage="target",
+                    entity_id=request.target_model,
+                    case_id=request.case_id,
+                    request_id=request.request_id,
+                    target_model=request.target_model,
+                    template_name=_optional_text(
+                        dict(request.metadata.get("prompt_template", {}) or {}).get("name")
+                    ),
+                    template_version=_optional_text(
+                        dict(request.metadata.get("prompt_template", {}) or {}).get("version")
+                    ),
+                    rendered_prompt=prompt_record.prompt,
+                    metadata={
+                        "benchmark_id": request.benchmark_id,
+                        "grouping": dict(request.metadata.get("grouping", {}) or {}),
+                        "source_builder": request.metadata.get("source_builder"),
+                    },
+                )
+            )
+
 
 def _write_execution_prompts(path: Path, requests: list[ExecutionRequest]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,6 +201,10 @@ def _execution_request_to_prompt_record(request: ExecutionRequest) -> PromptReco
         metadata=metadata,
         version=_optional_text(request.metadata.get("case_version")),
     )
+
+
+def build_prompt_record_from_execution_request(request: ExecutionRequest) -> PromptRecord:
+    return _execution_request_to_prompt_record(request)
 
 
 def _resolve_request_prompt_text(request: ExecutionRequest) -> str:

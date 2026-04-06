@@ -7,6 +7,7 @@ from typing import Any
 
 from whitzard.annotation import annotate_run
 from whitzard.benchmarking.models import CompiledTaskPlan, EvalTask, NormalizedResult, ScoreRecord, TargetResult
+from whitzard.benchmarking.preview import PreviewCollector
 from whitzard.benchmarking.prompt_templates import resolve_prompt_template_config
 from whitzard.evaluators.models import EvaluatorSpec
 from whitzard.utils.progress import NullRunProgress, RunProgress
@@ -26,6 +27,7 @@ def score_target_results(
     scorers: list[EvaluatorSpec | dict[str, Any]],
     out_dir: str | Path,
     execution_mode: str,
+    preview_collector: PreviewCollector | None = None,
     progress: RunProgress | None = None,
 ) -> tuple[list[ScoreRecord], list[dict[str, Any]]]:
     progress = progress or NullRunProgress()
@@ -87,6 +89,7 @@ def score_target_results(
                     prompt_template=judge_prompt_template,
                     output_spec=dict(scorer.output_spec or {}),
                     extra_template_context_by_record_id=extra_template_context_by_record_id,
+                    preview_collector=preview_collector,
                 )
                 annotation_rows = _load_jsonl_rows(annotation_summary.annotations_path)
                 for row in annotation_rows:
@@ -125,6 +128,7 @@ def evaluate_target_run(
     evaluators: list[EvaluatorSpec | dict[str, Any]],
     out_dir: str | Path,
     execution_mode: str,
+    preview_collector: PreviewCollector | None = None,
     progress: RunProgress | None = None,
 ) -> tuple[list[ScoreRecord], list[dict[str, Any]]]:
     return score_target_results(
@@ -136,6 +140,7 @@ def evaluate_target_run(
         scorers=evaluators,
         out_dir=out_dir,
         execution_mode=execution_mode,
+        preview_collector=preview_collector,
         progress=progress,
     )
 

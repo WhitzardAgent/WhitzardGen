@@ -418,6 +418,54 @@ class ExperimentLogEvent:
 
 
 @dataclass(slots=True)
+class RequestPreviewRecord:
+    stage: str
+    entity_id: str
+    case_id: str | None = None
+    request_id: str | None = None
+    target_model: str | None = None
+    judge_model: str | None = None
+    template_name: str | None = None
+    template_version: str | None = None
+    rendered_prompt: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class RequestPreviewBundle:
+    records: list[RequestPreviewRecord] = field(default_factory=list)
+    counts_by_stage: dict[str, int] = field(default_factory=dict)
+    source_context: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "records": [item.to_dict() for item in self.records],
+            "counts_by_stage": dict(self.counts_by_stage),
+            "source_context": dict(self.source_context),
+        }
+
+
+@dataclass(slots=True)
+class PreviewSummary:
+    preview_dir: str
+    request_previews_path: str
+    request_preview_summary_path: str
+    request_previews_markdown_path: str | None
+    preview_only: bool
+    preview_stage: str
+    preview_count: int
+    counts_by_stage: dict[str, int] = field(default_factory=dict)
+    sample_records: list[dict[str, Any]] = field(default_factory=list)
+    source_context: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
 class BenchmarkBuildSummary:
     benchmark_id: str
     benchmark_dir: str
@@ -430,6 +478,9 @@ class BenchmarkBuildSummary:
     build_mode: str
     raw_realizations_path: str | None = None
     rejected_realizations_path: str | None = None
+    request_previews_path: str | None = None
+    request_preview_summary_path: str | None = None
+    request_previews_markdown_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -469,6 +520,9 @@ class EvaluationExperimentSummary:
     summary_path: str
     report_path: str
     failures_path: str
+    request_previews_path: str | None = None
+    request_preview_summary_path: str | None = None
+    request_previews_markdown_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

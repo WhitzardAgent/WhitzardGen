@@ -20,6 +20,7 @@ from whitzard.benchmarking.models import (
     ScoreRecord,
     TargetResult,
 )
+from whitzard.benchmarking.preview import PreviewCollector
 from whitzard.utils.progress import RunProgress
 
 
@@ -42,6 +43,11 @@ class BenchmarkBuildRequest:
     target_model_name: str | None = None
     intended_modality: str | None = None
     entrypoint: str | None = None
+    preview_enabled: bool = False
+    preview_only: bool = False
+    preview_count: int = 5
+    preview_stage: str = "all"
+    preview_format: str = "text"
     progress: RunProgress | None = None
 
 
@@ -54,6 +60,8 @@ class BenchmarkBuildOutput:
     build_artifacts: dict[str, Any] = field(default_factory=dict)
     build_manifest_overrides: dict[str, Any] = field(default_factory=dict)
     extra_jsonl_files: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    request_preview_records: list[dict[str, Any]] = field(default_factory=list)
+    request_preview_source_context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -111,6 +119,7 @@ class RealizationSynthesisBackend(ABC):
         renderer: RealizationTemplateRenderer,
         request: BenchmarkBuildRequest,
         validation_feedback_by_case_id: dict[str, list[str]] | None = None,
+        preview_collector: PreviewCollector | None = None,
     ) -> list[RealizationResult]:
         raise NotImplementedError
 
@@ -123,6 +132,7 @@ class RealizationValidator(ABC):
         specs: list[RealizationSpec],
         results: list[RealizationResult],
         request: BenchmarkBuildRequest,
+        preview_collector: PreviewCollector | None = None,
     ) -> list[RealizationValidationResult]:
         raise NotImplementedError
 
@@ -210,8 +220,19 @@ class RunEngineGateway(ABC):
         requests: list[ExecutionRequest],
         experiment_dir: str | Path,
         execution_mode: str,
+        preview_collector: Any | None = None,
         progress: RunProgress | None = None,
     ) -> tuple[list[TargetResult], list[dict[str, Any]], list[str]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def preview_requests(
+        self,
+        *,
+        task: EvalTask,
+        requests: list[ExecutionRequest],
+        preview_collector: Any,
+    ) -> None:
         raise NotImplementedError
 
 
