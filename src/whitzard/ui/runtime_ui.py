@@ -37,6 +37,16 @@ class ReplicaStatus:
     last_task_started_at: float | None = None
 
 
+@dataclass(slots=True)
+class ThroughputStatus:
+    scope: str = "overall"
+    processed: int = 0
+    total: int = 0
+    rate: str = "-"
+    failed: int = 0
+    eta: str | None = None
+
+
 class RuntimeTerminalUI:
     """Render a cleaner terminal-friendly operational view for long runs."""
 
@@ -123,6 +133,7 @@ class RuntimeTerminalUI:
         self._replicas: dict[str, dict[int, ReplicaStatus]] = {}
         self._enable_color = enable_color and Text is not None
         self._header = None
+        self._overview_throughput: ThroughputStatus | None = None
 
     def render_header(self, header) -> list[str]:
         self._header = header
@@ -208,10 +219,11 @@ class RuntimeTerminalUI:
         if progress_match:
             self._record_progress_event(progress_match)
             return []
+        if normalized.startswith("[THROUGHPUT]"):
+            self._record_throughput_event(normalized)
+            return [normalized]
         if self._is_noise(normalized):
             return []
-        if normalized.startswith("[THROUGHPUT]"):
-            return [normalized]
         if normalized.startswith("[REPLICA]"):
             return []
         if normalized.startswith("[run] ERROR:"):
@@ -440,6 +452,21 @@ class RuntimeTerminalUI:
         table.add_row("Source", self._shorten_path(self._header.prompt_source))
         table.add_row("Out", self._shorten_path(self._header.output_dir))
         table.add_row("Log", self._shorten_path(self._header.running_log_path))
+        throughput = self._overview_throughput
+        if throughput is not None or (self._header.prompt_count is not None and self._header.prompt_count > 0):
+            processed = throughput.processed if throughput is not None else 0
+            total = throughput.total if throughput is not None and throughput.total > 0 else int(self._header.prompt_count or 0)
+            table.add_row("Progress", self._render_overview_progress(processed=processed, total=total))
+            table.add_row(
+                "Throughput",
+                (throughput.rate if throughput is not None else "-")
+                + (
+                    f" | failed={throughput.failed}"
+                    if throughput is not None
+                    else ""
+                ),
+            )
+            table.add_row("ETA", throughput.eta if throughput is not None and throughput.eta else "-")
         return Panel(table, title="[RUN] Overview", border_style="bright_cyan")
 
     def _render_replica_board(self):
@@ -523,6 +550,53 @@ class RuntimeTerminalUI:
         elapsed = max(time.monotonic() - state.last_task_started_at, 0.0)
         minutes, seconds = divmod(int(elapsed), 60)
         return f"{minutes:02d}:{seconds:02d}"
+
+    def _record_throughput_event(self, message: str) -> None:
+        prompts_match = self._KV_VALUE_PATTERNS["prompts"].search(message)
+        rate_match = self._KV_VALUE_PATTERNS["rate"].search(message)
+        if prompts_match is None or rate_match is None:
+            return
+        scope = "overall"
+        parts = message.split()
+        if len(parts) >= 2 and parts[1] != "[THROUGHPUT]":
+            scope = parts[1]
+        if scope.startswith("model="):
+            return
+        prompt_value = prompts_match.group("value")
+        if "/" not in prompt_value:
+            return
+        processed_raw, total_raw = prompt_value.split("/", 1)
+        try:
+            processed = int(processed_raw)
+            total = int(total_raw)
+        except ValueError:
+            return
+        failed_match = self._KV_VALUE_PATTERNS["failed"].search(message)
+        eta_match = self._KV_VALUE_PATTERNS["eta"].search(message)
+        self._overview_throughput = ThroughputStatus(
+            scope=scope,
+            processed=processed,
+            total=total,
+            rate=rate_match.group("value"),
+            failed=int(failed_match.group("value")) if failed_match is not None else 0,
+            eta=eta_match.group("value") if eta_match is not None else None,
+        )
+
+    def _render_overview_progress(self, *, processed: int, total: int):
+        processed = max(int(processed), 0)
+        total = max(int(total), 1)
+        width = 24
+        filled = min(width, int(round((processed / total) * width)))
+        percent = (processed / total) * 100.0
+        bar = "█" * filled + "░" * (width - filled)
+        suffix = f" {processed}/{total} ({percent:.1f}%)"
+        if Text is None:
+            return bar + suffix
+        text = Text()
+        text.append(bar[:filled], style=self._style("throughput"))
+        text.append(bar[filled:], style=self._style("secondary"))
+        text.append(suffix, style=self._style("metric"))
+        return text
 
     def _is_noise(self, message: str) -> bool:
         noisy_tokens = (

@@ -180,6 +180,7 @@ class ProgressTests(unittest.TestCase):
     def test_runtime_ui_live_dashboard_tracks_progress_lines(self) -> None:
         try:
             from rich.console import Group
+            from rich.panel import Panel
         except Exception as exc:  # pragma: no cover - depends on local env
             self.skipTest(f"rich not installed: {exc}")
 
@@ -204,6 +205,15 @@ class ProgressTests(unittest.TestCase):
             ["2026-03-20 20:15:00 [THROUGHPUT] model=Wan2.2-T2V-A14B-Diffusers prompts=2/20 rate=6.0/min"]
         )
         self.assertIsInstance(dashboard, Group)
+
+        ui.render_event("[THROUGHPUT] overall prompts=12/20 rate=24.0/min failed=1 eta=00:00:20")
+        header_panel = ui._render_header_panel()
+        self.assertIsInstance(header_panel, Panel)
+        self.assertIsNotNone(ui._overview_throughput)
+        self.assertEqual(ui._overview_throughput.rate, "24.0/min")
+        self.assertEqual(ui._overview_throughput.eta, "00:00:20")
+        progress_renderable = ui._render_overview_progress(processed=12, total=20)
+        self.assertIn("12/20", getattr(progress_renderable, "plain", str(progress_renderable)))
 
     def test_build_run_progress_uses_null_for_json(self) -> None:
         progress = build_run_progress(output_mode="json")

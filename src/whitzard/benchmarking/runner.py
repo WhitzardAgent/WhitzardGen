@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -49,9 +50,16 @@ class DefaultExperimentRunner(ExperimentRunner):
         experiment_path = Path(experiment_dir)
         experiment_path.mkdir(parents=True, exist_ok=True)
         benchmark_id = compiled_plan.case_set.benchmark_id
+        started_at = time.monotonic()
         experiment_id = f"experiment_{_slugify(task.task_id)}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
         events: list[ExperimentLogEvent] = []
         failures: list[dict[str, Any]] = []
+        total_expected_units = _estimate_total_evaluation_units(
+            execution_request_count=len(compiled_plan.execution_requests),
+            normalizer_count=len(compiled_plan.normalizer_specs),
+            scorer_count=len(compiled_plan.scorer_specs),
+            plugin_count=len(compiled_plan.plugin_specs),
+        )
         _append_event(
             events,
             experiment_id=experiment_id,
@@ -61,6 +69,14 @@ class DefaultExperimentRunner(ExperimentRunner):
             entity_id=task.task_id,
             status="compiled",
             payload={"execution_request_count": len(compiled_plan.execution_requests)},
+        )
+        _emit_evaluation_eta(
+            progress=progress,
+            started_at=started_at,
+            stage="planning",
+            processed_units=0,
+            total_units=total_expected_units,
+            failed_units=0,
         )
         launch_plan = plan_model_launch(
             requested_models=task.target_models,
@@ -115,6 +131,14 @@ class DefaultExperimentRunner(ExperimentRunner):
             status="completed",
             payload={"target_result_count": len(target_results), "failure_count": len(target_failures)},
         )
+        _emit_evaluation_eta(
+            progress=progress,
+            started_at=started_at,
+            stage="execution",
+            processed_units=len(target_results),
+            total_units=total_expected_units,
+            failed_units=len(failures),
+        )
 
         current_normalizers = list(compiled_plan.normalizer_specs)
         normalized_results: list[NormalizedResult] = []
@@ -147,6 +171,14 @@ class DefaultExperimentRunner(ExperimentRunner):
                 entity_id="normalization_stage",
                 status="completed",
                 payload={"normalized_result_count": len(normalized_results), "failure_count": len(normalization_failures)},
+            )
+            _emit_evaluation_eta(
+                progress=progress,
+                started_at=started_at,
+                stage="normalization",
+                processed_units=len(target_results) + len(normalized_results),
+                total_units=total_expected_units,
+                failed_units=len(failures),
             )
 
         score_records: list[ScoreRecord] = []
@@ -185,6 +217,14 @@ class DefaultExperimentRunner(ExperimentRunner):
                 status="completed",
                 payload={"score_record_count": len(score_records), "failure_count": len(scoring_failures)},
             )
+            _emit_evaluation_eta(
+                progress=progress,
+                started_at=started_at,
+                stage="scoring",
+                processed_units=len(target_results) + len(normalized_results) + len(score_records),
+                total_units=total_expected_units,
+                failed_units=len(failures),
+            )
 
         group_analysis_records = build_group_analysis_records(
             task=task,
@@ -202,6 +242,14 @@ class DefaultExperimentRunner(ExperimentRunner):
             entity_id="group_analysis_stage",
             status="completed",
             payload={"group_analysis_record_count": len(group_analysis_records)},
+        )
+        _emit_evaluation_eta(
+            progress=progress,
+            started_at=started_at,
+            stage="group_analysis",
+            processed_units=len(target_results) + len(normalized_results) + len(score_records),
+            total_units=total_expected_units,
+            failed_units=len(failures),
         )
 
         analysis_plugin_specs = list(compiled_plan.plugin_specs)
@@ -238,6 +286,14 @@ class DefaultExperimentRunner(ExperimentRunner):
                 entity_id="analysis_plugin_stage",
                 status="completed",
                 payload={"analysis_plugin_result_count": len(analysis_plugin_results), "failure_count": len(analysis_failures)},
+            )
+            _emit_evaluation_eta(
+                progress=progress,
+                started_at=started_at,
+                stage="analysis_plugin",
+                processed_units=total_expected_units,
+                total_units=total_expected_units,
+                failed_units=len(failures),
             )
 
         summary = build_summary_report(
@@ -599,6 +655,57 @@ def _append_event(
             payload=dict(payload),
         )
     )
+
+
+def _estimate_total_evaluation_units(
+    *,
+    execution_request_count: int,
+    normalizer_count: int,
+    scorer_count: int,
+    plugin_count: int,
+) -> int:
+    total = max(int(execution_request_count), 0)
+    total += max(int(execution_request_count), 0) * max(int(normalizer_count), 0)
+    total += max(int(execution_request_count), 0) * max(int(scorer_count), 0)
+    total += max(int(plugin_count), 0)
+    return max(total, max(int(execution_request_count), 1))
+
+
+def _emit_evaluation_eta(
+    *,
+    progress: RunProgress,
+    started_at: float,
+    stage: str,
+    processed_units: int,
+    total_units: int,
+    failed_units: int,
+) -> None:
+    processed = max(int(processed_units), 0)
+    total = max(int(total_units), 1)
+    elapsed_sec = max(time.monotonic() - started_at, 0.0)
+    rate_per_min = 0.0 if processed <= 0 or elapsed_sec <= 0 else processed / (elapsed_sec / 60.0)
+    parts = [
+        "[THROUGHPUT]",
+        "scope=evaluate",
+        f"stage={stage}",
+        f"prompts={processed}/{total}",
+        f"rate={rate_per_min:.1f}/min",
+        f"failed={max(int(failed_units), 0)}",
+    ]
+    eta = _format_eta_from_rate(processed=processed, total=total, rate_per_min=rate_per_min)
+    if eta is not None:
+        parts.append(f"eta={eta}")
+    progress.env_message(" ".join(parts))
+
+
+def _format_eta_from_rate(*, processed: int, total: int, rate_per_min: float) -> str | None:
+    remaining = max(int(total) - int(processed), 0)
+    if processed <= 0 or remaining <= 0 or rate_per_min <= 0:
+        return None
+    total_sec = int(round((remaining / rate_per_min) * 60.0))
+    hours, rem = divmod(total_sec, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def _slugify(value: str) -> str:
