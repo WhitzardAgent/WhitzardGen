@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from whitzard.benchmarking.interfaces import NormalizationRequest, ResultNormalizer
 from whitzard.benchmarking.models import NormalizedResult
+from whitzard.structured_io import parse_structured_output
 
 
 class EthicsStructuralNormalizer(ResultNormalizer):
@@ -12,19 +14,33 @@ class EthicsStructuralNormalizer(ResultNormalizer):
 
     def normalize(self, request: NormalizationRequest) -> NormalizedResult:
         target = request.target_result
+        config = dict(request.normalizer_config or {})
         text = _read_text_artifact(target.artifact_path)
+        parse_mode = _resolve_parse_mode(request=request, config=config)
+        output_spec = _resolve_mode_output_spec(config=config, parse_mode=parse_mode)
+        parsed = parse_structured_output(
+            text,
+            output_spec=output_spec,
+            artifact_metadata=dict(target.artifact_metadata or {}),
+            parse_mode=parse_mode,
+        )
+        fields = dict(parsed.fields)
+        decision_text = (
+            _optional_text(fields.get("final_choice"))
+            or _optional_text(fields.get("final_answer"))
+            or _first_nonempty_line(_strip_thinking_block(text))
+        )
+        reason = _optional_text(fields.get("reason"))
+        thinking = _optional_text(fields.get("thinking")) or _optional_text(parsed.reasoning_trace)
         refusal_flag = _detect_refusal(text)
-        recommended_action = _extract_recommended_action(text)
-        justification = _extract_justification(text)
-        reasoning_trace = _extract_reasoning_trace(text)
         comparability_lane = {
-            "recommended_action": recommended_action,
+            "recommended_action": decision_text,
             "refusal_flag": refusal_flag,
-            "justification_text": justification,
+            "justification_text": reason,
         }
         introspection_lane = {
-            "reasoning_trace_text": reasoning_trace,
-            "reasoning_trace_source": "response_field" if reasoning_trace else "none",
+            "reasoning_trace_text": thinking,
+            "reasoning_trace_source": parsed.reasoning_source,
         }
         return NormalizedResult(
             task_id=request.task.task_id,
@@ -38,21 +54,89 @@ class EthicsStructuralNormalizer(ResultNormalizer):
             split=target.split,
             tags=list(target.tags),
             source_record_id=target.source_record_id,
-            decision_text=recommended_action or _first_nonempty_line(text),
+            decision_text=decision_text,
             refusal_flag=refusal_flag,
             confidence_signal=_extract_confidence_signal(text),
-            reasoning_trace_text=reasoning_trace,
+            reasoning_trace_text=thinking,
             extracted_fields={
+                "final_choice": fields.get("final_choice"),
+                "reason": reason,
+                "final_answer": fields.get("final_answer"),
+                "thinking": thinking,
+                "parse_mode": parse_mode,
+                "parse_status": parsed.parse_status,
+                "thinking_source": parsed.reasoning_source,
+                "required_missing": list(parsed.missing_required),
+                "raw_tag_hits": dict(parsed.raw_hits),
+                "fallback_source": dict(parsed.fallback_source),
                 "comparability_lane": comparability_lane,
                 "introspection_lane": introspection_lane,
-                "explicit_option_comparison": bool(re.search(r"\b(option|choice|compared?|between)\b", text, re.IGNORECASE)),
+                "explicit_option_comparison": bool(
+                    re.search(r"\b(option|choice|compared?|between)\b", text, re.IGNORECASE)
+                ),
             },
-            raw_normalized={"text": text},
+            raw_normalized={
+                "text": text,
+                "structured_parse": parsed.to_dict(),
+            },
             metadata={
                 "normalization_family": "ethics_structural",
                 "response_capture_contract": target.metadata.get("response_capture_contract"),
+                "normalizer_version": request.normalizer_version,
             },
         )
+
+
+def _resolve_parse_mode(*, request: NormalizationRequest, config: dict[str, Any]) -> str:
+    template_config = dict(request.task.execution_policy.get("target_prompt_template", {}) or {})
+    template_name = str(template_config.get("name") or "").strip()
+    template_mode_map = dict(config.get("parse_mode_map", config.get("template_mode_map", {})) or {})
+    if template_name and template_name in template_mode_map:
+        return str(template_mode_map[template_name]).strip() or str(config.get("default_mode", "generic"))
+    return str(config.get("default_mode", "generic") or "generic")
+
+
+def _resolve_mode_output_spec(*, config: dict[str, Any], parse_mode: str) -> dict[str, Any]:
+    raw_output_specs = dict(config.get("output_specs", {}) or {})
+    if parse_mode in raw_output_specs:
+        return dict(raw_output_specs.get(parse_mode, {}) or {})
+    if "default" in raw_output_specs:
+        return dict(raw_output_specs.get("default", {}) or {})
+    return _legacy_config_to_output_spec(config, parse_mode=parse_mode)
+
+
+def _legacy_config_to_output_spec(config: dict[str, Any], *, parse_mode: str) -> dict[str, Any]:
+    tags = dict(config.get("tags", {}) or {})
+    fields: dict[str, dict[str, Any]] = {}
+    required_fields: list[str] = []
+    aliases: dict[str, list[str]] = {}
+    for field_name, field_config in tags.items():
+        field_payload = dict(field_config or {})
+        fields[str(field_name)] = field_payload
+        aliases[str(field_name)] = [
+            str(item).strip()
+            for item in field_payload.get("aliases", []) or []
+            if str(item).strip()
+        ]
+        if parse_mode in set(field_payload.get("required_by_modes", []) or []):
+            required_fields.append(str(field_name))
+    return {
+        "format_type": "tag_blocks",
+        "fields": fields,
+        "required_fields": required_fields,
+        "aliases": aliases,
+        "fallback_patterns": dict(config.get("fallback_patterns", {}) or {}),
+        "normalization_rules": {
+            "choice_aliases": dict(config.get("choice_aliases", {}) or {}),
+        },
+        "reasoning_capture": {
+            "metadata_keys": ["thinking_content"],
+            "tag_fields": ["thinking"],
+            "fallback_patterns": list(
+                (dict(config.get("fallback_patterns", {}) or {})).get("thinking", []) or []
+            ),
+        },
+    }
 
 
 def _read_text_artifact(path: str | Path) -> str:
@@ -62,6 +146,13 @@ def _read_text_artifact(path: str | Path) -> str:
     if artifact_path.suffix.lower() not in {".txt", ".md", ".json"}:
         return ""
     return artifact_path.read_text(encoding="utf-8").strip()
+
+
+def _strip_thinking_block(text: str) -> str:
+    stripped = re.sub(r"<thinking>\s*.*?\s*</thinking>", "", text, flags=re.IGNORECASE | re.DOTALL)
+    stripped = re.sub(r"<analysis>\s*.*?\s*</analysis>", "", stripped, flags=re.IGNORECASE | re.DOTALL)
+    stripped = re.sub(r"<reasoning>\s*.*?\s*</reasoning>", "", stripped, flags=re.IGNORECASE | re.DOTALL)
+    return stripped.strip()
 
 
 def _detect_refusal(text: str) -> bool:
@@ -80,32 +171,6 @@ def _detect_refusal(text: str) -> bool:
     )
 
 
-def _extract_recommended_action(text: str) -> str | None:
-    for pattern in (
-        r"recommended action[:\s]+(.+)",
-        r"decision[:\s]+(.+)",
-        r"should[:\s]+(.+)",
-    ):
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(1).strip()[:400]
-    return None
-
-
-def _extract_justification(text: str) -> str | None:
-    match = re.search(r"(because|justification)[:\s]+(.+)", text, re.IGNORECASE | re.DOTALL)
-    if not match:
-        return None
-    return match.group(2).strip()[:1000]
-
-
-def _extract_reasoning_trace(text: str) -> str | None:
-    match = re.search(r"(reasoning|analysis|thought process)[:\s]+(.+)", text, re.IGNORECASE | re.DOTALL)
-    if not match:
-        return None
-    return match.group(2).strip()[:1500]
-
-
 def _extract_confidence_signal(text: str) -> float | str | None:
     match = re.search(r"\bconfidence\b[:\s]+([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE)
     if match:
@@ -122,3 +187,10 @@ def _first_nonempty_line(text: str) -> str | None:
         if stripped:
             return stripped[:400]
     return None
+
+
+def _optional_text(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    normalized = str(value).strip()
+    return normalized or None

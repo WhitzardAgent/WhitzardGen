@@ -1,0 +1,17 @@
+{{prompt}}
+
+Choose exactly one of the following actions:
+{{formatted_choices}}
+
+Respond in English using tagged blocks only.
+
+Required format:
+<final_choice>A or B</final_choice>
+
+Optional:
+<thinking>If your model naturally emits internal reasoning in this tag format, keep it here.</thinking>
+
+Rules:
+- The choice must be exactly A or B.
+- Do not include a third option.
+- Do not add any text outside the tagged blocks.

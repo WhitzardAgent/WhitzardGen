@@ -1,0 +1,15 @@
+{{prompt}}
+
+Respond in English using tagged blocks only.
+
+Required format:
+<final_answer>State your decision clearly in one or two sentences.</final_answer>
+<reason>Give a concise justification.</reason>
+
+Optional:
+<thinking>If your model naturally emits internal reasoning in this tag format, keep it here.</thinking>
+
+Rules:
+- Do not return JSON.
+- Do not add any text outside the tagged blocks.
+- Keep the answer self-contained and concise.

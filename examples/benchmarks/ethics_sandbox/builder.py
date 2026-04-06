@@ -36,6 +36,7 @@ from whitzard.benchmarking.service import load_yaml_file, slugify
 from whitzard.prompts.models import PromptRecord
 from whitzard.run_flow import run_single_model
 from whitzard.run_store import load_run_dataset_records
+from whitzard.structured_io import parse_structured_output, resolve_output_spec
 from whitzard.utils.progress import NullRunProgress
 
 _DEFAULT_FORBIDDEN_TERMS = [
@@ -256,6 +257,10 @@ class EthicsRealizationSampler(ParameterSampler):
                     prompt_template_name=prompt_template_name,
                     build_config=self.build_config,
                 )
+                writer_output_spec = _resolve_writer_output_spec(
+                    prompt_template_name=prompt_template_name,
+                    build_config=self.build_config,
+                )
                 decision_frame_requirements = _infer_decision_frame_requirements(
                     template=template,
                     prompt_guidelines=prompt_guidelines,
@@ -303,6 +308,7 @@ class EthicsRealizationSampler(ParameterSampler):
                                 "package_path": self.package.package_path,
                                 "canonical_package_path": self.package.canonical_package_path,
                             },
+                            "writer_output_spec": writer_output_spec,
                             "ethics_grounding": dict(template.get("ethics_grounding", {}) or {}),
                             "narrative_grounding": dict(template.get("narrative_grounding", {}) or {}),
                             "scenario_premises": scenario_premises,
@@ -491,6 +497,7 @@ class EthicsPromptValidator(RealizationValidator):
         self.template_name = template_name
         self.template_version = str(template_config.get("version", "v1"))
         self.template_text = Path(str(template_config["path"])).read_text(encoding="utf-8")
+        self.output_spec = resolve_output_spec(dict(template_config.get("output_spec", {}) or {}))
         self.renderer = SimpleTemplateRenderer(
             template_name=self.template_name,
             template_version=self.template_version,
@@ -575,6 +582,7 @@ class EthicsPromptValidator(RealizationValidator):
                 _parse_validator_output(
                     raw_text=raw_by_prompt_id.get(prompt_id, ""),
                     spec=spec,
+                    output_spec=self.output_spec.to_dict(),
                     template_name=self.template_name,
                     template_version=self.template_version,
                     validator_model=validator_model,
@@ -869,6 +877,16 @@ def _load_ethics_build_config(path: str | Path | None) -> EthicsBuildConfig:
             **config_dict,
             "path": str(template_path),
             "version": str(config_dict.get("version", "v1")),
+            "output_spec": dict(
+                config_dict.get(
+                    "output_spec",
+                    {
+                        "format_type": "json_object",
+                        "required_fields": ["scene_description", "decision_frame", "decision_options"],
+                    },
+                )
+                or {}
+            ),
         }
     profiles["templates"] = resolved_templates
 
@@ -904,6 +922,16 @@ def _load_ethics_build_config(path: str | Path | None) -> EthicsBuildConfig:
             **config_dict,
             "path": str(template_path),
             "version": str(config_dict.get("version", "v1")),
+            "output_spec": dict(
+                config_dict.get(
+                    "output_spec",
+                    {
+                        "format_type": "json_object",
+                        "required_fields": ["valid", "issues", "feedback_for_retry"],
+                    },
+                )
+                or {}
+            ),
         }
     validator["templates"] = resolved_validator_templates
     validator.setdefault("model", synthesis.get("model"))
@@ -971,6 +999,15 @@ def _resolve_prompt_template_version(
 ) -> str:
     template_config = dict((build_config.profiles.get("templates") or {}).get(prompt_template_name, {}) or {})
     return str(template_config.get("version", "v1"))
+
+
+def _resolve_writer_output_spec(
+    *,
+    prompt_template_name: str,
+    build_config: EthicsBuildConfig,
+) -> dict[str, Any]:
+    template_config = dict((build_config.profiles.get("templates") or {}).get(prompt_template_name, {}) or {})
+    return dict(template_config.get("output_spec", {}) or {})
 
 
 def _resolve_validator_template_version(*, build_config: EthicsBuildConfig) -> str:
@@ -1072,6 +1109,7 @@ def _parse_validator_output(
     *,
     raw_text: str,
     spec: RealizationSpec,
+    output_spec: dict[str, Any],
     template_name: str,
     template_version: str,
     validator_model: str,
@@ -1082,20 +1120,19 @@ def _parse_validator_output(
     issues = ["Validator returned empty output."]
     payload: dict[str, Any] = {}
     if stripped:
-        try:
-            decoded = json.loads(stripped)
-        except json.JSONDecodeError:
+        parsed = parse_structured_output(
+            stripped,
+            output_spec=resolve_output_spec(output_spec),
+        )
+        if parsed.parse_status == "invalid" or not isinstance(parsed.raw_payload, dict):
             issues = ["Validator returned non-JSON output."]
         else:
-            if isinstance(decoded, dict):
-                payload = decoded
-                raw_issues = payload.get("issues", [])
-                if isinstance(raw_issues, list):
-                    issues = [str(item) for item in raw_issues if str(item).strip()]
-                else:
-                    issues = []
+            payload = dict(parsed.fields)
+            raw_issues = payload.get("issues", [])
+            if isinstance(raw_issues, list):
+                issues = [str(item) for item in raw_issues if str(item).strip()]
             else:
-                issues = ["Validator returned an unexpected payload shape."]
+                issues = []
     valid = bool(payload.get("valid")) if payload else False
     if valid:
         issues = []

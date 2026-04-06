@@ -4,3 +4,47 @@ description: Ethics-oriented deterministic normalization for decision/refusal/ra
 accepted_input_types: [text]
 entrypoint: examples.normalizers.ethics_structural.normalizer:EthicsStructuralNormalizer
 version: v1
+config:
+  default_mode: generic
+  parse_mode_map:
+    target_free_response: free_response
+    target_forced_ab: forced_ab
+    target_ab_with_reason: ab_with_reason
+  output_specs:
+    default:
+      format_type: tag_blocks
+      fields:
+        final_choice:
+          aliases: [final_choice, choice]
+          required_by_modes: [forced_ab, ab_with_reason]
+        reason:
+          aliases: [reason, justification]
+          required_by_modes: [ab_with_reason]
+        final_answer:
+          aliases: [final_answer, answer]
+          preferred_by_modes: [free_response]
+        thinking:
+          aliases: [thinking, reasoning, analysis]
+      fallback_patterns:
+        final_choice:
+          - "final choice[:\\s]+([A-B])"
+          - "choice[:\\s]+([A-B])"
+          - "^([A-B])\\b"
+        final_answer:
+          - "final answer[:\\s]+(.+)"
+          - "answer[:\\s]+(.+)"
+          - "decision[:\\s]+(.+)"
+          - "should[:\\s]+(.+)"
+        reason:
+          - "reason[:\\s]+(.+)"
+          - "because[:\\s]+(.+)"
+          - "justification[:\\s]+(.+)"
+      normalization_rules:
+        choice_aliases:
+          A: [A, a, option a, Option A, choice_a, choice a]
+          B: [B, b, option b, Option B, choice_b, choice b]
+      reasoning_capture:
+        metadata_keys: [thinking_content]
+        tag_fields: [thinking]
+        fallback_patterns:
+          - "<thinking>(.*?)</thinking>"

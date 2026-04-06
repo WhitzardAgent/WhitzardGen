@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 from whitzard.prompt_generation.models import PromptStyleFamilyConfig, PromptTemplateConfig
+from whitzard.structured_io import render_template_text
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -60,10 +60,7 @@ def render_instruction_template(
     *,
     values: dict[str, Any],
 ) -> str:
-    rendered = str(template)
-    for key, value in values.items():
-        rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
-    return re.sub(r"\{\{[a-zA-Z0-9_]+\}\}", "", rendered).strip() + "\n"
+    return render_template_text(template, values=values)
 
 
 def _load_profiles_file(path: Path) -> dict[str, dict[str, Any]]:

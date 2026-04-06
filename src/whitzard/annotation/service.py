@@ -53,6 +53,7 @@ def annotate_run(
     progress: RunProgress | None = None,
     config_path: str | Path | None = None,
     prompt_template: dict[str, Any] | None = None,
+    output_spec: dict[str, Any] | None = None,
     extra_template_context_by_record_id: dict[str, dict[str, Any]] | None = None,
 ) -> AnnotationBundleSummary:
     progress = progress or NullRunProgress()
@@ -63,6 +64,7 @@ def annotate_run(
         profile_name=annotation_profile,
         template_name=template_name,
     )
+    resolved_output_spec = dict(output_spec or profile.output_spec or {})
     resolved_prompt_template = resolve_prompt_template_config(prompt_template)
     resolved_annotator_model = annotator_model or profile.default_model
     if not resolved_annotator_model:
@@ -160,6 +162,7 @@ def annotate_run(
                 source_run_id=source_run_id,
                 template_text=template.instruction_template,
                 output_contract=profile.output_contract,
+                output_spec=resolved_output_spec,
                 annotator_model=resolved_annotator_model,
                 annotation_profile=profile.name,
                 annotation_template=template.name,
@@ -200,6 +203,7 @@ def annotate_run(
             request_prompts=request_prompts,
             annotation_run_summary=run_summary.to_dict(),
             output_contract=profile.output_contract,
+            output_spec=resolved_output_spec,
             annotation_profile=profile.name,
             annotation_template=template.name,
             annotator_model=resolved_annotator_model,
@@ -246,6 +250,7 @@ def annotate_run(
         "annotation_run_id": run_summary.run_id if run_summary is not None else None,
         "annotation_run_dir": run_summary.output_dir if run_summary is not None else None,
         "output_contract": dict(profile.output_contract),
+        "output_spec": dict(resolved_output_spec),
     }
     bundle_paths = write_annotation_bundle(
         bundle_dir=bundle_dir,
@@ -281,6 +286,7 @@ def _collect_annotation_results(
     request_prompts: list[PromptRecord],
     annotation_run_summary: dict[str, Any],
     output_contract: dict[str, Any],
+    output_spec: dict[str, Any],
     annotation_profile: str,
     annotation_template: str,
     annotator_model: str,
@@ -305,8 +311,16 @@ def _collect_annotation_results(
         artifact_path = Path(str(payload.get("artifact_path", "")))
         raw_response = artifact_path.read_text(encoding="utf-8") if artifact_path.exists() else ""
         try:
-            parsed = parse_annotation_response(raw_response)
-            validate_annotation_payload(parsed, output_contract)
+            parsed = parse_annotation_response(
+                raw_response,
+                output_contract=output_contract,
+                output_spec=output_spec,
+            )
+            validate_annotation_payload(
+                parsed,
+                output_contract,
+                output_spec=output_spec,
+            )
         except AnnotationConfigError as exc:
             failures.append(
                 {
@@ -353,6 +367,7 @@ def _build_annotation_request_prompt(
     source_run_id: str,
     template_text: str,
     output_contract: dict[str, Any],
+    output_spec: dict[str, Any],
     annotator_model: str,
     annotation_profile: str,
     annotation_template: str,
@@ -383,7 +398,7 @@ def _build_annotation_request_prompt(
             root_context=default_judge_template_context(
                 source_record=source_record,
                 source_run_id=source_run_id,
-                output_contract=output_contract,
+                output_contract=output_spec or output_contract,
                 extra_context=extra_template_context,
             ),
             warning_prefix=f"annotation request {source_record.get('record_id', '')}",
@@ -417,7 +432,7 @@ def _build_annotation_request_prompt(
                     ensure_ascii=False,
                     sort_keys=True,
                 ),
-                "output_contract_block": render_output_contract(output_contract),
+                "output_contract_block": render_output_contract(output_spec or output_contract),
             },
         )
     prompt_id = f"annreq_{_slugify(str(source_record.get('record_id', 'record')))}"

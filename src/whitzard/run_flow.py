@@ -3586,26 +3586,14 @@ def _parse_prompt_rewrite_response(raw: str) -> str:
     text = raw.strip()
     if not text:
         return ""
-    try:
-        payload = json.loads(text)
-        if isinstance(payload, dict):
-            for key in ("prompt", "rewritten_prompt", "content"):
-                value = payload.get(key)
-                if value not in (None, ""):
-                    return str(value).strip()
-    except json.JSONDecodeError:
-        pass
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match is not None:
-        try:
-            payload = json.loads(match.group(0))
-            if isinstance(payload, dict):
-                for key in ("prompt", "rewritten_prompt", "content"):
-                    value = payload.get(key)
-                    if value not in (None, ""):
-                        return str(value).strip()
-        except json.JSONDecodeError:
-            pass
+    from whitzard.structured_io import extract_text_value_from_json
+
+    extracted = extract_text_value_from_json(
+        text,
+        candidate_keys=["prompt", "rewritten_prompt", "content"],
+    )
+    if extracted != text:
+        return extracted
     return text
 
 

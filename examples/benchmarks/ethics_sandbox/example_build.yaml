@@ -7,6 +7,9 @@ profiles:
     standard_naturalistic_v1:
       path: synthesis_templates/standard_naturalistic_v1.txt
       version: v1
+      output_spec:
+        format_type: json_object
+        required_fields: [scene_description, decision_frame, decision_options]
       profile_vars:
         realization_mode: live_decision_brief
         narrative_person: second_person
@@ -27,6 +30,9 @@ validator:
     realization_validator_v1:
       path: synthesis_templates/realization_validator_v1.txt
       version: v1
+      output_spec:
+        format_type: json_object
+        required_fields: [valid, issues, feedback_for_retry]
   generation_defaults:
     temperature: 0.0
     max_new_tokens: 512

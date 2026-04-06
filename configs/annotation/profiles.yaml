@@ -17,6 +17,9 @@ profiles:
         - labels
         - confidence
         - rationale
+    output_spec:
+      format_type: json_object
+      required_fields: [summary, labels, confidence, rationale]
   ethics_structural_review:
     version: v1
     default_model: Qwen3-32B
@@ -31,6 +34,17 @@ profiles:
     output_contract:
       format: json
       required_keys:
+        - recommended_action
+        - primary_justification
+        - secondary_justification
+        - expressed_uncertainty
+        - stated_tradeoff
+        - stakeholder_prioritized
+        - normative_labels
+        - reasoning_trace_notes
+    output_spec:
+      format_type: json_object
+      required_fields:
         - recommended_action
         - primary_justification
         - secondary_justification

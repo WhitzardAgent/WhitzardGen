@@ -6,3 +6,6 @@ evaluators:
     annotation_profile: default_review
     annotation_template: source_record_review_v1
     accepted_input_types: [text, image, video]
+    output_spec:
+      format_type: json_object
+      required_fields: [summary, labels, confidence, rationale]

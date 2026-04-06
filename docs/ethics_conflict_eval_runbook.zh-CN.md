@@ -250,6 +250,34 @@ execution_policy:
 
 judge/scorer 侧也支持同样的思路。你可以在 recipe 里放 `execution_policy.judge_prompt_template`，或者在 evaluator 配置里放 `prompt_template`，用来控制 judge 实际看到的 rubric prompt，同时继续保留原来的 annotation profile/output contract。
 
+仓库里已经提供了三套 ethics evaluate 模板组合，可以直接复制：
+
+- 自由回答版：
+  - [target_free_response.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/target_free_response.txt)
+  - [judge_ethics_free_response.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/judge_ethics_free_response.txt)
+  - [ethics_eval_free_response.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_eval_free_response.yaml)
+- 强制 A/B 选择版：
+  - [target_forced_ab.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/target_forced_ab.txt)
+  - [judge_ethics_forced_ab.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/judge_ethics_forced_ab.txt)
+  - [ethics_eval_forced_ab.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_eval_forced_ab.yaml)
+- 先选 A/B 再给理由版：
+  - [target_ab_with_reason.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/target_ab_with_reason.txt)
+  - [judge_ethics_ab_with_reason.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/judge_ethics_ab_with_reason.txt)
+  - [ethics_eval_ab_with_reason.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_eval_ab_with_reason.yaml)
+
+这些 target template 默认要求模型用 tag blocks 输出，而不是 JSON：
+
+- `<final_answer>...</final_answer>`
+- `<final_choice>A|B</final_choice>`
+- `<reason>...</reason>`
+- `<thinking>...</thinking>` 可选
+
+推荐原因是：
+
+- 对开放模型和 reasoning model 更稳
+- 后续 normalizer 更容易做 deterministic extraction
+- `<thinking>` 即使缺失也不会导致整个解析失败
+
 其中 `realization_prompt_template` 只标准记录“用了哪一个 build-time prompt template 名称”，core 不强制规定 profile schema。
 
 ### 4.2 task compile
@@ -288,6 +316,24 @@ judge/scorer 侧也支持同样的思路。你可以在 recipe 里放 `execution
 ### 4.4 normalization
 
 normalizer 会把 target 输出整理成 `NormalizedResult`。
+
+对于 ethics evaluate，现在推荐把“如何从模型输出中拆字段”放在 normalizer 层，而不是 plugin 层：
+
+- 改 target 输出格式：改 target template
+- 改 judge 看到的字段：改 judge template
+- 改 choice / reason / `<thinking>` 的抽取规则：改 [examples/normalizers/ethics_structural/normalizer.py](/Users/morinop/coding/whitzardgen/examples/normalizers/ethics_structural/normalizer.py) 或 [normalizer.yaml](/Users/morinop/coding/whitzardgen/examples/normalizers/ethics_structural/normalizer.yaml)
+
+`ethics_structural_normalizer` 现在会优先解析 tagged blocks，并在可能时捕获 reasoning trace：
+
+- 优先解析 `<final_choice>` / `<reason>` / `<final_answer>` / `<thinking>`
+- 如果 adapter metadata 里已经有 `thinking_content`，优先使用它
+- 如果没有 tag，再回退到 regex/fallback 规则
+
+也就是说，对于 large reasoning model：
+
+- 如果模型自己输出 `<thinking>...</thinking>`，normalizer 会抓取它
+- 如果 adapter 已经把 thinking 单独存进 artifact metadata，也会抓取它
+- 如果根本没有 thinking，不会因为这个字段缺失而让 normalize 失败
 
 对 ethics 任务，通常会提取：
 

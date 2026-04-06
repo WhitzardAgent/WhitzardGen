@@ -16,6 +16,7 @@ class EvaluatorSpec:
     annotation_profile: str | None = None
     annotation_template: str | None = None
     prompt_template: dict[str, Any] = field(default_factory=dict)
+    output_spec: dict[str, Any] = field(default_factory=dict)
     generation_defaults: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

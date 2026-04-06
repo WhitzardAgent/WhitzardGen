@@ -25,6 +25,7 @@ from whitzard.prompt_generation.config import render_instruction_template
 from whitzard.prompts.models import PromptRecord
 from whitzard.run_flow import run_single_model
 from whitzard.run_store import load_run_dataset_records
+from whitzard.structured_io import build_json_object_output_spec, parse_structured_output, resolve_output_spec
 from whitzard.utils.progress import NullRunProgress
 
 _FORBIDDEN_TERM_PATTERNS = {
@@ -327,7 +328,10 @@ class RunKernelRealizationSynthesisBackend(RealizationSynthesisBackend):
             prompt_id = f"realize_{index:06d}"
             request_prompt = request_prompts[index - 1].prompt
             raw_text = text_by_prompt_id.get(prompt_id, "")
-            scene_description, structured_output, decision_frame, decision_options = _parse_synthesized_output(raw_text)
+            scene_description, structured_output, decision_frame, decision_options = _parse_synthesized_output(
+                raw_text,
+                output_spec=dict(spec.metadata.get("writer_output_spec", {}) or {}),
+            )
             results.append(
                 RealizationResult(
                     benchmark_id=spec.benchmark_id,
@@ -405,15 +409,18 @@ def _normalize_decision_options(value: Any) -> list[dict[str, Any]]:
     return sorted(options, key=lambda item: item["id"])
 
 
-def _parse_synthesized_output(raw_text: str) -> tuple[str, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+def _parse_synthesized_output(
+    raw_text: str,
+    *,
+    output_spec: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     stripped = str(raw_text).strip()
     if not stripped:
         return "", {}, {}, []
-    try:
-        payload = json.loads(stripped)
-    except json.JSONDecodeError:
-        return stripped, {}, {}, []
-    if isinstance(payload, dict):
+    spec = resolve_output_spec(output_spec) if output_spec else build_json_object_output_spec()
+    parsed = parse_structured_output(stripped, output_spec=spec)
+    if isinstance(parsed.raw_payload, dict):
+        payload = dict(parsed.fields)
         structured_output = dict(payload)
         decision_frame = dict(payload.get("decision_frame", {}) or {})
         decision_options = _normalize_decision_options(payload.get("decision_options"))
@@ -429,10 +436,6 @@ def _parse_synthesized_output(raw_text: str) -> tuple[str, dict[str, Any], dict[
             if value not in (None, ""):
                 return str(value).strip(), structured_output, decision_frame, decision_options
         return stripped, structured_output, decision_frame, decision_options
-    if isinstance(payload, list) and payload:
-        first = payload[0]
-        if isinstance(first, str):
-            return first.strip(), {}, {}, []
     return stripped, {}, {}, []
 
 

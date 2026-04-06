@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from whitzard.annotation.config import parse_annotation_response, validate_annotation_payload
 from whitzard.annotation.service import annotate_run
 from whitzard.run_store import load_run_dataset_records
 
@@ -28,6 +29,23 @@ def _build_summary(*, run_id: str, output_dir: Path, export_path: Path):
 
 
 class AnnotationTests(unittest.TestCase):
+    def test_annotation_response_can_use_output_spec_json_parser(self) -> None:
+        payload = parse_annotation_response(
+            "```json\n{\"summary\":\"ok\",\"labels\":[\"a\"],\"confidence\":0.8,\"rationale\":\"fine\"}\n```",
+            output_spec={
+                "format_type": "json_object",
+                "required_fields": ["summary", "labels", "confidence", "rationale"],
+            },
+        )
+        validate_annotation_payload(
+            payload,
+            output_spec={
+                "format_type": "json_object",
+                "required_fields": ["summary", "labels", "confidence", "rationale"],
+            },
+        )
+        self.assertEqual(payload["summary"], "ok")
+
     def test_load_run_dataset_records_reads_export_from_manifest(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         run_root = tmpdir / "runs" / "run_001"

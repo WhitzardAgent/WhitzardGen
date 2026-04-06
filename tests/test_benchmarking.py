@@ -22,10 +22,12 @@ from whitzard.benchmarking.models import (
     CaseSourceRef,
     EvalTask,
     ExecutionRequest,
+    NormalizedResult,
     RealizationResult,
     RealizationSpec,
     RealizationValidationResult,
     ScoreRecord,
+    TargetResult,
 )
 from whitzard.benchmarking.realization import (
     BenchmarkBuildOutputLike,
@@ -33,6 +35,8 @@ from whitzard.benchmarking.realization import (
 )
 from whitzard.benchmarking.service import build_benchmark, evaluate_benchmark, normalize_case_payload
 from whitzard.evaluators.service import score_target_results
+from whitzard.benchmarking.interfaces import NormalizationRequest
+from whitzard.normalizers.service import normalize_target_results
 
 
 def _build_run_summary(*, run_id: str, output_dir: Path, export_path: Path):
@@ -412,6 +416,198 @@ class BenchmarkingTests(unittest.TestCase):
 
         self.assertEqual(results, [])
         self.assertEqual(failures, [])
+
+    def test_ethics_structural_normalizer_parses_tagged_ab_with_reason_and_thinking(self) -> None:
+        from examples.normalizers.ethics_structural.normalizer import EthicsStructuralNormalizer
+
+        tmpdir = Path(tempfile.mkdtemp())
+        artifact_path = tmpdir / "response.txt"
+        artifact_path.write_text(
+            (
+                "<thinking>private chain of thought</thinking>\n"
+                "<final_choice>A</final_choice>\n"
+                "<reason>Because immediate disclosure best respects autonomy.</reason>\n"
+            ),
+            encoding="utf-8",
+        )
+        normalizer = EthicsStructuralNormalizer()
+        request = NormalizationRequest(
+            task=EvalTask(task_id="task_ethics", execution_policy={"target_prompt_template": {"name": "target_ab_with_reason"}}),
+            compiled_plan=type("Plan", (), {})(),
+            benchmark_id="ethics_suite",
+            benchmark_manifest={},
+            target_result=TargetResult(
+                task_id="task_ethics",
+                request_id="req_001",
+                benchmark_id="ethics_suite",
+                case_id="case_001",
+                case_version="1.0",
+                source_builder="ethics_sandbox",
+                target_model="Qwen2.5-32B-Instruct",
+                source_run_id="run_001",
+                source_record_id="rec_001",
+                input_modality="text",
+                split="default",
+                tags=["ethics"],
+                artifact_type="text",
+                artifact_path=str(artifact_path),
+                prompt="Prompt",
+                metadata={},
+                prompt_metadata={},
+                artifact_metadata={},
+            ),
+            normalizer_id="ethics_structural_normalizer",
+            normalizer_version="v1",
+            normalizer_config={
+                "default_mode": "generic",
+                "template_mode_map": {"target_ab_with_reason": "ab_with_reason"},
+                "tags": {
+                    "final_choice": {"aliases": ["final_choice"], "required_by_modes": ["ab_with_reason"]},
+                    "reason": {"aliases": ["reason"], "required_by_modes": ["ab_with_reason"]},
+                    "final_answer": {"aliases": ["final_answer"], "preferred_by_modes": ["free_response"]},
+                    "thinking": {"aliases": ["thinking"], "capture_if_present": True},
+                },
+                "choice_aliases": {"A": ["A"], "B": ["B"]},
+                "fallback_patterns": {},
+            },
+        )
+
+        result = normalizer.normalize(request)
+
+        self.assertEqual(result.decision_text, "A")
+        self.assertEqual(result.reasoning_trace_text, "private chain of thought")
+        self.assertEqual(result.extracted_fields["final_choice"], "A")
+        self.assertEqual(
+            result.extracted_fields["reason"],
+            "Because immediate disclosure best respects autonomy.",
+        )
+        self.assertEqual(result.extracted_fields["parse_mode"], "ab_with_reason")
+        self.assertEqual(result.extracted_fields["parse_status"], "parsed")
+
+    def test_ethics_structural_normalizer_prefers_artifact_metadata_thinking(self) -> None:
+        from examples.normalizers.ethics_structural.normalizer import EthicsStructuralNormalizer
+
+        tmpdir = Path(tempfile.mkdtemp())
+        artifact_path = tmpdir / "response.txt"
+        artifact_path.write_text(
+            "<final_choice>B</final_choice>\n<reason>To respect the refusal.</reason>\n",
+            encoding="utf-8",
+        )
+        normalizer = EthicsStructuralNormalizer()
+        request = NormalizationRequest(
+            task=EvalTask(task_id="task_ethics", execution_policy={"target_prompt_template": {"name": "target_forced_ab"}}),
+            compiled_plan=type("Plan", (), {})(),
+            benchmark_id="ethics_suite",
+            benchmark_manifest={},
+            target_result=TargetResult(
+                task_id="task_ethics",
+                request_id="req_002",
+                benchmark_id="ethics_suite",
+                case_id="case_002",
+                case_version="1.0",
+                source_builder="ethics_sandbox",
+                target_model="Qwen3-32B",
+                source_run_id="run_001",
+                source_record_id="rec_002",
+                input_modality="text",
+                split="default",
+                tags=["ethics"],
+                artifact_type="text",
+                artifact_path=str(artifact_path),
+                prompt="Prompt",
+                metadata={},
+                prompt_metadata={},
+                artifact_metadata={"thinking_content": "adapter-side hidden reasoning"},
+            ),
+            normalizer_id="ethics_structural_normalizer",
+            normalizer_version="v1",
+            normalizer_config={
+                "default_mode": "generic",
+                "template_mode_map": {"target_forced_ab": "forced_ab"},
+                "tags": {
+                    "final_choice": {"aliases": ["final_choice"], "required_by_modes": ["forced_ab"]},
+                    "reason": {"aliases": ["reason"], "required_by_modes": ["ab_with_reason"]},
+                    "final_answer": {"aliases": ["final_answer"], "preferred_by_modes": ["free_response"]},
+                    "thinking": {"aliases": ["thinking"], "capture_if_present": True},
+                },
+                "choice_aliases": {"A": ["A"], "B": ["B"]},
+                "fallback_patterns": {},
+            },
+        )
+
+        result = normalizer.normalize(request)
+
+        self.assertEqual(result.decision_text, "B")
+        self.assertEqual(result.reasoning_trace_text, "adapter-side hidden reasoning")
+        self.assertEqual(result.extracted_fields["thinking_source"], "artifact_metadata")
+
+    def test_builtin_text_normalizer_can_use_structured_output_spec(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        artifact_path = tmpdir / "response.txt"
+        artifact_path.write_text(
+            "<final_choice>A</final_choice>\n<thinking>hidden draft</thinking>",
+            encoding="utf-8",
+        )
+        task = EvalTask(task_id="task_ethics")
+        target_result = TargetResult(
+            task_id="task_ethics",
+            request_id="req_003",
+            benchmark_id="ethics_suite",
+            case_id="case_003",
+            case_version="1.0",
+            source_builder="ethics_sandbox",
+            target_model="Qwen3-32B",
+            source_run_id="run_001",
+            source_record_id="rec_003",
+            input_modality="text",
+            split="default",
+            tags=["ethics"],
+            artifact_type="text",
+            artifact_path=str(artifact_path),
+            prompt="Prompt",
+            metadata={},
+            prompt_metadata={},
+            artifact_metadata={},
+        )
+
+        results, failures = normalize_target_results(
+            task=task,
+            compiled_plan=type("Plan", (), {})(),
+            benchmark_id="ethics_suite",
+            benchmark_manifest={},
+            target_results=[target_result],
+            normalizers=[
+                {
+                    "normalizer_id": "structured_builtin",
+                    "normalizer_type": "text_extraction",
+                    "accepted_input_types": ["text"],
+                    "config": {
+                        "parse_mode": "forced_ab",
+                        "output_spec": {
+                            "format_type": "tag_blocks",
+                            "fields": {
+                                "final_choice": {"aliases": ["final_choice"]},
+                                "thinking": {"aliases": ["thinking"]},
+                            },
+                            "required_fields": ["final_choice"],
+                            "normalization_rules": {
+                                "choice_aliases": {"A": ["A"], "B": ["B"]}
+                            },
+                            "reasoning_capture": {
+                                "metadata_keys": ["thinking_content"],
+                                "tag_fields": ["thinking"],
+                            },
+                        },
+                    },
+                }
+            ],
+        )
+
+        self.assertEqual(failures, [])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].decision_text, "A")
+        self.assertEqual(results[0].reasoning_trace_text, "hidden draft")
+        self.assertEqual(results[0].extracted_fields["parse_status"], "parsed")
 
     def test_semantic_realization_pipeline_exports_valid_subset_when_some_cases_fail(self) -> None:
         class DummySampler(ParameterSampler):

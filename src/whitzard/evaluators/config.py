@@ -7,6 +7,7 @@ from typing import Any
 from whitzard.benchmarking.discovery import discover_example_evaluator_specs
 from whitzard.benchmarking.prompt_templates import resolve_prompt_template_config
 from whitzard.evaluators.models import EvaluatorSpec
+from whitzard.structured_io import resolve_output_spec
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -45,6 +46,11 @@ def load_evaluator_catalog(path: str | Path = DEFAULT_EVALUATORS_CONFIG_PATH) ->
             annotation_profile=_normalize_optional_text(config.get("annotation_profile")),
             annotation_template=_normalize_optional_text(config.get("annotation_template")),
             prompt_template=prompt_template,
+            output_spec=resolve_output_spec(
+                dict(config.get("output_spec", {}) or {})
+            ).to_dict()
+            if config.get("output_spec")
+            else {},
             generation_defaults=dict(config.get("generation_defaults", {}) or {}),
         )
     for evaluator_id, config in discover_example_evaluator_specs().items():
@@ -64,6 +70,11 @@ def load_evaluator_catalog(path: str | Path = DEFAULT_EVALUATORS_CONFIG_PATH) ->
             annotation_profile=_normalize_optional_text(config.get("annotation_profile")),
             annotation_template=_normalize_optional_text(config.get("annotation_template")),
             prompt_template=prompt_template,
+            output_spec=resolve_output_spec(
+                dict(config.get("output_spec", {}) or {})
+            ).to_dict()
+            if config.get("output_spec")
+            else {},
             generation_defaults=dict(config.get("generation_defaults", {}) or {}),
         )
     return evaluators

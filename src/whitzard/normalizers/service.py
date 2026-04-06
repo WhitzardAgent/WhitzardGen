@@ -8,6 +8,7 @@ from whitzard.benchmarking.discovery import BenchmarkDiscoveryError, load_exampl
 from whitzard.benchmarking.interfaces import NormalizationRequest
 from whitzard.benchmarking.models import CompiledTaskPlan, EvalTask, NormalizedResult, TargetResult
 from whitzard.normalizers.models import NormalizerSpec
+from whitzard.structured_io import parse_structured_output, resolve_output_spec
 
 
 class NormalizerError(RuntimeError):
@@ -76,6 +77,9 @@ def normalize_target_results(
                                 benchmark_id=benchmark_id,
                                 benchmark_manifest=benchmark_manifest,
                                 target_result=target_result,
+                                normalizer_id=normalizer.normalizer_id,
+                                normalizer_version=normalizer.version,
+                                normalizer_config=dict(normalizer.config),
                             )
                         )
                     )
@@ -111,10 +115,42 @@ def _run_builtin_text_normalizer(
         if normalizer.accepted_input_types and target_result.input_type not in normalizer.accepted_input_types:
             continue
         text = _read_text_artifact(target_result.artifact_path)
+        output_spec = dict(normalizer.config.get("output_spec", {}) or {})
+        if output_spec:
+            parsed = parse_structured_output(
+                text,
+                output_spec=resolve_output_spec(output_spec),
+                artifact_metadata=dict(target_result.artifact_metadata or {}),
+                parse_mode=str(normalizer.config.get("parse_mode") or ""),
+            )
+            decision_text = (
+                _optional_text(parsed.fields.get("final_choice"))
+                or _optional_text(parsed.fields.get("final_answer"))
+                or _optional_text(parsed.fields.get("text"))
+                or _extract_decision_text(text)
+            )
+            reasoning_trace_text = _optional_text(parsed.reasoning_trace) or _extract_reasoning_trace_text(text)
+            extracted_fields = {
+                "response_length_chars": len(text),
+                "response_length_words": len(text.split()),
+                "contains_option_comparison": bool(
+                    re.search(r"\b(option|choice|compare)\b", text, re.IGNORECASE)
+                ),
+                "parse_status": parsed.parse_status,
+                "missing_required": list(parsed.missing_required),
+                "raw_hits": dict(parsed.raw_hits),
+                "fallback_source": dict(parsed.fallback_source),
+            }
+        else:
+            decision_text = _extract_decision_text(text)
+            reasoning_trace_text = _extract_reasoning_trace_text(text)
+            extracted_fields = {
+                "response_length_chars": len(text),
+                "response_length_words": len(text.split()),
+                "contains_option_comparison": bool(re.search(r"\b(option|choice|compare)\b", text, re.IGNORECASE)),
+            }
         refusal_flag = _detect_refusal(text)
-        decision_text = _extract_decision_text(text)
         confidence_signal = _extract_confidence_signal(text)
-        reasoning_trace_text = _extract_reasoning_trace_text(text)
         results.append(
             NormalizedResult(
                 task_id=task.task_id,
@@ -132,11 +168,7 @@ def _run_builtin_text_normalizer(
                 refusal_flag=refusal_flag,
                 confidence_signal=confidence_signal,
                 reasoning_trace_text=reasoning_trace_text,
-                extracted_fields={
-                    "response_length_chars": len(text),
-                    "response_length_words": len(text.split()),
-                    "contains_option_comparison": bool(re.search(r"\b(option|choice|compare)\b", text, re.IGNORECASE)),
-                },
+                extracted_fields=extracted_fields,
                 raw_normalized={"text": text},
                 metadata={"normalizer_type": normalizer.normalizer_type},
             )

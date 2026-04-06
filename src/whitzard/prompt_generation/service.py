@@ -31,6 +31,7 @@ from whitzard.prompt_generation.planner import build_sampling_plan, summarize_sa
 from whitzard.prompts import PromptRecord, normalize_text
 from whitzard.run_flow import run_single_model
 from whitzard.settings import get_prompt_runs_root
+from whitzard.structured_io import extract_json_object
 from whitzard.utils.progress import NullRunProgress, RunProgress
 
 
@@ -885,20 +886,9 @@ def _parse_llm_response(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if not text:
         return {"prompt": "A photorealistic scene with grounded detail."}
-    try:
-        payload = json.loads(text)
-        if isinstance(payload, dict):
-            return _normalize_llm_payload(payload)
-    except json.JSONDecodeError:
-        pass
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        try:
-            payload = json.loads(match.group(0))
-            if isinstance(payload, dict):
-                return _normalize_llm_payload(payload)
-        except json.JSONDecodeError:
-            pass
+    payload = extract_json_object(text)
+    if isinstance(payload, dict):
+        return _normalize_llm_payload(payload)
     return {"prompt": normalize_text(text)}
 
 

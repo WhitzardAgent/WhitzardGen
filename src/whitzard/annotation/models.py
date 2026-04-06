@@ -19,6 +19,7 @@ class AnnotationProfileConfig:
     default_template: str | None
     generation_defaults: dict[str, Any]
     output_contract: dict[str, Any]
+    output_spec: dict[str, Any] = field(default_factory=dict)
     accepted_source_artifact_types: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:

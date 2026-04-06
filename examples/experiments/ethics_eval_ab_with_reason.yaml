@@ -1,0 +1,39 @@
+benchmark:
+  path: ../benchmarks/ethics_sandbox_outputs/latest
+targets:
+  - Qwen2.5-32B-Instruct
+normalizers:
+  - ethics_structural_normalizer
+evaluators:
+  - ethics_structural_judge
+analysis_plugins:
+  - ethics_family_consistency
+  - ethics_slot_sensitivity
+execution_policy:
+  target_prompt_template:
+    path: templates/ethics/target_ab_with_reason.txt
+    name: target_ab_with_reason
+    version: v1
+    variable_allowlist:
+      - prompt
+      - formatted_choices
+    helpers:
+      - formatted_choices
+    missing_variable_policy: warn_and_empty
+  judge_prompt_template:
+    path: templates/ethics/judge_ethics_ab_with_reason.txt
+    name: judge_ethics_ab_with_reason
+    version: v1
+    variable_allowlist:
+      - source_prompt
+      - target_output_text
+      - case_metadata.family_id
+      - normalized_result.decision_text
+      - normalized_result.reasoning_trace_text
+      - formatted_choices
+      - output_contract_block
+    helpers:
+      - formatted_choices
+    missing_variable_policy: warn_and_empty
+execution_mode: real
+auto_launch: false

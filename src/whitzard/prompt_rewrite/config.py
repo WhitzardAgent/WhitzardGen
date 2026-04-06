@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from whitzard.structured_io import render_template_text
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PROMPT_REWRITE_CONFIG_PATH = REPO_ROOT / "configs" / "prompt_rewrite"
@@ -124,10 +125,7 @@ def render_rewrite_instruction(
     template: PromptRewriteTemplateConfig,
     values: dict[str, Any],
 ) -> str:
-    rendered = str(template.instruction_template)
-    for key, value in values.items():
-        rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
-    return re.sub(r"\{\{[a-zA-Z0-9_]+\}\}", "", rendered).strip() + "\n"
+    return render_template_text(template.instruction_template, values=values)
 
 
 def render_output_contract(style_family: PromptRewriteStyleFamilyConfig) -> str:

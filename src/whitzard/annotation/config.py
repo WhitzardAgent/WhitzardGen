@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 from whitzard.annotation.models import AnnotationProfileConfig, AnnotationTemplateConfig
+from whitzard.structured_io import (
+    output_contract_to_spec,
+    parse_structured_output,
+    render_output_contract_block,
+    render_template_text,
+    resolve_output_spec,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -58,52 +64,37 @@ def resolve_annotation_profile(
 
 
 def render_annotation_template(template: str, *, values: dict[str, Any]) -> str:
-    rendered = str(template)
-    for key, value in values.items():
-        rendered = rendered.replace(f"{{{{{key}}}}}", str(value))
-    return re.sub(r"\{\{[a-zA-Z0-9_]+\}\}", "", rendered).strip() + "\n"
+    return render_template_text(template, values=values)
 
 
 def render_output_contract(contract: dict[str, Any]) -> str:
-    required_keys = [
-        str(item).strip()
-        for item in contract.get("required_keys", []) or []
-        if str(item).strip()
-    ]
-    if not required_keys:
-        return "Return JSON only."
-    return "Return JSON only with keys: " + ", ".join(required_keys) + "."
+    return render_output_contract_block(contract)
 
 
-def parse_annotation_response(raw: str) -> dict[str, Any]:
+def parse_annotation_response(
+    raw: str,
+    *,
+    output_contract: dict[str, Any] | None = None,
+    output_spec: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     text = str(raw).strip()
     if not text:
         raise AnnotationConfigError("Annotation response is empty.")
-
-    candidates = [text]
-    fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if fenced_match:
-        candidates.insert(0, fenced_match.group(1).strip())
-    object_match = re.search(r"(\{.*\})", text, re.DOTALL)
-    if object_match:
-        candidates.insert(0, object_match.group(1).strip())
-
-    for candidate in candidates:
-        try:
-            payload = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            return payload
-    raise AnnotationConfigError("Annotation response did not contain a valid JSON object.")
+    spec = resolve_output_spec(output_spec) if output_spec else output_contract_to_spec(output_contract)
+    parsed = parse_structured_output(text, output_spec=spec)
+    if parsed.parse_status == "invalid" or not isinstance(parsed.raw_payload, dict):
+        raise AnnotationConfigError("Annotation response did not contain a valid structured object.")
+    return dict(parsed.fields)
 
 
-def validate_annotation_payload(payload: dict[str, Any], contract: dict[str, Any]) -> None:
-    required_keys = [
-        str(item).strip()
-        for item in contract.get("required_keys", []) or []
-        if str(item).strip()
-    ]
+def validate_annotation_payload(
+    payload: dict[str, Any],
+    contract: dict[str, Any] | None = None,
+    *,
+    output_spec: dict[str, Any] | None = None,
+) -> None:
+    spec = resolve_output_spec(output_spec) if output_spec else output_contract_to_spec(contract)
+    required_keys = list(spec.required_fields)
     missing = [key for key in required_keys if key not in payload]
     if missing:
         raise AnnotationConfigError(
@@ -129,6 +120,11 @@ def _load_profiles_file(path: Path) -> dict[str, AnnotationProfileConfig]:
             default_template=_normalize_optional_text(config.get("default_template")),
             generation_defaults=dict(config.get("generation_defaults", {})),
             output_contract=dict(config.get("output_contract", {})),
+            output_spec=resolve_output_spec(
+                dict(config.get("output_spec", {}) or {})
+            ).to_dict()
+            if config.get("output_spec")
+            else output_contract_to_spec(dict(config.get("output_contract", {}) or {})).to_dict(),
             accepted_source_artifact_types=[
                 str(item) for item in config.get("accepted_source_artifact_types", []) or []
             ],

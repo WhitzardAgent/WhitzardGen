@@ -147,6 +147,9 @@ class NormalizationRequest:
     benchmark_id: str
     benchmark_manifest: dict[str, Any]
     target_result: TargetResult
+    normalizer_id: str | None = None
+    normalizer_version: str | None = None
+    normalizer_config: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

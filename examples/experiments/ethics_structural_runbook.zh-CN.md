@@ -304,6 +304,29 @@ whitzard evaluate inspect <experiment_id>
 - [ethics_target_scene_with_choices.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics_target_scene_with_choices.txt)
 - [ethics_target_scene_with_instruction.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics_target_scene_with_instruction.txt)
 - [generic_judge_with_case_metadata.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/generic_judge_with_case_metadata.txt)
+
+对于 ethics evaluate，另外还有一组专门面向 target/judge 的模板 pack：
+
+- [target_free_response.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/target_free_response.txt)
+- [target_forced_ab.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/target_forced_ab.txt)
+- [target_ab_with_reason.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/target_ab_with_reason.txt)
+- [judge_ethics_free_response.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/judge_ethics_free_response.txt)
+- [judge_ethics_forced_ab.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/judge_ethics_forced_ab.txt)
+- [judge_ethics_ab_with_reason.txt](/Users/morinop/coding/whitzardgen/examples/experiments/templates/ethics/judge_ethics_ab_with_reason.txt)
+
+对应 recipe：
+
+- [ethics_eval_free_response.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_eval_free_response.yaml)
+- [ethics_eval_forced_ab.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_eval_forced_ab.yaml)
+- [ethics_eval_ab_with_reason.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/ethics_eval_ab_with_reason.yaml)
+
+如果你要自定义：
+
+- 改 target 输出格式：改 target template 文件
+- 改 judge rubric：改 judge template 文件
+- 改 `<final_choice>` / `<reason>` / `<thinking>` 的抽取：改 [examples/normalizers/ethics_structural/normalizer.py](/Users/morinop/coding/whitzardgen/examples/normalizers/ethics_structural/normalizer.py) 或 [normalizer.yaml](/Users/morinop/coding/whitzardgen/examples/normalizers/ethics_structural/normalizer.yaml)
+
+plugin 仍然主要负责聚合分析，不是第一步解析 target 输出的地方。
 - `group_analyses.jsonl`
   - core generic group aggregation 输出
 - `analysis_plugin_results.jsonl`

@@ -85,6 +85,7 @@ def score_target_results(
                     execution_mode=execution_mode,
                     progress=progress,
                     prompt_template=judge_prompt_template,
+                    output_spec=dict(scorer.output_spec or {}),
                     extra_template_context_by_record_id=extra_template_context_by_record_id,
                 )
                 annotation_rows = _load_jsonl_rows(annotation_summary.annotations_path)
