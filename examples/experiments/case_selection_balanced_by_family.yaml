@@ -1,0 +1,5 @@
+case_selection:
+  seed: 42
+  group_selector: metadata.family_id
+  sample_size_per_group: 50
+  undersized_group_policy: keep_all_warn

@@ -202,12 +202,59 @@ class CaseSet:
 
 
 @dataclass(slots=True)
+class CaseSelectionSpec:
+    seed: int = 42
+    group_selector: str | None = None
+    sample_size_per_group: int | None = None
+    undersized_group_policy: str = "keep_all_warn"
+    include_groups: list[str] = field(default_factory=list)
+    exclude_groups: list[str] = field(default_factory=list)
+    include_case_ids: list[str] = field(default_factory=list)
+    exclude_case_ids: list[str] = field(default_factory=list)
+    split_filter: list[str] = field(default_factory=list)
+    tag_filter: list[str] = field(default_factory=list)
+    max_cases: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class CaseSelectionResult:
+    spec: CaseSelectionSpec
+    selected_cases: list[BenchmarkCase] = field(default_factory=list)
+    excluded_cases: list[BenchmarkCase] = field(default_factory=list)
+    counts_before: int = 0
+    counts_after: int = 0
+    counts_by_group_before: dict[str, int] = field(default_factory=dict)
+    counts_by_group_after: dict[str, int] = field(default_factory=dict)
+    undersized_groups: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    selection_manifest: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "spec": self.spec.to_dict(),
+            "counts_before": self.counts_before,
+            "counts_after": self.counts_after,
+            "counts_by_group_before": dict(self.counts_by_group_before),
+            "counts_by_group_after": dict(self.counts_by_group_after),
+            "undersized_groups": list(self.undersized_groups),
+            "warnings": list(self.warnings),
+            "selection_manifest": dict(self.selection_manifest),
+            "selected_case_ids": [case.case_id for case in self.selected_cases],
+            "excluded_case_ids": [case.case_id for case in self.excluded_cases],
+        }
+
+
+@dataclass(slots=True)
 class EvalTask:
     task_id: str
     task_version: str = "v2"
     case_source: CaseSourceRef | None = None
     case_set_path: str | None = None
     target_models: list[str] = field(default_factory=list)
+    case_selection: CaseSelectionSpec | None = None
     execution_policy: dict[str, Any] = field(default_factory=dict)
     normalizer_ids: list[str] = field(default_factory=list)
     scorer_ids: list[str] = field(default_factory=list)
@@ -223,6 +270,7 @@ class EvalTask:
             "case_source": self.case_source.to_dict() if self.case_source is not None else None,
             "case_set_path": self.case_set_path,
             "target_models": list(self.target_models),
+            "case_selection": self.case_selection.to_dict() if self.case_selection is not None else None,
             "execution_policy": dict(self.execution_policy),
             "normalizer_ids": list(self.normalizer_ids),
             "scorer_ids": list(self.scorer_ids),
@@ -256,6 +304,7 @@ class CompiledTaskPlan:
     task: EvalTask
     case_set: CaseSet
     execution_requests: list[ExecutionRequest]
+    case_selection_result: CaseSelectionResult | None = None
     normalizer_specs: list[dict[str, Any]] = field(default_factory=list)
     scorer_specs: list[dict[str, Any]] = field(default_factory=list)
     analyzer_specs: list[dict[str, Any]] = field(default_factory=list)
@@ -268,6 +317,7 @@ class CompiledTaskPlan:
             "task": self.task.to_dict(),
             "case_set": self.case_set.to_dict(),
             "execution_requests": [item.to_dict() for item in self.execution_requests],
+            "case_selection_result": self.case_selection_result.to_dict() if self.case_selection_result is not None else None,
             "normalizer_specs": list(self.normalizer_specs),
             "scorer_specs": list(self.scorer_specs),
             "analyzer_specs": list(self.analyzer_specs),
@@ -478,6 +528,10 @@ class BenchmarkBuildSummary:
     build_mode: str
     raw_realizations_path: str | None = None
     rejected_realizations_path: str | None = None
+    selection_manifest_path: str | None = None
+    excluded_cases_path: str | None = None
+    source_case_count: int | None = None
+    excluded_case_count: int = 0
     request_previews_path: str | None = None
     request_preview_summary_path: str | None = None
     request_previews_markdown_path: str | None = None
@@ -520,6 +574,10 @@ class EvaluationExperimentSummary:
     summary_path: str
     report_path: str
     failures_path: str
+    source_case_count: int | None = None
+    excluded_case_count: int = 0
+    selection_manifest_path: str | None = None
+    excluded_cases_path: str | None = None
     request_previews_path: str | None = None
     request_preview_summary_path: str | None = None
     request_previews_markdown_path: str | None = None
@@ -567,6 +625,12 @@ class ExperimentBundleManifest:
     recipe_path: str | None = None
     auto_launch: bool = False
     launch_plan: dict[str, Any] = field(default_factory=dict)
+    selection_applied: bool = False
+    selection_spec: dict[str, Any] = field(default_factory=dict)
+    selected_case_count: int | None = None
+    source_case_count: int | None = None
+    excluded_case_count: int = 0
+    selection_manifest_path: str | None = None
     compiled_task_plan_path: str | None = None
     experiment_log_path: str | None = None
 

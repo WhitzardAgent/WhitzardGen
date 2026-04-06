@@ -191,9 +191,82 @@ whitzard evaluate run \
 
 这里 CLI 参数名仍然保留 `--evaluators`，但在当前 V2 核心里，它会被解析成 **scorers**。
 
-## 4. 当前架构下每一步实际在做什么
+## 4. 如何在 evaluate 前快速做 family 均衡采样
 
-### 4.1 benchmark build
+如果 build 之后因为 reject 导致每个 family 的样本数不均匀，推荐直接使用这份默认配置：
+
+- [case_selection_balanced_by_family.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/case_selection_balanced_by_family.yaml)
+
+配置内容：
+
+```yaml
+case_selection:
+  seed: 42
+  group_selector: metadata.family_id
+  sample_size_per_group: 50
+  undersized_group_policy: keep_all_warn
+```
+
+这表示：
+
+- 按 `metadata.family_id` 分组
+- 每个 family 最多随机采样 `50` 个 case
+- 如果某个 family 不足 `50`，就全部保留并在 manifest 中记录 warning
+
+### 4.1 只在 evaluate 时临时生效
+
+```bash
+whitzard evaluate run \
+  --recipe examples/experiments/ethics_eval_ab_with_reason.yaml \
+  --benchmark /path/to/your/benchmark_bundle \
+  --targets Qwen2.5-32B-Instruct \
+  --case-selection-config examples/experiments/case_selection_balanced_by_family.yaml
+```
+
+这不会改动原 benchmark，只会在本次 experiment 中使用筛选后的 subset，并额外写出：
+
+- `selection_manifest.json`
+- `excluded_cases.jsonl`
+
+### 4.2 先导出一个平衡后的 benchmark 子集
+
+```bash
+whitzard benchmark sample \
+  /path/to/your/benchmark_bundle \
+  --case-selection-config examples/experiments/case_selection_balanced_by_family.yaml \
+  --out /path/to/your/sampled_benchmark_bundle
+```
+
+然后再直接对这份新 bundle 做 evaluate：
+
+```bash
+whitzard evaluate run \
+  --recipe examples/experiments/ethics_eval_ab_with_reason.yaml \
+  --benchmark /path/to/your/sampled_benchmark_bundle \
+  --targets Qwen2.5-32B-Instruct
+```
+
+`benchmark sample` 会产出：
+
+- `cases.jsonl`
+- `benchmark_manifest.json`
+- `stats.json`
+- `selection_manifest.json`
+- `excluded_cases.jsonl`
+
+### 4.3 什么时候改这个默认配置
+
+最常改的通常只有两个字段：
+
+- `sample_size_per_group`
+  - 比如从 `50` 改成 `20`
+- `group_selector`
+  - ethics 推荐保持 `metadata.family_id`
+  - 只有别的 benchmark 缺少 family metadata 时，再考虑 `case_id_prefix`
+
+## 5. 当前架构下每一步实际在做什么
+
+### 5.1 benchmark build
 
 当前这一步已经不是“机械拼 prompt”，而是：
 
@@ -280,7 +353,7 @@ judge/scorer 侧也支持同样的思路。你可以在 recipe 里放 `execution
 
 其中 `realization_prompt_template` 只标准记录“用了哪一个 build-time prompt template 名称”，core 不强制规定 profile schema。
 
-### 4.2 task compile
+### 5.2 task compile
 
 当前 `evaluate run` 不再直接“拿 benchmark 然后临时调一堆 service”，而是先编译成：
 
@@ -297,7 +370,7 @@ judge/scorer 侧也支持同样的思路。你可以在 recipe 里放 `execution
 - 用哪些 analysis plugins
 - 最终有哪些 execution requests
 
-### 4.3 target execution
+### 5.3 target execution
 
 执行层仍然复用你现有的 `run_flow` 内核。
 
@@ -313,7 +386,7 @@ judge/scorer 侧也支持同样的思路。你可以在 recipe 里放 `execution
 - run engine 仍然保持 benchmark-agnostic
 - 这也是当前架构里最重要的分层之一
 
-### 4.4 normalization
+### 5.4 normalization
 
 normalizer 会把 target 输出整理成 `NormalizedResult`。
 
@@ -348,7 +421,7 @@ normalizer 会把 target 输出整理成 `NormalizedResult`。
 - 让后续 scorer / plugin 不必直接处理杂乱原始输出
 - 让跨模型对比更稳定
 
-### 4.5 scoring
+### 5.5 scoring
 
 V2 里主结果类型不再是 `EvaluatorResult`，而是：
 
@@ -361,7 +434,7 @@ V2 里主结果类型不再是 `EvaluatorResult`，而是：
 
 ethics 示例默认使用 judge scorer，因此会把 annotation/judge 结果统一回填成 `ScoreRecord`。
 
-### 4.6 group analysis 和 analysis plugins
+### 5.6 group analysis 和 analysis plugins
 
 当前架构里这两层是分开的：
 
@@ -375,7 +448,7 @@ ethics 示例默认使用 judge scorer，因此会把 annotation/judge 结果统
 
 这正是为什么伦理逻辑应该留在 `examples/`，而不是写进 core。
 
-## 5. 输出结果怎么看
+## 6. 输出结果怎么看
 
 experiment 完成后，会写出一个 V2-first bundle。当前最重要的文件是：
 
@@ -421,9 +494,9 @@ whitzard evaluate inspect <experiment_id>
 whitzard experiments report <experiment_id>
 ```
 
-## 6. 最常见的修改点
+## 7. 最常见的修改点
 
-### 6.1 想换 target models
+### 7.1 想换 target models
 
 直接改 recipe 的 `targets`，或者命令行覆盖：
 
@@ -433,7 +506,7 @@ whitzard evaluate run \
   --targets Qwen3-32B Another-LLM
 ```
 
-### 6.2 想调 benchmark 规模
+### 7.2 想调 benchmark 规模
 
 修改：
 
@@ -445,7 +518,7 @@ whitzard evaluate run \
 realizations_per_template: 8
 ```
 
-### 6.3 想改伦理结构本身
+### 7.3 想改伦理结构本身
 
 改这里：
 
@@ -457,7 +530,7 @@ realizations_per_template: 8
 - `slot_library.yaml`
 - `analysis_codebook.yaml`
 
-### 6.4 想换 scorer / judge model
+### 7.4 想换 scorer / judge model
 
 你可以：
 
@@ -477,7 +550,7 @@ whitzard evaluate run \
 
 在 V2 内部，这也会被收敛到 scorer 语义。
 
-## 7. 推荐的实际操作顺序
+## 8. 推荐的实际操作顺序
 
 ### 冒烟测试
 
@@ -505,7 +578,7 @@ whitzard evaluate run --recipe examples/experiments/ethics_structural.yaml
 
 更建议先逐步加规模，而不是一开始就做很重的多模型 sweep。
 
-## 8. 当前你需要记住的一条核心原则
+## 9. 当前你需要记住的一条核心原则
 
 在当前架构下运行伦理冲突评测时，**最重要的不是 prompt 文案本身，而是 structural lineage 不丢失**。
 

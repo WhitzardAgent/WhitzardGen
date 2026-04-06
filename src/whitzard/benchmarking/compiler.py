@@ -12,6 +12,7 @@ from whitzard.benchmarking.models import (
     EvalTask,
     ExecutionRequest,
 )
+from whitzard.benchmarking.selection import apply_case_selection, clone_case_set_with_selection
 from whitzard.benchmarking.resolution import (
     resolve_runtime_analysis_plugins,
     resolve_runtime_analyzers,
@@ -38,6 +39,10 @@ class DefaultTaskCompiler(TaskCompiler):
 
     def compile(self, task: EvalTask) -> CompiledTaskPlan:
         case_set = _load_case_set_for_task(task)
+        selection_result = None
+        if task.case_selection is not None:
+            selection_result = apply_case_selection(case_set=case_set, spec=task.case_selection)
+            case_set = clone_case_set_with_selection(case_set=case_set, selection_result=selection_result)
         execution_requests = _build_execution_requests(task=task, case_set=case_set)
         normalizers = resolve_runtime_normalizers(
             normalizer_ids=task.normalizer_ids,
@@ -61,6 +66,7 @@ class DefaultTaskCompiler(TaskCompiler):
             task=task,
             case_set=case_set,
             execution_requests=execution_requests,
+            case_selection_result=selection_result,
             normalizer_specs=[item.to_dict() for item in normalizers],
             scorer_specs=[item.to_dict() for item in scorers],
             analyzer_specs=analyzers,

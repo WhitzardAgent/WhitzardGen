@@ -318,6 +318,18 @@ class DefaultExperimentRunner(ExperimentRunner):
             summary=summary,
             group_analysis_records=group_analysis_records,
         )
+        selection_result = compiled_plan.case_selection_result
+        selection_manifest_payload = None
+        excluded_case_rows: list[dict[str, Any]] = []
+        if selection_result is not None:
+            selection_manifest_payload = {
+                **selection_result.selection_manifest,
+                "source_benchmark_path": compiled_plan.case_set.case_set_path,
+                "source_benchmark_id": benchmark_id,
+                "selected_case_count": selection_result.counts_after,
+                "excluded_case_count": len(selection_result.excluded_cases),
+            }
+            excluded_case_rows = [case.to_dict() for case in selection_result.excluded_cases]
         bundle_paths = write_experiment_bundle(
             experiment_dir=experiment_path,
             manifest=ExperimentBundleManifest(
@@ -341,6 +353,11 @@ class DefaultExperimentRunner(ExperimentRunner):
                 recipe_path=str(task.metadata.get("recipe_path")) if task.metadata.get("recipe_path") not in (None, "") else None,
                 auto_launch=bool(task.execution_policy.get("auto_launch", False)),
                 launch_plan=launch_plan.to_dict(),
+                selection_applied=selection_result is not None,
+                selection_spec=selection_result.spec.to_dict() if selection_result is not None else {},
+                selected_case_count=selection_result.counts_after if selection_result is not None else None,
+                source_case_count=selection_result.counts_before if selection_result is not None else None,
+                excluded_case_count=len(selection_result.excluded_cases) if selection_result is not None else 0,
             ).to_dict(),
             case_set=compiled_plan.case_set,
             compiled_task_plan=compiled_plan,
@@ -355,6 +372,21 @@ class DefaultExperimentRunner(ExperimentRunner):
             report_markdown=report_markdown,
             failures=failures,
         )
+        if selection_manifest_payload is not None:
+            selection_manifest_path = experiment_path / "selection_manifest.json"
+            selection_manifest_path.write_text(
+                json.dumps(selection_manifest_payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            excluded_cases_path = experiment_path / "excluded_cases.jsonl"
+            with excluded_cases_path.open("w", encoding="utf-8") as handle:
+                for row in excluded_case_rows:
+                    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            manifest_path = Path(bundle_paths["manifest_path"])
+            manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest_payload["selection_manifest_path"] = str(selection_manifest_path)
+            manifest_payload["excluded_cases_path"] = str(excluded_cases_path)
+            manifest_path.write_text(json.dumps(manifest_payload, indent=2, ensure_ascii=False), encoding="utf-8")
         preview_summary = None
         if preview_collector is not None and preview_collector.records:
             preview_summary = write_request_preview_bundle(
@@ -390,6 +422,8 @@ class DefaultExperimentRunner(ExperimentRunner):
             score_record_count=len(score_records),
             group_analysis_record_count=len(group_analysis_records),
             analysis_plugin_result_count=len(analysis_plugin_results),
+            source_case_count=selection_result.counts_before if selection_result is not None else None,
+            excluded_case_count=len(selection_result.excluded_cases) if selection_result is not None else 0,
             execution_requests_path=bundle_paths["execution_requests_path"],
             target_results_path=bundle_paths["target_results_path"],
             normalized_results_path=bundle_paths["normalized_results_path"],
@@ -402,6 +436,8 @@ class DefaultExperimentRunner(ExperimentRunner):
             summary_path=bundle_paths["summary_path"],
             report_path=bundle_paths["report_path"],
             failures_path=bundle_paths["failures_path"],
+            selection_manifest_path=str(experiment_path / "selection_manifest.json") if selection_result is not None else None,
+            excluded_cases_path=str(experiment_path / "excluded_cases.jsonl") if selection_result is not None else None,
             request_previews_path=preview_summary.request_previews_path if preview_summary is not None else None,
             request_preview_summary_path=preview_summary.request_preview_summary_path if preview_summary is not None else None,
             request_previews_markdown_path=preview_summary.request_previews_markdown_path if preview_summary is not None else None,

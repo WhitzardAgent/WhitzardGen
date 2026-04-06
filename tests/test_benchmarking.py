@@ -19,6 +19,8 @@ from whitzard.benchmarking.gateway import _resolve_request_prompt_text
 from whitzard.benchmarking.packages import load_generative_benchmark_package
 from whitzard.benchmarking.models import (
     BenchmarkCase,
+    CaseSelectionSpec,
+    CaseSet,
     CaseSourceRef,
     EvalTask,
     ExecutionRequest,
@@ -29,11 +31,12 @@ from whitzard.benchmarking.models import (
     ScoreRecord,
     TargetResult,
 )
+from whitzard.benchmarking.selection import apply_case_selection, infer_case_id_prefix
 from whitzard.benchmarking.realization import (
     BenchmarkBuildOutputLike,
     execute_semantic_realization_pipeline,
 )
-from whitzard.benchmarking.service import build_benchmark, evaluate_benchmark, normalize_case_payload
+from whitzard.benchmarking.service import build_benchmark, evaluate_benchmark, normalize_case_payload, sample_benchmark_bundle
 from whitzard.evaluators.service import score_target_results
 from whitzard.benchmarking.interfaces import NormalizationRequest
 from whitzard.normalizers.service import normalize_target_results
@@ -1343,3 +1346,177 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertIn("Experiment Report", report_text)
         self.assertIn("Per-Normalizer Counts", report_text)
         self.assertIn("Analysis Plugin Counts", report_text)
+
+    def test_case_selection_samples_by_metadata_family_id_and_keeps_undersized_groups(self) -> None:
+        cases = [
+            BenchmarkCase(
+                benchmark_id="suite",
+                case_id="family_alpha_001",
+                input_payload={"prompt": "alpha 1"},
+                prompt="alpha 1",
+                metadata={"family_id": "family_alpha"},
+            ),
+            BenchmarkCase(
+                benchmark_id="suite",
+                case_id="family_alpha_002",
+                input_payload={"prompt": "alpha 2"},
+                prompt="alpha 2",
+                metadata={"family_id": "family_alpha"},
+            ),
+            BenchmarkCase(
+                benchmark_id="suite",
+                case_id="family_beta_001",
+                input_payload={"prompt": "beta 1"},
+                prompt="beta 1",
+                metadata={"family_id": "family_beta"},
+            ),
+        ]
+        case_set = CaseSet(
+            benchmark_id="suite",
+            cases=cases,
+            source=CaseSourceRef(source_type="benchmark_bundle"),
+        )
+
+        result = apply_case_selection(
+            case_set=case_set,
+            spec=CaseSelectionSpec(
+                seed=7,
+                group_selector="metadata.family_id",
+                sample_size_per_group=2,
+                undersized_group_policy="keep_all_warn",
+            ),
+        )
+
+        self.assertEqual(result.counts_before, 3)
+        self.assertEqual(result.counts_after, 3)
+        self.assertEqual(result.counts_by_group_before["family_alpha"], 2)
+        self.assertEqual(result.counts_by_group_after["family_beta"], 1)
+        self.assertEqual(len(result.undersized_groups), 1)
+        self.assertEqual(result.undersized_groups[0]["group_key"], "family_beta")
+        self.assertTrue(result.warnings)
+
+    def test_case_id_prefix_selector_strips_numeric_suffix(self) -> None:
+        self.assertEqual(
+            infer_case_id_prefix("competent_refusal_of_treatment_775"),
+            "competent_refusal_of_treatment",
+        )
+        self.assertEqual(infer_case_id_prefix("case_without_suffix"), "case_without_suffix")
+
+    def test_compiler_applies_case_selection_before_execution_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir_str:
+            tmpdir = Path(tmpdir_str)
+            bundle_dir = tmpdir / "benchmark"
+            bundle_dir.mkdir(parents=True, exist_ok=True)
+            cases_path = bundle_dir / "cases.jsonl"
+            manifest_path = bundle_dir / "benchmark_manifest.json"
+            stats_path = bundle_dir / "stats.json"
+            rows = [
+                BenchmarkCase(
+                    benchmark_id="suite",
+                    case_id="competent_refusal_of_treatment_001",
+                    input_payload={"prompt": "a"},
+                    prompt="a",
+                    metadata={"family_id": "competent_refusal_of_treatment"},
+                ).to_dict(),
+                BenchmarkCase(
+                    benchmark_id="suite",
+                    case_id="competent_refusal_of_treatment_002",
+                    input_payload={"prompt": "b"},
+                    prompt="b",
+                    metadata={"family_id": "competent_refusal_of_treatment"},
+                ).to_dict(),
+                BenchmarkCase(
+                    benchmark_id="suite",
+                    case_id="complicity_in_harmful_system_design_001",
+                    input_payload={"prompt": "c"},
+                    prompt="c",
+                    metadata={"family_id": "complicity_in_harmful_system_design"},
+                ).to_dict(),
+            ]
+            cases_path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+            manifest_path.write_text(json.dumps({"benchmark_id": "suite", "builder_name": "dummy"}), encoding="utf-8")
+            stats_path.write_text(json.dumps({"case_count": 3}), encoding="utf-8")
+
+            task = EvalTask(
+                task_id="task_suite",
+                case_set_path=str(bundle_dir),
+                target_models=["Qwen3-32B"],
+                case_selection=CaseSelectionSpec(
+                    seed=1,
+                    group_selector="metadata.family_id",
+                    sample_size_per_group=1,
+                    undersized_group_policy="keep_all_warn",
+                ),
+            )
+            compiled = DefaultTaskCompiler().compile(task)
+
+        self.assertEqual(len(compiled.case_set.cases), 2)
+        self.assertEqual(len(compiled.execution_requests), 2)
+        self.assertIsNotNone(compiled.case_selection_result)
+        self.assertEqual(compiled.case_selection_result.counts_before, 3)
+        self.assertEqual(compiled.case_selection_result.counts_after, 2)
+
+    def test_sample_benchmark_bundle_writes_selection_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir_str:
+            tmpdir = Path(tmpdir_str)
+            bundle_dir = tmpdir / "benchmark"
+            bundle_dir.mkdir(parents=True, exist_ok=True)
+            cases = [
+                BenchmarkCase(
+                    benchmark_id="suite",
+                    case_id="competent_refusal_of_treatment_001",
+                    input_payload={"prompt": "a"},
+                    prompt="a",
+                    metadata={"family_id": "competent_refusal_of_treatment"},
+                ),
+                BenchmarkCase(
+                    benchmark_id="suite",
+                    case_id="competent_refusal_of_treatment_002",
+                    input_payload={"prompt": "b"},
+                    prompt="b",
+                    metadata={"family_id": "competent_refusal_of_treatment"},
+                ),
+                BenchmarkCase(
+                    benchmark_id="suite",
+                    case_id="complicity_in_harmful_system_design_001",
+                    input_payload={"prompt": "c"},
+                    prompt="c",
+                    metadata={"family_id": "complicity_in_harmful_system_design"},
+                ),
+            ]
+            (bundle_dir / "cases.jsonl").write_text(
+                "".join(json.dumps(case.to_dict(), ensure_ascii=False) + "\n" for case in cases),
+                encoding="utf-8",
+            )
+            (bundle_dir / "benchmark_manifest.json").write_text(
+                json.dumps({"benchmark_id": "suite", "builder_name": "dummy"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (bundle_dir / "stats.json").write_text(
+                json.dumps({"case_count": 3}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            summary = sample_benchmark_bundle(
+                benchmark_path=bundle_dir,
+                case_selection={
+                    "seed": 1,
+                    "group_selector": "metadata.family_id",
+                    "sample_size_per_group": 1,
+                    "undersized_group_policy": "keep_all_warn",
+                },
+                out_dir=tmpdir / "sampled_bundle",
+                benchmark_name="sampled_suite",
+            )
+
+            self.assertEqual(summary.case_count, 2)
+            self.assertEqual(summary.source_case_count, 3)
+            self.assertEqual(summary.excluded_case_count, 1)
+            self.assertTrue(Path(summary.selection_manifest_path).exists())
+            self.assertTrue(Path(summary.excluded_cases_path).exists())
+            sampled_cases = [
+                json.loads(line)
+                for line in Path(summary.cases_path).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(sampled_cases), 2)

@@ -218,6 +218,78 @@ whitzard evaluate run \
 建议注意：
 
 - 所有 target models 最好都是 `t2t`
+
+## 6. 如何快速做按 family 均衡采样
+
+如果 build 后因为 reject 导致各个 family 的样本数不均匀，推荐直接复用这份默认配置：
+
+- [case_selection_balanced_by_family.yaml](/Users/morinop/coding/whitzardgen/examples/experiments/case_selection_balanced_by_family.yaml)
+
+内容是：
+
+```yaml
+case_selection:
+  seed: 42
+  group_selector: metadata.family_id
+  sample_size_per_group: 50
+  undersized_group_policy: keep_all_warn
+```
+
+这表示：
+
+- 按 `metadata.family_id` 分组
+- 每组随机采样最多 `50` 个 case
+- 如果某组不足 `50`，就全部保留并在 manifest 里告警
+
+### 6.1 只在 evaluate 时临时生效
+
+如果你不想改原 benchmark，直接这样跑：
+
+```bash
+whitzard evaluate run \
+  --recipe examples/experiments/ethics_eval_ab_with_reason.yaml \
+  --benchmark /path/to/your/benchmark_bundle \
+  --targets Qwen2.5-32B-Instruct \
+  --case-selection-config examples/experiments/case_selection_balanced_by_family.yaml
+```
+
+这会：
+
+- 原样保留源 benchmark
+- 只在这次 experiment 中选取平衡后的 subset
+- 在 experiment 目录里额外写出：
+  - `selection_manifest.json`
+  - `excluded_cases.jsonl`
+
+### 6.2 先导出一个平衡后的 benchmark 子集
+
+如果你想固定一份可复用的子 benchmark，再给多个模型反复跑：
+
+```bash
+whitzard benchmark sample \
+  /path/to/your/benchmark_bundle \
+  --case-selection-config examples/experiments/case_selection_balanced_by_family.yaml \
+  --out /path/to/your/sampled_benchmark_bundle
+```
+
+然后再直接 evaluate：
+
+```bash
+whitzard evaluate run \
+  --recipe examples/experiments/ethics_eval_ab_with_reason.yaml \
+  --benchmark /path/to/your/sampled_benchmark_bundle \
+  --targets Qwen2.5-32B-Instruct
+```
+
+### 6.3 什么时候应该改这个配置
+
+最常改的只有两个字段：
+
+- `sample_size_per_group`
+  - 例如从 `50` 改成 `20`
+- `group_selector`
+  - ethics 推荐保持 `metadata.family_id`
+  - 如果别的 benchmark 没有 family 字段，再考虑改成 `case_id_prefix` 或 `grouping.*`
 - 对每个 target model 先跑 `whitzard doctor --model <model_name>`
 - 如果 judge model 和 target model 不是同一个，也要确认 judge model 环境可用
 

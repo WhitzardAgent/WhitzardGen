@@ -27,8 +27,10 @@ from whitzard.benchmarking.models import (
     BenchmarkBuildSummary,
     BenchmarkBuilderSpec,
     BenchmarkCase,
+    CaseSet,
     CaseSourceRef,
     EvalTask,
+    CaseSelectionSpec,
     PreviewSummary,
     RequestPreviewRecord,
 )
@@ -39,6 +41,11 @@ from whitzard.benchmarking.runner import (
     build_group_analysis_records,
     build_summary_report,
     render_experiment_report,
+)
+from whitzard.benchmarking.selection import (
+    apply_case_selection,
+    clone_case_set_with_selection,
+    normalize_case_selection_spec,
 )
 from whitzard.settings import get_benchmarks_root, get_experiments_root
 from whitzard.utils.progress import NullRunProgress, RunProgress
@@ -151,6 +158,7 @@ def evaluate_benchmark(
     *,
     benchmark_path: str | Path,
     target_models: list[str],
+    case_selection: dict[str, Any] | CaseSelectionSpec | None = None,
     normalizer_ids: list[str] | None = None,
     evaluator_ids: list[str] | None = None,
     analysis_plugin_ids: list[str] | None = None,
@@ -212,6 +220,11 @@ def evaluate_benchmark(
         ),
         case_set_path=str(benchmark_dir),
         target_models=list(target_models),
+        case_selection=(
+            case_selection
+            if isinstance(case_selection, CaseSelectionSpec)
+            else normalize_case_selection_spec(case_selection)
+        ),
         execution_policy=resolved_execution_policy,
         normalizer_ids=list(normalizer_ids or []),
         scorer_ids=list(evaluator_ids or []),
@@ -256,6 +269,122 @@ def evaluate_benchmark(
         experiment_dir=experiment_dir,
         execution_mode=execution_mode,
         progress=progress,
+    )
+
+
+def sample_benchmark_bundle(
+    *,
+    benchmark_path: str | Path,
+    case_selection: dict[str, Any] | CaseSelectionSpec,
+    out_dir: str | Path | None = None,
+    benchmark_name: str | None = None,
+) -> BenchmarkBuildSummary:
+    benchmark_bundle = inspect_benchmark_bundle(benchmark_path)
+    benchmark_dir = Path(benchmark_path)
+    if benchmark_dir.is_file():
+        benchmark_dir = benchmark_dir.parent
+    manifest = dict(benchmark_bundle.get("manifest") or {})
+    benchmark_id = str(manifest.get("benchmark_id") or benchmark_dir.name)
+    cases = load_benchmark_cases(benchmark_dir / "cases.jsonl")
+    if not cases:
+        raise BenchmarkingError(f"No benchmark cases were found at {benchmark_dir / 'cases.jsonl'}")
+    spec = case_selection if isinstance(case_selection, CaseSelectionSpec) else normalize_case_selection_spec(case_selection)
+    if spec is None:
+        raise BenchmarkingError("benchmark sample requires a non-empty case selection config.")
+    case_set = CaseSet(
+        benchmark_id=benchmark_id,
+        cases=cases,
+        source=CaseSourceRef(
+            source_type="benchmark_bundle",
+            source_path=str(benchmark_dir),
+            builder_name=str(manifest.get("builder_name") or manifest.get("source_builder") or ""),
+            metadata={"build_mode": manifest.get("build_mode")},
+        ),
+        manifest=manifest,
+        stats=build_benchmark_stats(cases),
+        case_set_path=str(benchmark_dir / "cases.jsonl"),
+    )
+    selection_result = apply_case_selection(case_set=case_set, spec=spec)
+    selected_case_set = clone_case_set_with_selection(case_set=case_set, selection_result=selection_result)
+    sampled_benchmark_id = slugify(benchmark_name or benchmark_id)
+    materialized_cases = [
+        BenchmarkCase(
+            benchmark_id=sampled_benchmark_id,
+            case_id=case.case_id,
+            input_modality=case.input_modality,
+            input_payload=dict(case.input_payload),
+            metadata=dict(case.metadata),
+            tags=list(case.tags),
+            split=case.split,
+            expected_output_contract=case.expected_output_contract,
+            expected_structure=case.expected_structure,
+            case_version=case.case_version,
+            source_builder=case.source_builder,
+            grouping=dict(case.grouping),
+            execution_hints=dict(case.execution_hints),
+            evaluation_hints=dict(case.evaluation_hints),
+            language=case.language,
+            parameters=dict(case.parameters),
+            prompt=case.prompt,
+            instruction=case.instruction,
+            context=case.context,
+            input_type=case.input_type,
+        )
+        for case in selected_case_set.cases
+    ]
+    bundle_id = f"{sampled_benchmark_id}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
+    target_dir = Path(out_dir) if out_dir is not None else get_benchmarks_root() / bundle_id
+    sampled_manifest = {
+        **manifest,
+        "benchmark_id": sampled_benchmark_id,
+        "bundle_id": target_dir.name,
+        "source_path": str(benchmark_dir),
+        "created_at": datetime.now(UTC).isoformat(),
+        "build_mode": "sampled",
+        "case_count": len(selected_case_set.cases),
+        "selection_applied": True,
+        "selection_spec": spec.to_dict(),
+        "source_case_count": selection_result.counts_before,
+        "selected_case_count": selection_result.counts_after,
+        "excluded_case_count": len(selection_result.excluded_cases),
+    }
+    paths = write_benchmark_bundle(
+        benchmark_dir=target_dir,
+        cases=materialized_cases,
+        manifest=sampled_manifest,
+        stats=build_benchmark_stats(materialized_cases),
+        extra_jsonl_files={"excluded_cases.jsonl": [case.to_dict() for case in selection_result.excluded_cases]},
+    )
+    selection_manifest_path = Path(target_dir) / "selection_manifest.json"
+    selection_manifest_payload = {
+        **selection_result.selection_manifest,
+        "source_benchmark_path": str(benchmark_dir),
+        "source_benchmark_id": benchmark_id,
+        "selected_case_count": len(selected_case_set.cases),
+        "excluded_case_count": len(selection_result.excluded_cases),
+    }
+    selection_manifest_path.write_text(
+        json.dumps(selection_manifest_payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    manifest_path = Path(paths["manifest_path"])
+    sampled_manifest["selection_manifest_path"] = str(selection_manifest_path)
+    sampled_manifest["excluded_cases_path"] = str(target_dir / "excluded_cases.jsonl")
+    manifest_path.write_text(json.dumps(sampled_manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    return BenchmarkBuildSummary(
+        benchmark_id=str(sampled_manifest["benchmark_id"]),
+        benchmark_dir=str(target_dir),
+        builder_name=str(sampled_manifest.get("builder_name") or manifest.get("builder_name") or "benchmark_sample"),
+        source_path=str(benchmark_dir),
+        case_set_path=paths["case_set_path"],
+        manifest_path=paths["manifest_path"],
+        stats_path=paths["stats_path"],
+        case_count=len(materialized_cases),
+        build_mode="sampled",
+        selection_manifest_path=str(selection_manifest_path),
+        excluded_cases_path=str(target_dir / "excluded_cases.jsonl"),
+        source_case_count=selection_result.counts_before,
+        excluded_case_count=len(selection_result.excluded_cases),
     )
 
 

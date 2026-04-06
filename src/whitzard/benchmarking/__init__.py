@@ -24,6 +24,8 @@ from whitzard.benchmarking.models import (
     BenchmarkBuildSummary,
     BenchmarkBuilderSpec,
     BenchmarkCase,
+    CaseSelectionResult,
+    CaseSelectionSpec,
     CaseSet,
     CaseSourceRef,
     CompiledTaskPlan,
@@ -62,6 +64,8 @@ __all__ = [
     "BenchmarkCase",
     "BenchmarkPackageError",
     "BenchmarkingError",
+    "CaseSelectionResult",
+    "CaseSelectionSpec",
     "CaseSet",
     "CaseSourceRef",
     "CompiledTaskPlan",
@@ -107,6 +111,7 @@ __all__ = [
     "normalize_builder_output",
     "normalize_case_payload",
     "render_experiment_report",
+    "sample_benchmark_bundle",
     "slugify",
 ]
 
@@ -134,6 +139,7 @@ def __getattr__(name: str):
         "normalize_builder_output",
         "normalize_case_payload",
         "render_experiment_report",
+        "sample_benchmark_bundle",
         "slugify",
     }:
         if name == "BenchmarkPackageError":

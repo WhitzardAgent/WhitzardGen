@@ -181,6 +181,48 @@ class BenchmarkCliTests(unittest.TestCase):
         self.assertIn("Rejected Realizations: /tmp/benchmarks/ethics_suite/rejected_realizations.jsonl", output)
         self.assertIn("Next Evaluate: whitzard evaluate run --benchmark /tmp/benchmarks/ethics_suite --targets <MODEL_NAME>", output)
 
+    def test_handle_benchmark_sample_prints_selection_summary(self) -> None:
+        from whitzard.cli.main import handle_benchmark_sample
+
+        summary = type(
+            "Summary",
+            (),
+            {
+                "benchmark_id": "sampled_suite",
+                "source_path": "/tmp/benchmarks/source_suite",
+                "source_case_count": 40,
+                "case_count": 24,
+                "excluded_case_count": 16,
+                "benchmark_dir": "/tmp/benchmarks/sampled_suite",
+                "cases_path": "/tmp/benchmarks/sampled_suite/cases.jsonl",
+                "manifest_path": "/tmp/benchmarks/sampled_suite/benchmark_manifest.json",
+                "selection_manifest_path": "/tmp/benchmarks/sampled_suite/selection_manifest.json",
+                "excluded_cases_path": "/tmp/benchmarks/sampled_suite/excluded_cases.jsonl",
+                "to_dict": lambda self: {"benchmark_id": "sampled_suite"},
+            },
+        )()
+        args = type(
+            "Args",
+            (),
+            {
+                "benchmark": "/tmp/benchmarks/source_suite",
+                "case_selection_config": "/tmp/case_selection.yaml",
+                "out": None,
+                "benchmark_name": "sampled_suite",
+                "output": "text",
+            },
+        )()
+
+        with patch("whitzard.cli.main._load_case_selection_payload", return_value={"group_selector": "metadata.family_id"}):
+            with patch("whitzard.cli.main.sample_benchmark_bundle", return_value=summary):
+                with redirect_stdout(StringIO()) as stream:
+                    self.assertEqual(handle_benchmark_sample(args), 0)
+        output = stream.getvalue()
+        self.assertIn("Source Cases: 40", output)
+        self.assertIn("Selected Cases: 24", output)
+        self.assertIn("Excluded Cases: 16", output)
+        self.assertIn("Selection Manifest: /tmp/benchmarks/sampled_suite/selection_manifest.json", output)
+
     def test_handle_evaluate_run_uses_requested_targets_and_evaluators(self) -> None:
         from whitzard.cli.main import handle_evaluate_run
 
@@ -231,6 +273,7 @@ class BenchmarkCliTests(unittest.TestCase):
                 "evaluator_config": None,
                 "analysis_config": None,
                 "launcher_config": None,
+                "case_selection_config": "/tmp/case_selection.yaml",
                 "auto_launch": False,
                 "out": None,
                 "mock": True,
@@ -245,15 +288,57 @@ class BenchmarkCliTests(unittest.TestCase):
             self.assertEqual(kwargs["normalizer_ids"], ["ethics_structural_normalizer"])
             self.assertEqual(kwargs["evaluator_ids"], ["ethics_structural_judge"])
             self.assertEqual(kwargs["analysis_plugin_ids"], ["ethics_family_consistency"])
+            self.assertEqual(kwargs["case_selection"], {"group_selector": "metadata.family_id", "sample_size_per_group": 10})
             self.assertEqual(kwargs["execution_mode"], "mock")
             return summary
 
-        with patch("whitzard.cli.main.evaluate_benchmark", side_effect=fake_evaluate_benchmark):
-            with redirect_stdout(StringIO()) as stream:
-                self.assertEqual(handle_evaluate_run(args), 0)
-            payload = json.loads(stream.getvalue())
+        with patch("whitzard.cli.main._load_case_selection_payload", return_value={"group_selector": "metadata.family_id", "sample_size_per_group": 10}):
+            with patch("whitzard.cli.main.evaluate_benchmark", side_effect=fake_evaluate_benchmark):
+                with redirect_stdout(StringIO()) as stream:
+                    self.assertEqual(handle_evaluate_run(args), 0)
+                payload = json.loads(stream.getvalue())
 
         self.assertEqual(payload["experiment_id"], "experiment_ethics_suite")
+
+    def test_handle_benchmark_inspect_prints_selection_details(self) -> None:
+        from whitzard.cli.main import handle_benchmark_inspect
+
+        args = type(
+            "Args",
+            (),
+            {"path": "/tmp/benchmarks/sampled_suite", "output": "text"},
+        )()
+        payload = {
+            "case_count": 24,
+            "benchmark_dir": "/tmp/benchmarks/sampled_suite",
+            "manifest": {
+                "benchmark_id": "sampled_suite",
+                "builder_name": "ethics_sandbox",
+                "build_mode": "matrix",
+                "source_path": "/tmp/benchmarks/source_suite",
+            },
+            "counts_by_builder": {"ethics_sandbox": 24},
+            "counts_by_family": {"family_a": 12, "family_b": 12},
+            "counts_by_split": {"default": 24},
+            "selection_manifest_path": "/tmp/benchmarks/sampled_suite/selection_manifest.json",
+            "excluded_cases_path": "/tmp/benchmarks/sampled_suite/excluded_cases.jsonl",
+            "selection_manifest": {
+                "selected_case_count": 24,
+                "counts_before": 40,
+                "excluded_case_ids": ["case_001"],
+                "counts_by_group_before": {"family_a": 20, "family_b": 20},
+                "counts_by_group_after": {"family_a": 12, "family_b": 12},
+                "undersized_groups": [{"group_key": "family_b", "requested_count": 12, "actual_count": 10}],
+            },
+        }
+
+        with patch("whitzard.cli.main.inspect_benchmark_bundle", return_value=payload):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_benchmark_inspect(args), 0)
+        output = stream.getvalue()
+        self.assertIn("Selection Manifest: /tmp/benchmarks/sampled_suite/selection_manifest.json", output)
+        self.assertIn("Counts By Group Before: {'family_a': 20, 'family_b': 20}", output)
+        self.assertIn("Counts By Group After: {'family_a': 12, 'family_b': 12}", output)
 
     def test_handle_evaluate_preview_prints_preview_summary(self) -> None:
         from whitzard.cli.main import handle_evaluate_preview

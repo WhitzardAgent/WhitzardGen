@@ -18,8 +18,10 @@ from whitzard.benchmarking import (
     inspect_experiment,
     list_benchmark_builders,
     list_experiments,
+    sample_benchmark_bundle,
 )
 from whitzard.benchmarking.recipes import ExperimentRecipeError, load_experiment_recipe
+from whitzard.benchmarking.selection import normalize_case_selection_spec
 from whitzard.evaluators import EvaluatorConfigError, EvaluatorError
 from whitzard.env import EnvManager, EnvManagerError
 from whitzard.launching import LaunchError
@@ -242,6 +244,17 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_inspect_parser.add_argument("--output", choices=["text", "json"], default="text")
     benchmark_inspect_parser.set_defaults(handler=handle_benchmark_inspect)
 
+    benchmark_sample_parser = benchmark_subparsers.add_parser(
+        "sample",
+        help="Materialize a filtered or stratified-sampled benchmark subset.",
+    )
+    benchmark_sample_parser.add_argument("benchmark")
+    benchmark_sample_parser.add_argument("--case-selection-config", required=True)
+    benchmark_sample_parser.add_argument("--out")
+    benchmark_sample_parser.add_argument("--benchmark-name")
+    benchmark_sample_parser.add_argument("--output", choices=["text", "json"], default="text")
+    benchmark_sample_parser.set_defaults(handler=handle_benchmark_sample)
+
     evaluate_parser = subparsers.add_parser(
         "evaluate",
         help="Run benchmark evaluation experiments.",
@@ -265,6 +278,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_run_parser.add_argument("--evaluator-config")
     evaluate_run_parser.add_argument("--analysis-config")
     evaluate_run_parser.add_argument("--launcher-config")
+    evaluate_run_parser.add_argument("--case-selection-config")
     evaluate_run_parser.add_argument("--auto-launch", action="store_true")
     evaluate_run_parser.add_argument("--out")
     evaluate_run_parser.add_argument("--mock", action="store_true")
@@ -293,6 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_preview_parser.add_argument("--evaluator-config")
     evaluate_preview_parser.add_argument("--analysis-config")
     evaluate_preview_parser.add_argument("--launcher-config")
+    evaluate_preview_parser.add_argument("--case-selection-config")
     evaluate_preview_parser.add_argument("--auto-launch", action="store_true")
     evaluate_preview_parser.add_argument("--out")
     evaluate_preview_parser.add_argument("--mock", action="store_true")
@@ -735,6 +750,21 @@ def handle_benchmark_inspect(args: argparse.Namespace) -> int:
     print(f"Counts By Builder: {payload.get('counts_by_builder', {})}")
     print(f"Counts By Family: {payload.get('counts_by_family', {})}")
     print(f"Counts By Split: {payload.get('counts_by_split', {})}")
+    selection_manifest = payload.get("selection_manifest") or {}
+    if payload.get("selection_manifest_path"):
+        print(f"Selection Manifest: {payload['selection_manifest_path']}")
+    if payload.get("excluded_cases_path"):
+        print(f"Excluded Cases: {payload['excluded_cases_path']}")
+    if selection_manifest:
+        print(f"Selected Cases: {selection_manifest.get('selected_case_count', payload.get('case_count', 0))}")
+        print(f"Source Cases: {selection_manifest.get('counts_before', '-')}")
+        print(f"Excluded Case Count: {len(selection_manifest.get('excluded_case_ids', []))}")
+        if selection_manifest.get("counts_by_group_before"):
+            print(f"Counts By Group Before: {selection_manifest.get('counts_by_group_before', {})}")
+        if selection_manifest.get("counts_by_group_after"):
+            print(f"Counts By Group After: {selection_manifest.get('counts_by_group_after', {})}")
+        if selection_manifest.get("undersized_groups"):
+            print(f"Undersized Groups: {selection_manifest.get('undersized_groups', [])}")
     if payload.get("raw_realizations_path"):
         print(f"Raw Realizations: {payload['raw_realizations_path']}")
     if payload.get("rejected_realizations_path"):
@@ -745,6 +775,32 @@ def handle_benchmark_inspect(args: argparse.Namespace) -> int:
         print(f"Preview Summary: {payload['request_preview_summary_path']}")
     if payload.get("request_previews_markdown_path"):
         print(f"Preview Markdown: {payload['request_previews_markdown_path']}")
+    return 0
+
+
+def handle_benchmark_sample(args: argparse.Namespace) -> int:
+    case_selection = _load_case_selection_payload(args.case_selection_config)
+    summary = sample_benchmark_bundle(
+        benchmark_path=args.benchmark,
+        case_selection=case_selection,
+        out_dir=args.out,
+        benchmark_name=args.benchmark_name,
+    )
+    if args.output == "json":
+        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
+        return 0
+    print(f"Benchmark: {summary.benchmark_id}")
+    print(f"Source: {summary.source_path}")
+    print(f"Source Cases: {summary.source_case_count if summary.source_case_count is not None else '-'}")
+    print(f"Selected Cases: {summary.case_count}")
+    print(f"Excluded Cases: {summary.excluded_case_count}")
+    print(f"Bundle Dir: {summary.benchmark_dir}")
+    print(f"Cases Path: {summary.cases_path}")
+    print(f"Manifest: {summary.manifest_path}")
+    if summary.selection_manifest_path:
+        print(f"Selection Manifest: {summary.selection_manifest_path}")
+    if summary.excluded_cases_path:
+        print(f"Excluded Cases Path: {summary.excluded_cases_path}")
     return 0
 
 
@@ -781,10 +837,17 @@ def handle_evaluate_run(args: argparse.Namespace) -> int:
     if not targets:
         raise BenchmarkingError("evaluate run requires --targets or a recipe targets list.")
     execution_mode = "mock" if args.mock else (args.execution_mode or recipe.get("execution_mode") or "real")
+    recipe_case_selection = recipe.get("case_selection")
+    case_selection = (
+        _load_case_selection_payload(_resolve_recipe_relative_path(args.recipe, args.case_selection_config))
+        if getattr(args, "case_selection_config", None)
+        else normalize_case_selection_spec(dict(recipe_case_selection or {}))
+    )
     progress = build_run_progress(output_mode=args.output)
     summary = evaluate_benchmark(
         benchmark_path=benchmark_path,
         target_models=targets,
+        case_selection=case_selection,
         normalizer_ids=list(args.normalizers or recipe.get("normalizers") or []),
         evaluator_ids=list(args.evaluators or []),
         analysis_plugin_ids=list(args.analysis_plugins or recipe.get("analysis_plugins") or []),
@@ -820,7 +883,11 @@ def handle_evaluate_run(args: argparse.Namespace) -> int:
     print(f"Evaluators: {', '.join(summary.evaluator_ids) or '-'}")
     print(f"Analysis Plugins: {', '.join(summary.analysis_plugin_ids) or '-'}")
     print(f"Execution Mode: {summary.execution_mode}")
+    if summary.source_case_count is not None:
+        print(f"Source Cases: {summary.source_case_count}")
     print(f"Cases: {summary.case_count}")
+    if summary.excluded_case_count:
+        print(f"Excluded Cases: {summary.excluded_case_count}")
     print(f"Target Runs: {summary.target_run_count}")
     print(f"Normalized Results: {summary.normalized_result_count}")
     print(f"Evaluator Results: {summary.evaluator_result_count}")
@@ -828,6 +895,10 @@ def handle_evaluate_run(args: argparse.Namespace) -> int:
     print(f"Analysis Plugin Results: {summary.analysis_plugin_result_count}")
     print(f"Experiment Dir: {summary.experiment_dir}")
     print(f"Report: {summary.report_path}")
+    if summary.selection_manifest_path:
+        print(f"Selection Manifest: {summary.selection_manifest_path}")
+    if summary.excluded_cases_path:
+        print(f"Excluded Cases Path: {summary.excluded_cases_path}")
     _print_summary_preview_artifacts(summary)
     return 0
 
@@ -855,6 +926,10 @@ def handle_evaluate_inspect(args: argparse.Namespace) -> int:
     print(f"Scorers: {', '.join(scorer_ids)}")
     print(f"Analysis Plugins: {', '.join(manifest.get('analysis_plugin_ids', []))}")
     print(f"Case Count: {manifest.get('case_count', '-')}")
+    if manifest.get("source_case_count") not in (None, ""):
+        print(f"Source Case Count: {manifest.get('source_case_count')}")
+    if manifest.get("excluded_case_count", 0):
+        print(f"Excluded Case Count: {manifest.get('excluded_case_count')}")
     print(f"Target Result Count: {summary.get('target_result_count', 0)}")
     print(f"Normalized Result Count: {summary.get('normalized_result_count', 0)}")
     print(f"Score Record Count: {score_record_count}")
@@ -862,6 +937,10 @@ def handle_evaluate_inspect(args: argparse.Namespace) -> int:
     print(f"Analysis Plugin Result Count: {summary.get('analysis_plugin_result_count', 0)}")
     if payload.get("report_path"):
         print(f"Report: {payload['report_path']}")
+    if payload.get("selection_manifest_path"):
+        print(f"Selection Manifest: {payload['selection_manifest_path']}")
+    if payload.get("excluded_cases_path"):
+        print(f"Excluded Cases: {payload['excluded_cases_path']}")
     if payload.get("request_previews_path"):
         print(f"Request Previews: {payload['request_previews_path']}")
     if payload.get("request_preview_summary_path"):
@@ -1245,6 +1324,17 @@ def _resolve_recipe_relative_path(recipe_path: str | None, value: object) -> str
     if path.is_absolute() or recipe_path in (None, ""):
         return str(path)
     return str((Path(recipe_path).resolve().parent / path).resolve())
+
+
+def _load_case_selection_payload(path: str | None) -> dict[str, object]:
+    if path in (None, ""):
+        return {}
+    from whitzard.benchmarking.service import load_yaml_file
+
+    payload = load_yaml_file(Path(path))
+    if "case_selection" in payload and isinstance(payload.get("case_selection"), dict):
+        return dict(payload.get("case_selection") or {})
+    return dict(payload)
 
 
 def _redacted_model_payload(model) -> dict[str, object]:

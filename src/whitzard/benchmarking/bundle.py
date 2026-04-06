@@ -66,6 +66,12 @@ def inspect_benchmark_bundle(path: str | Path) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     cases = load_benchmark_cases(cases_path) if cases_path.exists() else []
     stats = build_benchmark_stats(cases)
+    selection_manifest_path = bundle_dir / "selection_manifest.json"
+    selection_manifest = (
+        json.loads(selection_manifest_path.read_text(encoding="utf-8"))
+        if selection_manifest_path.exists()
+        else {}
+    )
     return {
         "benchmark_dir": str(bundle_dir),
         "manifest": manifest,
@@ -76,6 +82,9 @@ def inspect_benchmark_bundle(path: str | Path) -> dict[str, Any]:
         "counts_by_family": stats["counts_by_family"],
         "sample_case_ids": [case.case_id for case in cases[:5]],
         "case_set_path": str(cases_path),
+        "selection_manifest": selection_manifest,
+        "selection_manifest_path": str(selection_manifest_path) if selection_manifest_path.exists() else None,
+        "excluded_cases_path": str(bundle_dir / "excluded_cases.jsonl") if (bundle_dir / "excluded_cases.jsonl").exists() else None,
         "raw_realizations_path": str(bundle_dir / "raw_realizations.jsonl") if (bundle_dir / "raw_realizations.jsonl").exists() else None,
         "rejected_realizations_path": str(bundle_dir / "rejected_realizations.jsonl") if (bundle_dir / "rejected_realizations.jsonl").exists() else None,
         "request_previews_path": str(bundle_dir / "request_previews.jsonl") if (bundle_dir / "request_previews.jsonl").exists() else None,
@@ -167,11 +176,20 @@ def inspect_experiment_bundle(path: str | Path) -> dict[str, Any]:
     report_path = bundle_dir / "report.md"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
+    selection_manifest_path = bundle_dir / "selection_manifest.json"
+    selection_manifest = (
+        json.loads(selection_manifest_path.read_text(encoding="utf-8"))
+        if selection_manifest_path.exists()
+        else {}
+    )
     return {
         "experiment_dir": str(bundle_dir),
         "manifest": manifest,
         "summary": summary,
         "report_path": str(report_path) if report_path.exists() else None,
+        "selection_manifest": selection_manifest,
+        "selection_manifest_path": str(selection_manifest_path) if selection_manifest_path.exists() else None,
+        "excluded_cases_path": str(bundle_dir / "excluded_cases.jsonl") if (bundle_dir / "excluded_cases.jsonl").exists() else None,
         "request_previews_path": str(bundle_dir / "request_previews.jsonl") if (bundle_dir / "request_previews.jsonl").exists() else None,
         "request_preview_summary_path": str(bundle_dir / "request_preview_summary.json") if (bundle_dir / "request_preview_summary.json").exists() else None,
         "request_previews_markdown_path": str(bundle_dir / "request_previews.md") if (bundle_dir / "request_previews.md").exists() else None,
