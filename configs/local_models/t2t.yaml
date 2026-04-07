@@ -20,6 +20,20 @@ Qwen3-32B:
   #   max_new_tokens: 2048
   #   enable_thinking: false
 
+# Example local overrides for newly supported T2T models.
+#
+# Gemma-4-31B-it:
+#   weights_path: /path/to/google/gemma-4-31B-it
+#   hf_cache_dir: /path/to/google/gemma-4-31B-it
+#
+# gpt-oss-120b:
+#   weights_path: /path/to/openai/gpt-oss-120b
+#   hf_cache_dir: /path/to/openai/gpt-oss-120b
+#
+# GLM-4.7-Flash:
+#   weights_path: /path/to/zai-org/GLM-4.7-Flash
+#   hf_cache_dir: /path/to/zai-org/GLM-4.7-Flash
+
 # Example remote API overrides.
 #
 # OpenAI-Compatible-Chat:

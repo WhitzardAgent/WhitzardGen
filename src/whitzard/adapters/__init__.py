@@ -20,6 +20,9 @@ from whitzard.adapters.stubs import (
     WanTI2VAdapter,
 )
 from whitzard.adapters.texts import (
+    Gemma4TextAdapter,
+    GLM47FlashTextAdapter,
+    GptOssTextAdapter,
     LocalTransformersTextAdapter,
     OpenAICompatibleTextAdapter,
     Qwen25InstructTextAdapter,
@@ -41,6 +44,9 @@ ADAPTER_REGISTRY = {
     "MOVAAdapter": MOVAAdapter,
     "HunyuanVideo15Adapter": HunyuanVideo15Adapter,
     "EchoTestAdapter": EchoTestAdapter,
+    "Gemma4TextAdapter": Gemma4TextAdapter,
+    "GLM47FlashTextAdapter": GLM47FlashTextAdapter,
+    "GptOssTextAdapter": GptOssTextAdapter,
     "LocalTransformersTextAdapter": LocalTransformersTextAdapter,
     "Qwen25InstructTextAdapter": Qwen25InstructTextAdapter,
     "Qwen3TextAdapter": Qwen3TextAdapter,

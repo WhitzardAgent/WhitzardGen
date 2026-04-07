@@ -63,6 +63,32 @@ class _FakeGenerated:
         return self._rows[index]
 
 
+class _FakeShape:
+    def __init__(self, dims: tuple[int, ...]) -> None:
+        self._dims = dims
+
+    def __getitem__(self, index: int) -> int:
+        return self._dims[index]
+
+
+class _FakeTensorWithShape(_FakeBatchTensor):
+    @property
+    def shape(self) -> _FakeShape:
+        if not self._rows:
+            return _FakeShape((0, 0))
+        return _FakeShape((len(self._rows), len(self._rows[0])))
+
+
+class _FakeProcessorBatch(dict):
+    def __init__(self, input_ids: list[list[int]]) -> None:
+        super().__init__({"input_ids": _FakeTensorWithShape(input_ids)})
+        self.input_ids = self["input_ids"]
+
+    def to(self, device: str):
+        del device
+        return self
+
+
 class _FakeTokenizer:
     pad_token_id = 0
     eos_token = "</s>"
@@ -319,6 +345,149 @@ class TextAdapterTests(unittest.TestCase):
             adapter._get_or_load_model()  # type: ignore[attr-defined]
 
         self.assertEqual(tokenizer.padding_side, "left")
+
+    def test_gemma4_adapter_uses_processor_chat_template_and_parse_response(self) -> None:
+        from whitzard.adapters.texts.gemma4 import Gemma4TextAdapter
+
+        registry = load_registry()
+        adapter = Gemma4TextAdapter(model_config=registry.get_model("Gemma-4-31B-it"))
+
+        class _FakeProcessor:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def apply_chat_template(self, messages, **kwargs) -> str:
+                self.calls.append({"messages": messages, "kwargs": kwargs})
+                return "processor::prompt"
+
+            def __call__(self, *, text, return_tensors):
+                del text, return_tensors
+                return _FakeProcessorBatch([[10, 11]])
+
+            def decode(self, ids, skip_special_tokens: bool = False) -> str:
+                del skip_special_tokens
+                self.calls.append({"decoded_ids": list(ids)})
+                return "<start_of_turn>model Parsed response</end_of_turn>"
+
+            def parse_response(self, response: str):
+                self.calls.append({"parsed_response": response})
+                return {"content": "Parsed response"}
+
+        processor = _FakeProcessor()
+        model = _FakeModel()
+        adapter._get_or_load_model = lambda: (processor, model, _FakeTorch())  # type: ignore[attr-defined]
+
+        plan = adapter.prepare(
+            prompts=["Write a short joke about saving RAM."],
+            prompt_ids=["p001"],
+            params={"_runtime_config": {}},
+            workdir=tempfile.mkdtemp(),
+        )
+        result = adapter.execute(
+            plan=plan,
+            prompts=["Write a short joke about saving RAM."],
+            params={"system_prompt": "You are a helpful assistant.", "enable_thinking": False},
+            workdir=tempfile.mkdtemp(),
+        )
+
+        self.assertEqual(processor.calls[0]["messages"][0]["role"], "system")
+        self.assertEqual(processor.calls[0]["messages"][1]["role"], "user")
+        self.assertEqual(processor.calls[0]["kwargs"]["enable_thinking"], False)
+        self.assertEqual(result.outputs["p001"], "Parsed response")
+
+    def test_gpt_oss_adapter_uses_text_generation_pipeline_messages(self) -> None:
+        from whitzard.adapters.texts.gpt_oss import GptOssTextAdapter
+
+        registry = load_registry()
+        adapter = GptOssTextAdapter(model_config=registry.get_model("gpt-oss-120b"))
+        captured_calls = []
+
+        class _FakePipeline:
+            model = type("_FakePipelineModel", (), {"device": "cuda:0"})()
+
+            def __call__(self, messages, **kwargs):
+                captured_calls.append({"messages": messages, "kwargs": kwargs})
+                return [
+                    {
+                        "generated_text": [
+                            {"role": "user", "content": messages[-1]["content"]},
+                            {"role": "assistant", "content": "Quantum mechanics studies how matter behaves at tiny scales."},
+                        ]
+                    }
+                ]
+
+        adapter._get_or_load_pipeline = lambda: (_FakePipeline(), _FakeTorch())  # type: ignore[attr-defined]
+
+        plan = adapter.prepare(
+            prompts=["Explain quantum mechanics clearly and concisely."],
+            prompt_ids=["p001"],
+            params={"_runtime_config": {}},
+            workdir=tempfile.mkdtemp(),
+        )
+        result = adapter.execute(
+            plan=plan,
+            prompts=["Explain quantum mechanics clearly and concisely."],
+            params={},
+            workdir=tempfile.mkdtemp(),
+        )
+
+        self.assertEqual(captured_calls[0]["messages"][0]["role"], "user")
+        self.assertEqual(captured_calls[0]["kwargs"]["max_new_tokens"], 256)
+        self.assertEqual(
+            result.outputs["p001"],
+            "Quantum mechanics studies how matter behaves at tiny scales.",
+        )
+
+    def test_glm47_flash_adapter_uses_chat_template_and_input_length_trim(self) -> None:
+        from whitzard.adapters.texts.glm47_flash import GLM47FlashTextAdapter
+
+        registry = load_registry()
+        adapter = GLM47FlashTextAdapter(model_config=registry.get_model("GLM-4.7-Flash"))
+
+        class _FakeTokenizer:
+            pad_token_id = 0
+            eos_token = "</s>"
+
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+                self.padding_side = "right"
+
+            def apply_chat_template(self, messages, **kwargs):
+                self.calls.append({"messages": messages, "kwargs": kwargs})
+                return _FakeProcessorBatch([[10, 11, 12]])
+
+            def decode(self, ids) -> str:
+                return f"decoded::{','.join(str(item) for item in ids)}"
+
+        tokenizer = _FakeTokenizer()
+        model = type(
+            "_FakeGlmModel",
+            (),
+            {
+                "device": "cuda:0",
+                "eval": lambda self: self,
+                "generate": lambda self, **kwargs: _FakeGenerated([[10, 11, 12, 201, 202]]),
+            },
+        )()
+        adapter._get_or_load_model = lambda: (tokenizer, model, _FakeTorch())  # type: ignore[attr-defined]
+
+        plan = adapter.prepare(
+            prompts=["hello"],
+            prompt_ids=["p001"],
+            params={"_runtime_config": {}},
+            workdir=tempfile.mkdtemp(),
+        )
+        result = adapter.execute(
+            plan=plan,
+            prompts=["hello"],
+            params={"do_sample": False, "max_new_tokens": 128},
+            workdir=tempfile.mkdtemp(),
+        )
+
+        self.assertTrue(tokenizer.calls[0]["kwargs"]["tokenize"])
+        self.assertTrue(tokenizer.calls[0]["kwargs"]["return_dict"])
+        self.assertEqual(tokenizer.calls[0]["messages"][0]["content"], "hello")
+        self.assertEqual(result.outputs["p001"], "decoded::201,202")
 
     def test_openai_compatible_client_builds_chat_completions_request(self) -> None:
         captured_request = {}
