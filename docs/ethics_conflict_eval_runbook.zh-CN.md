@@ -494,6 +494,29 @@ whitzard evaluate inspect <experiment_id>
 whitzard experiments report <experiment_id>
 ```
 
+如果你想把后续分析最常用的“测试用例 + 实际输入 + 模型输出 + metadata + normalized/scored 结果”直接导成表，推荐直接：
+
+```bash
+whitzard evaluate export <experiment_id_or_path> --format both
+```
+
+这会在 experiment 目录下额外写出一份导出 bundle，包含：
+
+- `dataset.jsonl`
+- `dataset.csv`
+- `export_manifest.json`
+- `README.md`
+
+其中每一行都会合并：
+
+- `cases.jsonl`
+- `execution_requests.jsonl`
+- `target_results.jsonl`
+- `normalized_results.jsonl`
+- `score_records.jsonl`
+
+以及可读文本类型 artifact 的原始模型输出内容。
+
 ## 7. 最常见的修改点
 
 ### 7.1 想换 target models

@@ -144,6 +144,31 @@ Lists recorded experiment bundles.
 
 Prints experiment manifest and summary information and points to the generated report.
 
+### 5.4 `whitzard evaluate export`
+
+Exports one completed experiment bundle into analysis-friendly tables.
+
+Recommended usage:
+
+```bash
+whitzard evaluate export <experiment_id_or_path> --format both
+```
+
+Outputs:
+
+- `dataset.jsonl`
+- `dataset.csv`
+- `export_manifest.json`
+- `README.md`
+
+Each exported row merges:
+
+- benchmark case data
+- execution request data
+- target model output text when the artifact is readable as UTF-8
+- matching normalized results
+- matching score records
+
 ## 6. Kernel-Oriented Commands
 
 These commands remain supported because they expose useful lower-level workflow components.

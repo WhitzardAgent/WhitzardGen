@@ -14,6 +14,7 @@ from whitzard.benchmarking import (
     BenchmarkingError,
     build_benchmark,
     evaluate_benchmark,
+    export_experiment,
     inspect_benchmark_bundle,
     inspect_experiment,
     list_benchmark_builders,
@@ -325,6 +326,16 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_inspect_parser.add_argument("experiment")
     evaluate_inspect_parser.add_argument("--output", choices=["text", "json"], default="text")
     evaluate_inspect_parser.set_defaults(handler=handle_evaluate_inspect)
+
+    evaluate_export_parser = evaluate_subparsers.add_parser(
+        "export",
+        help="Export one experiment bundle into analysis-friendly JSONL and/or CSV.",
+    )
+    evaluate_export_parser.add_argument("experiment")
+    evaluate_export_parser.add_argument("--out")
+    evaluate_export_parser.add_argument("--format", choices=["jsonl", "csv", "both"], default="both")
+    evaluate_export_parser.add_argument("--output", choices=["text", "json"], default="text")
+    evaluate_export_parser.set_defaults(handler=handle_evaluate_export)
 
     experiments_parser = subparsers.add_parser(
         "experiments",
@@ -947,6 +958,32 @@ def handle_evaluate_inspect(args: argparse.Namespace) -> int:
         print(f"Preview Summary: {payload['request_preview_summary_path']}")
     if payload.get("request_previews_markdown_path"):
         print(f"Preview Markdown: {payload['request_previews_markdown_path']}")
+    return 0
+
+
+def handle_evaluate_export(args: argparse.Namespace) -> int:
+    summary = export_experiment(
+        experiment=args.experiment,
+        output_dir=args.out,
+        export_format=args.format,
+    )
+    if args.output == "json":
+        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False))
+        return 0
+
+    print(f"Experiment: {summary.experiment_id}")
+    print(f"Experiment Dir: {summary.experiment_dir}")
+    print(f"Export Dir: {summary.export_dir}")
+    print(f"Format: {summary.export_format}")
+    print(f"Records: {summary.record_count}")
+    if summary.jsonl_path:
+        print(f"JSONL: {summary.jsonl_path}")
+    if summary.csv_path:
+        print(f"CSV: {summary.csv_path}")
+    if summary.manifest_path:
+        print(f"Manifest: {summary.manifest_path}")
+    if summary.readme_path:
+        print(f"README: {summary.readme_path}")
     return 0
 
 

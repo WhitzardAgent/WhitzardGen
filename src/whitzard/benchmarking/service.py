@@ -22,6 +22,7 @@ from whitzard.benchmarking.discovery import (
     discover_example_builder_specs,
     load_example_builder,
 )
+from whitzard.benchmarking.export import ExperimentExportError, export_experiment_bundle
 from whitzard.benchmarking.interfaces import BenchmarkBuildOutput, BenchmarkBuildRequest
 from whitzard.benchmarking.models import (
     BenchmarkBuildSummary,
@@ -31,6 +32,7 @@ from whitzard.benchmarking.models import (
     CaseSourceRef,
     EvalTask,
     CaseSelectionSpec,
+    ExperimentExportSummary,
     PreviewSummary,
     RequestPreviewRecord,
 )
@@ -408,6 +410,22 @@ def inspect_experiment(path_or_id: str | Path) -> dict[str, Any]:
     if path.exists():
         return inspect_experiment_bundle(path)
     return inspect_experiment_bundle(get_experiments_root() / str(path_or_id))
+
+
+def export_experiment(
+    *,
+    experiment: str | Path,
+    output_dir: str | Path | None = None,
+    export_format: str = "both",
+) -> ExperimentExportSummary:
+    try:
+        return export_experiment_bundle(
+            experiment=experiment,
+            output_dir=output_dir,
+            export_format=export_format,
+        )
+    except ExperimentExportError as exc:
+        raise BenchmarkingError(str(exc)) from exc
 
 
 def build_group_analyses(*args: Any, **kwargs: Any):

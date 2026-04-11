@@ -693,6 +693,22 @@ class SummaryReport:
 
 
 @dataclass(slots=True)
+class ExperimentExportSummary:
+    experiment_id: str
+    experiment_dir: str
+    export_dir: str
+    export_format: str
+    record_count: int
+    jsonl_path: str | None = None
+    csv_path: str | None = None
+    manifest_path: str | None = None
+    readme_path: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
 class BenchmarkBuilderSpec:
     builder: str
     description: str

@@ -531,3 +531,45 @@ class BenchmarkCliTests(unittest.TestCase):
         self.assertIn("Experiment: experiment_ethics_suite", output)
         self.assertIn("Benchmark: ethics_suite", output)
         self.assertIn("Scorers: ethics_structural_judge", output)
+
+    def test_handle_evaluate_export_prints_export_paths(self) -> None:
+        from whitzard.cli.main import handle_evaluate_export
+
+        args = type(
+            "Args",
+            (),
+            {
+                "experiment": "experiment_ethics_suite",
+                "out": None,
+                "format": "both",
+                "output": "text",
+            },
+        )()
+        summary = type(
+            "Summary",
+            (),
+            {
+                "experiment_id": "experiment_ethics_suite",
+                "experiment_dir": "/tmp/experiments/experiment_ethics_suite",
+                "export_dir": "/tmp/experiments/experiment_ethics_suite/exports/analysis_export_001",
+                "export_format": "both",
+                "record_count": 40,
+                "jsonl_path": "/tmp/experiments/experiment_ethics_suite/exports/analysis_export_001/dataset.jsonl",
+                "csv_path": "/tmp/experiments/experiment_ethics_suite/exports/analysis_export_001/dataset.csv",
+                "manifest_path": "/tmp/experiments/experiment_ethics_suite/exports/analysis_export_001/export_manifest.json",
+                "readme_path": "/tmp/experiments/experiment_ethics_suite/exports/analysis_export_001/README.md",
+                "to_dict": lambda self: {
+                    "experiment_id": "experiment_ethics_suite",
+                    "export_dir": "/tmp/experiments/experiment_ethics_suite/exports/analysis_export_001",
+                },
+            },
+        )()
+
+        with patch("whitzard.cli.main.export_experiment", return_value=summary):
+            with redirect_stdout(StringIO()) as stream:
+                self.assertEqual(handle_evaluate_export(args), 0)
+
+        output = stream.getvalue()
+        self.assertIn("Experiment: experiment_ethics_suite", output)
+        self.assertIn("JSONL: /tmp/experiments/experiment_ethics_suite/exports/analysis_export_001/dataset.jsonl", output)
+        self.assertIn("CSV: /tmp/experiments/experiment_ethics_suite/exports/analysis_export_001/dataset.csv", output)
