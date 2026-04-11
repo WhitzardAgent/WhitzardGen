@@ -169,6 +169,13 @@ Each exported row merges:
 - matching normalized results
 - matching score records
 
+If an experiment finished with a partial V2 bundle, export still works as long as:
+
+- `experiment_manifest.json` exists
+- `target_results.jsonl` exists
+
+Missing optional layers such as `normalized_results.jsonl` or `score_records.jsonl` are exported as empty fields rather than failing the whole export.
+
 ## 6. Kernel-Oriented Commands
 
 These commands remain supported because they expose useful lower-level workflow components.

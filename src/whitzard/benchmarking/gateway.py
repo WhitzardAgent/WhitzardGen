@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from whitzard.benchmarking.interfaces import RunEngineGateway
-from whitzard.benchmarking.models import EvalTask, ExecutionRequest, RequestPreviewRecord, TargetResult
+from whitzard.benchmarking.models import (
+    EvalTask,
+    ExecutionRequest,
+    RequestPreviewRecord,
+    TargetResult,
+    TargetRunReference,
+)
 from whitzard.benchmarking.preview import PreviewCollector
 from whitzard.benchmarking.prompt_templates import (
     default_target_template_context,
@@ -14,7 +20,6 @@ from whitzard.benchmarking.prompt_templates import (
 )
 from whitzard.prompts.models import PromptRecord
 from whitzard.run_flow import run_single_model
-from whitzard.run_store import load_run_dataset_records
 from whitzard.utils.progress import NullRunProgress, RunProgress
 
 
@@ -28,12 +33,12 @@ class PromptRecordRunEngineGateway(RunEngineGateway):
         execution_mode: str,
         preview_collector: PreviewCollector | None = None,
         progress: RunProgress | None = None,
-    ) -> tuple[list[TargetResult], list[dict[str, Any]], list[str]]:
+    ) -> tuple[list[TargetResult], list[dict[str, Any]], list[TargetRunReference]]:
         progress = progress or NullRunProgress()
         experiment_path = Path(experiment_dir)
         target_results: list[TargetResult] = []
         failures: list[dict[str, Any]] = []
-        target_run_ids: list[str] = []
+        target_run_refs: list[TargetRunReference] = []
         grouped_requests: dict[str, list[ExecutionRequest]] = {}
         for request in requests:
             grouped_requests.setdefault(request.target_model, []).append(request)
@@ -59,8 +64,17 @@ class PromptRecordRunEngineGateway(RunEngineGateway):
                 execution_mode=execution_mode,
                 progress=progress,
             )
-            target_run_ids.append(run_summary.run_id)
-            source_records = load_run_dataset_records(run_summary.run_id)
+            run_ref = TargetRunReference(
+                run_id=run_summary.run_id,
+                target_model=target_model,
+                run_dir=str(run_summary.output_dir),
+                manifest_path=str(Path(run_summary.output_dir) / "run_manifest.json"),
+                export_path=str(run_summary.export_path),
+                failures_path=str(Path(run_summary.output_dir) / "failures.json"),
+                running_log_path=getattr(run_summary, "running_log_path", None),
+            )
+            target_run_refs.append(run_ref)
+            source_records = _load_dataset_records_from_path(run_ref.export_path)
             if not source_records:
                 failures.append(
                     {
@@ -107,10 +121,11 @@ class PromptRecordRunEngineGateway(RunEngineGateway):
                             "run_id": run_summary.run_id,
                             "output_dir": run_summary.output_dir,
                             "execution_mode": getattr(run_summary, "execution_mode", execution_mode),
+                            "run_reference": run_ref.to_dict(),
                         },
                     )
                 )
-        return target_results, failures, target_run_ids
+        return target_results, failures, target_run_refs
 
     def preview_requests(
         self,
@@ -164,9 +179,20 @@ def _write_execution_prompts(path: Path, requests: list[ExecutionRequest]) -> No
                         "version": prompt.version,
                     },
                     ensure_ascii=False,
-                )
+            )
                 + "\n"
             )
+
+
+def _load_dataset_records_from_path(path: str | Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, dict):
+            records.append(payload)
+    return records
 
 
 def _execution_request_to_prompt_record(request: ExecutionRequest) -> PromptRecord:

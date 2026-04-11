@@ -360,6 +360,20 @@ class TargetResult:
 
 
 @dataclass(slots=True)
+class TargetRunReference:
+    run_id: str
+    target_model: str
+    run_dir: str
+    manifest_path: str
+    export_path: str
+    failures_path: str | None = None
+    running_log_path: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
 class NormalizedResult:
     task_id: str
     benchmark_id: str
@@ -581,6 +595,9 @@ class EvaluationExperimentSummary:
     request_previews_path: str | None = None
     request_preview_summary_path: str | None = None
     request_previews_markdown_path: str | None = None
+    bundle_completeness: str = "complete"
+    available_layers: list[str] = field(default_factory=list)
+    failed_stages: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -633,6 +650,9 @@ class ExperimentBundleManifest:
     selection_manifest_path: str | None = None
     compiled_task_plan_path: str | None = None
     experiment_log_path: str | None = None
+    bundle_completeness: str = "complete"
+    available_layers: list[str] = field(default_factory=list)
+    failed_stages: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -667,6 +687,9 @@ class SummaryReport:
     counts_by_split: dict[str, int] = field(default_factory=dict)
     label_counts_by_target_model: dict[str, dict[str, int]] = field(default_factory=dict)
     average_numeric_scores_by_scorer: dict[str, dict[str, float]] = field(default_factory=dict)
+    bundle_completeness: str = "complete"
+    available_layers: list[str] = field(default_factory=list)
+    failed_stages: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -699,6 +722,9 @@ class ExperimentExportSummary:
     export_dir: str
     export_format: str
     record_count: int
+    source_layout: str = "experiment_bundle"
+    export_completeness: str = "full_experiment"
+    available_layers: list[str] = field(default_factory=list)
     jsonl_path: str | None = None
     csv_path: str | None = None
     manifest_path: str | None = None

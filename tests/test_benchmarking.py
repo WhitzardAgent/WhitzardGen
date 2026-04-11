@@ -29,6 +29,7 @@ from whitzard.benchmarking.models import (
     RealizationSpec,
     RealizationValidationResult,
     ScoreRecord,
+    TargetRunReference,
     TargetResult,
 )
 from whitzard.benchmarking.selection import apply_case_selection, infer_case_id_prefix
@@ -553,9 +554,18 @@ class BenchmarkingTests(unittest.TestCase):
             "annotation_profile": "default_review",
             "annotation_template": "source_record_review_v1",
         }
+        run_ref = TargetRunReference(
+            run_id="run_001",
+            target_model="Qwen2.5-32B-Instruct",
+            run_dir="/tmp/run_001",
+            manifest_path="/tmp/run_001/run_manifest.json",
+            export_path="/tmp/run_001/exports/dataset.jsonl",
+        )
 
         def fake_annotate_run(run_id, **kwargs):
             self.assertEqual(run_id, "run_001")
+            self.assertEqual(kwargs["source_run_manifest_path"], "/tmp/run_001/run_manifest.json")
+            self.assertEqual(kwargs["source_export_path"], "/tmp/run_001/exports/dataset.jsonl")
             self.assertEqual(
                 kwargs["prompt_template"]["template_text"],
                 "Decision {{normalized_result.decision_text}}",
@@ -581,6 +591,7 @@ class BenchmarkingTests(unittest.TestCase):
                 task=task,
                 compiled_plan=type("Plan", (), {})(),
                 source_run_id="run_001",
+                source_run_references=[run_ref],
                 target_results=[target_result],
                 normalized_results=[normalized_result],
                 scorers=[scorer],
@@ -1453,6 +1464,8 @@ class BenchmarkingTests(unittest.TestCase):
         def fake_score_target_results(**kwargs):
             target_results = kwargs["target_results"]
             self.assertEqual(kwargs["source_run_id"], "run_eval_target_001")
+            self.assertEqual(len(kwargs["source_run_references"]), 1)
+            self.assertEqual(kwargs["source_run_references"][0].export_path, str(runs_root / "run_eval_target_001" / "exports" / "dataset.jsonl"))
             self.assertIsNotNone(kwargs.get("preview_collector"))
             results = [
                 ScoreRecord(
@@ -1500,9 +1513,99 @@ class BenchmarkingTests(unittest.TestCase):
         self.assertGreater(summary.score_record_count, 0)
         self.assertGreater(summary.group_analysis_record_count, 0)
         self.assertGreater(summary.analysis_plugin_result_count, 0)
+        self.assertEqual(summary.bundle_completeness, "complete")
+        self.assertIn("score_records", summary.available_layers)
         self.assertTrue(Path(summary.execution_requests_path).exists())
         self.assertTrue(Path(summary.normalized_results_path).exists())
         self.assertTrue(Path(summary.score_records_path).exists())
+
+    def test_evaluate_benchmark_writes_partial_bundle_when_scoring_fails(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        source_path = tmpdir / "cases.jsonl"
+        source_path.write_text(
+            json.dumps(
+                {
+                    "benchmark_id": "static_suite",
+                    "case_id": "case_001",
+                    "input_modality": "text",
+                    "input_payload": {"prompt": "Describe the dilemma."},
+                    "metadata": {"family_id": "fam_001"},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        benchmark_summary = build_benchmark(
+            builder_name="static_jsonl",
+            source_path=source_path,
+            out_dir=tmpdir / "benchmark_bundle",
+            benchmark_name="static_suite",
+        )
+
+        def fake_run_single_model(**kwargs):
+            run_root = Path(kwargs["out_dir"])
+            export_path = run_root / "exports" / "dataset.jsonl"
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_record = json.loads(Path(kwargs["prompt_file"]).read_text(encoding="utf-8").splitlines()[0])
+            artifact_path = run_root / "workdir" / f"{prompt_record['prompt_id']}.txt"
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text("A", encoding="utf-8")
+            export_path.write_text(
+                json.dumps(
+                    {
+                        "record_id": "rec_00000001",
+                        "run_id": "run_partial_001",
+                        "task_id": "task_000001",
+                        "prompt_id": prompt_record["prompt_id"],
+                        "prompt": prompt_record["prompt"],
+                        "language": "en",
+                        "model_name": kwargs["model_name"],
+                        "task_type": "t2t",
+                        "artifact_type": "text",
+                        "artifact_path": str(artifact_path),
+                        "artifact_metadata": {"format": "txt"},
+                        "generation_params": {},
+                        "prompt_metadata": prompt_record.get("metadata", {}),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_root / "run_manifest.json").write_text(
+                json.dumps({"run_id": "run_partial_001", "export_path": str(export_path)}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (run_root / "failures.json").write_text("[]", encoding="utf-8")
+            return _build_run_summary(run_id="run_partial_001", output_dir=run_root, export_path=export_path)
+
+        with patch("whitzard.benchmarking.gateway.run_single_model", side_effect=fake_run_single_model):
+            with patch(
+                "whitzard.benchmarking.runner.score_target_results",
+                side_effect=RuntimeError("judge manifest lookup failed"),
+            ):
+                summary = evaluate_benchmark(
+                    benchmark_path=benchmark_summary.benchmark_dir,
+                    target_models=["Qwen2.5-32B-Instruct"],
+                    normalizer_ids=["ethics_structural_normalizer"],
+                    evaluator_ids=["ethics_structural_judge"],
+                    out_dir=tmpdir / "experiment_bundle",
+                    execution_mode="mock",
+                    preview_enabled=True,
+                    preview_count=2,
+                )
+
+        self.assertEqual(summary.bundle_completeness, "partial")
+        self.assertIn("scoring", summary.failed_stages)
+        self.assertTrue(Path(summary.target_results_path).exists())
+        self.assertTrue(Path(summary.normalized_results_path or "").exists())
+        self.assertTrue(Path(summary.manifest_path).exists())
+        manifest = json.loads(Path(summary.manifest_path).read_text(encoding="utf-8"))
+        self.assertEqual(manifest["bundle_completeness"], "partial")
+        self.assertIn("target_results", manifest["available_layers"])
+        self.assertIn("normalized_results", manifest["available_layers"])
+        self.assertIn("scoring", manifest["failed_stages"])
         self.assertTrue(Path(summary.analysis_plugin_results_path).exists())
         self.assertTrue(Path(summary.compiled_task_plan_path).exists())
         self.assertTrue(Path(summary.experiment_log_path).exists())

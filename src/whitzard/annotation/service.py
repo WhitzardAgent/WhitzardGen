@@ -47,6 +47,9 @@ class AnnotationError(RuntimeError):
 def annotate_run(
     source_run_id: str,
     *,
+    source_run_manifest_path: str | Path | None = None,
+    source_export_path: str | Path | None = None,
+    source_run_dir: str | Path | None = None,
     annotation_profile: str | None = None,
     annotator_model: str | None = None,
     template_name: str | None = None,
@@ -81,8 +84,12 @@ def annotate_run(
             f"Annotator model {resolved_annotator_model} does not support structured JSON output."
         )
 
-    source_manifest = load_run_manifest(source_run_id)
-    source_records = load_run_dataset_records(source_run_id)
+    source_manifest, source_records = _resolve_source_run_inputs(
+        source_run_id=source_run_id,
+        source_run_manifest_path=source_run_manifest_path,
+        source_export_path=source_export_path,
+        source_run_dir=source_run_dir,
+    )
     if not source_records:
         raise AnnotationError(f"No exported dataset records were found for run_id={source_run_id}.")
 
@@ -236,7 +243,12 @@ def annotate_run(
         "created_at": created_at,
         "source_run_id": source_run_id,
         "source_run_manifest_path": str(
-            Path(source_manifest.get("manifest_path", get_runs_root() / source_run_id / "run_manifest.json"))
+            Path(
+                source_manifest.get(
+                    "manifest_path",
+                    source_run_manifest_path or get_runs_root() / source_run_id / "run_manifest.json",
+                )
+            )
         ),
         "source_export_path": str(source_manifest.get("export_path", "")),
         "annotation_profile": profile.name,
@@ -281,6 +293,66 @@ def annotate_run(
         failed_count=len(failures),
         annotation_run_id=run_summary.run_id if run_summary is not None else None,
     )
+
+
+def _resolve_source_run_inputs(
+    *,
+    source_run_id: str,
+    source_run_manifest_path: str | Path | None,
+    source_export_path: str | Path | None,
+    source_run_dir: str | Path | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if source_run_manifest_path not in (None, "") or source_export_path not in (None, ""):
+        manifest_path = (
+            Path(source_run_manifest_path)
+            if source_run_manifest_path not in (None, "")
+            else None
+        )
+        export_path = (
+            Path(source_export_path)
+            if source_export_path not in (None, "")
+            else None
+        )
+        if manifest_path is None and source_run_dir not in (None, ""):
+            candidate = Path(source_run_dir) / "run_manifest.json"
+            if candidate.exists():
+                manifest_path = candidate
+        if export_path is None and source_run_dir not in (None, ""):
+            candidate = Path(source_run_dir) / "exports" / "dataset.jsonl"
+            if candidate.exists():
+                export_path = candidate
+        if manifest_path is None or not manifest_path.exists():
+            raise AnnotationError(
+                f"Source run manifest path does not exist for run_id={source_run_id}: {manifest_path}"
+            )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest.setdefault("run_id", source_run_id)
+        manifest.setdefault("manifest_path", str(manifest_path))
+        export_value = export_path or Path(str(manifest.get("export_path", "")))
+        if not str(export_value).strip() or not export_value.exists():
+            raise AnnotationError(
+                f"Source run export path does not exist for run_id={source_run_id}: {export_value}"
+            )
+        manifest["export_path"] = str(export_value)
+        records = _load_dataset_records_from_path(export_value)
+        return manifest, records
+    try:
+        source_manifest = load_run_manifest(source_run_id)
+        source_records = load_run_dataset_records(source_run_id)
+    except RunStoreError as exc:
+        raise AnnotationError(str(exc)) from exc
+    return source_manifest, source_records
+
+
+def _load_dataset_records_from_path(path: str | Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, dict):
+            records.append(payload)
+    return records
 
 
 def build_annotation_request_prompts(

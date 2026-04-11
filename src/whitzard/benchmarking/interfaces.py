@@ -18,6 +18,7 @@ from whitzard.benchmarking.models import (
     RealizationSpec,
     RealizationValidationResult,
     ScoreRecord,
+    TargetRunReference,
     TargetResult,
 )
 from whitzard.benchmarking.preview import PreviewCollector
@@ -222,7 +223,7 @@ class RunEngineGateway(ABC):
         execution_mode: str,
         preview_collector: Any | None = None,
         progress: RunProgress | None = None,
-    ) -> tuple[list[TargetResult], list[dict[str, Any]], list[str]]:
+    ) -> tuple[list[TargetResult], list[dict[str, Any]], list[TargetRunReference]]:
         raise NotImplementedError
 
     @abstractmethod

@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from whitzard.annotation import annotate_run
-from whitzard.benchmarking.models import CompiledTaskPlan, EvalTask, NormalizedResult, ScoreRecord, TargetResult
+from whitzard.benchmarking.models import (
+    CompiledTaskPlan,
+    EvalTask,
+    NormalizedResult,
+    ScoreRecord,
+    TargetResult,
+    TargetRunReference,
+)
 from whitzard.benchmarking.preview import PreviewCollector
 from whitzard.benchmarking.prompt_templates import resolve_prompt_template_config
 from whitzard.evaluators.models import EvaluatorSpec
@@ -22,6 +29,7 @@ def score_target_results(
     task: EvalTask,
     compiled_plan: CompiledTaskPlan,
     source_run_id: str,
+    source_run_references: list[TargetRunReference] | None,
     target_results: list[TargetResult],
     normalized_results: list[NormalizedResult],
     scorers: list[EvaluatorSpec | dict[str, Any]],
@@ -43,6 +51,11 @@ def score_target_results(
     target_results_by_run_id: dict[str, list[TargetResult]] = {}
     for result in target_results:
         target_results_by_run_id.setdefault(result.source_run_id, []).append(result)
+    run_ref_by_id = {
+        run_ref.run_id: run_ref
+        for run_ref in list(source_run_references or [])
+        if str(run_ref.run_id).strip()
+    }
     normalized_by_record_id = {
         str(result.source_record_id or ""): result
         for result in normalized_results
@@ -80,6 +93,15 @@ def score_target_results(
                 )
                 annotation_summary = annotate_run(
                     current_run_id,
+                    source_run_manifest_path=run_ref_by_id.get(current_run_id).manifest_path
+                    if current_run_id in run_ref_by_id
+                    else None,
+                    source_export_path=run_ref_by_id.get(current_run_id).export_path
+                    if current_run_id in run_ref_by_id
+                    else None,
+                    source_run_dir=run_ref_by_id.get(current_run_id).run_dir
+                    if current_run_id in run_ref_by_id
+                    else None,
                     annotation_profile=scorer.annotation_profile,
                     annotator_model=scorer.judge_model,
                     template_name=scorer.annotation_template,
@@ -123,6 +145,7 @@ def evaluate_target_run(
     task: EvalTask,
     compiled_plan: CompiledTaskPlan,
     source_run_id: str,
+    source_run_references: list[TargetRunReference] | None,
     target_results: list[TargetResult],
     normalized_results: list[NormalizedResult],
     evaluators: list[EvaluatorSpec | dict[str, Any]],
@@ -135,6 +158,7 @@ def evaluate_target_run(
         task=task,
         compiled_plan=compiled_plan,
         source_run_id=source_run_id,
+        source_run_references=source_run_references,
         target_results=target_results,
         normalized_results=normalized_results,
         scorers=evaluators,

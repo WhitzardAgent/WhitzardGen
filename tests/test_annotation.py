@@ -152,6 +152,87 @@ class AnnotationTests(unittest.TestCase):
             "Nature",
         )
 
+    def test_annotate_run_can_use_explicit_source_run_paths(self) -> None:
+        tmpdir = Path(tempfile.mkdtemp())
+        bundle_dir = tmpdir / "annotation_bundle"
+        source_run_dir = tmpdir / "embedded_target_run"
+        export_path = source_run_dir / "exports" / "dataset.jsonl"
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path = source_run_dir / "run_manifest.json"
+        manifest_path.write_text(
+            json.dumps({"run_id": "run_embedded_001", "export_path": str(export_path)}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        export_path.write_text(
+            json.dumps(
+                {
+                    "record_id": "rec_00000001",
+                    "run_id": "run_embedded_001",
+                    "task_id": "task_000001",
+                    "prompt_id": "p001",
+                    "prompt": "Choose A or B.",
+                    "language": "en",
+                    "model_name": "Qwen2.5-32B-Instruct",
+                    "task_type": "t2t",
+                    "artifact_type": "text",
+                    "artifact_path": "/tmp/source.txt",
+                    "artifact_metadata": {"format": "txt"},
+                    "generation_params": {},
+                    "prompt_metadata": {},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        def fake_run_single_model(**kwargs):
+            run_root = Path(kwargs["out_dir"])
+            annotation_export_path = run_root / "exports" / "dataset.jsonl"
+            annotation_export_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path = run_root / "workdir" / "annreq_rec_00000001.txt"
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text(
+                json.dumps(
+                    {
+                        "summary": "ok",
+                        "labels": ["good"],
+                        "confidence": 0.9,
+                        "rationale": "explicit path worked",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            annotation_export_path.write_text(
+                json.dumps({"prompt_id": "annreq_rec_00000001", "artifact_path": str(artifact_path)}, ensure_ascii=False)
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_root / "failures.json").write_text("[]", encoding="utf-8")
+            return _build_summary(run_id="annotation_run_explicit", output_dir=run_root, export_path=annotation_export_path)
+
+        with patch("whitzard.annotation.service.run_single_model", side_effect=fake_run_single_model):
+            summary = annotate_run(
+                "run_embedded_001",
+                source_run_manifest_path=manifest_path,
+                source_export_path=export_path,
+                source_run_dir=source_run_dir,
+                annotation_profile="default_review",
+                annotator_model="Qwen3-32B",
+                out_dir=bundle_dir,
+                execution_mode="mock",
+            )
+
+        annotations = [
+            json.loads(line)
+            for line in Path(summary.annotations_path).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(summary.annotated_count, 1)
+        self.assertEqual(annotations[0]["source_run_id"], "run_embedded_001")
+        self.assertEqual(annotations[0]["annotation"]["summary"], "ok")
+
     def test_annotate_run_skips_existing_annotation_records(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
         bundle_dir = tmpdir / "annotation_bundle"

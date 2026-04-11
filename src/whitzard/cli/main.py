@@ -894,6 +894,11 @@ def handle_evaluate_run(args: argparse.Namespace) -> int:
     print(f"Evaluators: {', '.join(summary.evaluator_ids) or '-'}")
     print(f"Analysis Plugins: {', '.join(summary.analysis_plugin_ids) or '-'}")
     print(f"Execution Mode: {summary.execution_mode}")
+    print(f"Bundle Completeness: {getattr(summary, 'bundle_completeness', 'complete')}")
+    print(f"Available Layers: {', '.join(getattr(summary, 'available_layers', []) or []) or '-'}")
+    failed_stages = list(getattr(summary, "failed_stages", []) or [])
+    if failed_stages:
+        print(f"Failed Stages: {', '.join(failed_stages)}")
     if summary.source_case_count is not None:
         print(f"Source Cases: {summary.source_case_count}")
     print(f"Cases: {summary.case_count}")
@@ -946,6 +951,11 @@ def handle_evaluate_inspect(args: argparse.Namespace) -> int:
     print(f"Score Record Count: {score_record_count}")
     print(f"Group Analysis Count: {group_analysis_count}")
     print(f"Analysis Plugin Result Count: {summary.get('analysis_plugin_result_count', 0)}")
+    print(f"Bundle Completeness: {payload.get('bundle_completeness', 'complete')}")
+    print(f"Available Layers: {', '.join(payload.get('available_layers', []) or []) or '-'}")
+    failed_stages = list(payload.get("failed_stages", []) or [])
+    if failed_stages:
+        print(f"Failed Stages: {', '.join(failed_stages)}")
     if payload.get("report_path"):
         print(f"Report: {payload['report_path']}")
     if payload.get("selection_manifest_path"):
@@ -976,6 +986,9 @@ def handle_evaluate_export(args: argparse.Namespace) -> int:
     print(f"Export Dir: {summary.export_dir}")
     print(f"Format: {summary.export_format}")
     print(f"Records: {summary.record_count}")
+    print(f"Detected Layout: {summary.source_layout}")
+    print(f"Export Completeness: {summary.export_completeness}")
+    print(f"Available Layers: {', '.join(summary.available_layers or []) or '-'}")
     if summary.jsonl_path:
         print(f"JSONL: {summary.jsonl_path}")
     if summary.csv_path:
@@ -1028,6 +1041,11 @@ def handle_experiments_report(args: argparse.Namespace) -> int:
     print(f"Score Record Count: {score_record_count}")
     print(f"Group Analysis Count: {group_analysis_count}")
     print(f"Analysis Plugin Result Count: {summary.get('analysis_plugin_result_count', 0)}")
+    print(f"Bundle Completeness: {payload.get('bundle_completeness', 'complete')}")
+    print(f"Available Layers: {', '.join(payload.get('available_layers', []) or []) or '-'}")
+    failed_stages = list(payload.get("failed_stages", []) or [])
+    if failed_stages:
+        print(f"Failed Stages: {', '.join(failed_stages)}")
     if payload.get("report_path"):
         print(f"Report: {payload['report_path']}")
     if payload.get("request_previews_path"):

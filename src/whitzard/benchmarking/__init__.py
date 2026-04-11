@@ -44,6 +44,7 @@ from whitzard.benchmarking.models import (
     RealizationValidationResult,
     ScoreRecord,
     SummaryReport,
+    TargetRunReference,
     TargetResult,
 )
 from whitzard.benchmarking.packages import (
@@ -97,6 +98,7 @@ __all__ = [
     "Scorer",
     "SlotDefinition",
     "SummaryReport",
+    "TargetRunReference",
     "TaskCompiler",
     "TargetResult",
     "build_benchmark",

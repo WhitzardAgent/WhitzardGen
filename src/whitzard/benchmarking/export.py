@@ -30,6 +30,8 @@ def export_experiment_bundle(
     payload = inspect_experiment_bundle(experiment_dir)
     manifest = dict(payload.get("manifest") or {})
     experiment_id = str(manifest.get("experiment_id") or experiment_dir.name)
+    available_layers = list(manifest.get("available_layers", []) or [])
+    bundle_completeness = str(manifest.get("bundle_completeness") or "complete")
 
     cases_path = experiment_dir / "cases.jsonl"
     execution_requests_path = experiment_dir / "execution_requests.jsonl"
@@ -84,6 +86,11 @@ def export_experiment_bundle(
         "created_at": datetime.now(UTC).isoformat(),
         "export_format": export_format,
         "record_count": len(merged_rows),
+        "source_layout": "experiment_bundle",
+        "export_completeness": (
+            "partial_experiment" if bundle_completeness != "complete" else "full_experiment"
+        ),
+        "available_layers": available_layers,
         "source_files": {
             "cases_path": str(cases_path) if cases_path.exists() else None,
             "execution_requests_path": str(execution_requests_path) if execution_requests_path.exists() else None,
@@ -108,6 +115,10 @@ def export_experiment_bundle(
             record_count=len(merged_rows),
             jsonl_path=jsonl_path,
             csv_path=csv_path,
+            export_completeness=(
+                "partial_experiment" if bundle_completeness != "complete" else "full_experiment"
+            ),
+            available_layers=available_layers,
         ),
         encoding="utf-8",
     )
@@ -118,6 +129,11 @@ def export_experiment_bundle(
         export_dir=str(export_dir),
         export_format=export_format,
         record_count=len(merged_rows),
+        source_layout="experiment_bundle",
+        export_completeness=(
+            "partial_experiment" if bundle_completeness != "complete" else "full_experiment"
+        ),
+        available_layers=available_layers,
         jsonl_path=str(jsonl_path) if jsonl_path is not None else None,
         csv_path=str(csv_path) if csv_path is not None else None,
         manifest_path=str(manifest_path),
@@ -276,6 +292,8 @@ def _build_export_readme(
     record_count: int,
     jsonl_path: Path | None,
     csv_path: Path | None,
+    export_completeness: str,
+    available_layers: list[str],
 ) -> str:
     lines = [
         f"# Experiment Export: {experiment_id}",
@@ -283,6 +301,9 @@ def _build_export_readme(
         f"- Source experiment: `{experiment_dir}`",
         f"- Formats: `{export_format}`",
         f"- Records: `{record_count}`",
+        f"- Source layout: `experiment_bundle`",
+        f"- Export completeness: `{export_completeness}`",
+        f"- Available layers: `{', '.join(available_layers) or '-'}`",
     ]
     if jsonl_path is not None:
         lines.append(f"- JSONL: `{jsonl_path.name}`")

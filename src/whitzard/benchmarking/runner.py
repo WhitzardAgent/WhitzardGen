@@ -24,6 +24,7 @@ from whitzard.benchmarking.models import (
     NormalizedResult,
     ScoreRecord,
     SummaryReport,
+    TargetRunReference,
     TargetResult,
 )
 from whitzard.benchmarking.preview import PreviewCollector, parse_preview_stage, write_request_preview_bundle
@@ -84,6 +85,7 @@ class DefaultExperimentRunner(ExperimentRunner):
             config_path=task.execution_policy.get("launcher_config_path"),
         )
 
+        failed_stages: list[str] = []
         _append_event(
             events,
             experiment_id=experiment_id,
@@ -112,25 +114,49 @@ class DefaultExperimentRunner(ExperimentRunner):
             if bool(preview_config.get("enabled", False))
             else None
         )
-        target_results, target_failures, target_run_ids = self.gateway.execute_requests(
-            task=task,
-            requests=compiled_plan.execution_requests,
-            experiment_dir=experiment_path,
-            execution_mode=execution_mode,
-            preview_collector=preview_collector,
-            progress=progress,
-        )
-        failures.extend(target_failures)
-        _append_event(
-            events,
-            experiment_id=experiment_id,
-            task_id=task.task_id,
-            stage="execution",
-            entity_type="gateway",
-            entity_id="run_engine_gateway",
-            status="completed",
-            payload={"target_result_count": len(target_results), "failure_count": len(target_failures)},
-        )
+        target_results: list[TargetResult] = []
+        target_failures: list[dict[str, Any]] = []
+        target_run_refs: list[TargetRunReference] = []
+        try:
+            target_results, target_failures, target_run_refs = self.gateway.execute_requests(
+                task=task,
+                requests=compiled_plan.execution_requests,
+                experiment_dir=experiment_path,
+                execution_mode=execution_mode,
+                preview_collector=preview_collector,
+                progress=progress,
+            )
+            failures.extend(target_failures)
+            _append_event(
+                events,
+                experiment_id=experiment_id,
+                task_id=task.task_id,
+                stage="execution",
+                entity_type="gateway",
+                entity_id="run_engine_gateway",
+                status="completed",
+                payload={"target_result_count": len(target_results), "failure_count": len(target_failures)},
+            )
+        except Exception as exc:
+            failed_stages.append("execution")
+            failures.append(
+                {
+                    "stage": "execution",
+                    "entity_id": "run_engine_gateway",
+                    "error": str(exc),
+                }
+            )
+            _append_event(
+                events,
+                experiment_id=experiment_id,
+                task_id=task.task_id,
+                stage="execution",
+                entity_type="gateway",
+                entity_id="run_engine_gateway",
+                status="failed",
+                payload={"error": str(exc)},
+            )
+        target_run_ids = [run_ref.run_id for run_ref in target_run_refs]
         _emit_evaluation_eta(
             progress=progress,
             started_at=started_at,
@@ -142,7 +168,7 @@ class DefaultExperimentRunner(ExperimentRunner):
 
         current_normalizers = list(compiled_plan.normalizer_specs)
         normalized_results: list[NormalizedResult] = []
-        if current_normalizers:
+        if current_normalizers and target_results:
             _append_event(
                 events,
                 experiment_id=experiment_id,
@@ -153,25 +179,45 @@ class DefaultExperimentRunner(ExperimentRunner):
                 status="started",
                 payload={"normalizer_count": len(current_normalizers)},
             )
-            normalized_results, normalization_failures = normalize_target_results(
-                task=task,
-                compiled_plan=compiled_plan,
-                benchmark_id=benchmark_id,
-                benchmark_manifest=compiled_plan.case_set.manifest,
-                target_results=target_results,
-                normalizers=current_normalizers,
-            )
-            failures.extend(normalization_failures)
-            _append_event(
-                events,
-                experiment_id=experiment_id,
-                task_id=task.task_id,
-                stage="normalization",
-                entity_type="normalizers",
-                entity_id="normalization_stage",
-                status="completed",
-                payload={"normalized_result_count": len(normalized_results), "failure_count": len(normalization_failures)},
-            )
+            try:
+                normalized_results, normalization_failures = normalize_target_results(
+                    task=task,
+                    compiled_plan=compiled_plan,
+                    benchmark_id=benchmark_id,
+                    benchmark_manifest=compiled_plan.case_set.manifest,
+                    target_results=target_results,
+                    normalizers=current_normalizers,
+                )
+                failures.extend(normalization_failures)
+                _append_event(
+                    events,
+                    experiment_id=experiment_id,
+                    task_id=task.task_id,
+                    stage="normalization",
+                    entity_type="normalizers",
+                    entity_id="normalization_stage",
+                    status="completed",
+                    payload={"normalized_result_count": len(normalized_results), "failure_count": len(normalization_failures)},
+                )
+            except Exception as exc:
+                failed_stages.append("normalization")
+                failures.append(
+                    {
+                        "stage": "normalization",
+                        "entity_id": "normalization_stage",
+                        "error": str(exc),
+                    }
+                )
+                _append_event(
+                    events,
+                    experiment_id=experiment_id,
+                    task_id=task.task_id,
+                    stage="normalization",
+                    entity_type="normalizers",
+                    entity_id="normalization_stage",
+                    status="failed",
+                    payload={"error": str(exc)},
+                )
             _emit_evaluation_eta(
                 progress=progress,
                 started_at=started_at,
@@ -183,7 +229,7 @@ class DefaultExperimentRunner(ExperimentRunner):
 
         score_records: list[ScoreRecord] = []
         current_scorers = list(compiled_plan.scorer_specs)
-        if current_scorers:
+        if current_scorers and target_results:
             _append_event(
                 events,
                 experiment_id=experiment_id,
@@ -194,29 +240,50 @@ class DefaultExperimentRunner(ExperimentRunner):
                 status="started",
                 payload={"scorer_count": len(current_scorers)},
             )
-            score_records, scoring_failures = score_target_results(
-                task=task,
-                compiled_plan=compiled_plan,
-                source_run_id=target_run_ids[0] if target_run_ids else "",
-                target_results=target_results,
-                normalized_results=normalized_results,
-                scorers=current_scorers,
-                out_dir=experiment_path / "scorers",
-                execution_mode=execution_mode,
-                preview_collector=preview_collector,
-                progress=progress,
-            )
-            failures.extend(scoring_failures)
-            _append_event(
-                events,
-                experiment_id=experiment_id,
-                task_id=task.task_id,
-                stage="scoring",
-                entity_type="scorers",
-                entity_id="scoring_stage",
-                status="completed",
-                payload={"score_record_count": len(score_records), "failure_count": len(scoring_failures)},
-            )
+            try:
+                score_records, scoring_failures = score_target_results(
+                    task=task,
+                    compiled_plan=compiled_plan,
+                    source_run_id=target_run_ids[0] if target_run_ids else "",
+                    source_run_references=target_run_refs,
+                    target_results=target_results,
+                    normalized_results=normalized_results,
+                    scorers=current_scorers,
+                    out_dir=experiment_path / "scorers",
+                    execution_mode=execution_mode,
+                    preview_collector=preview_collector,
+                    progress=progress,
+                )
+                failures.extend(scoring_failures)
+                _append_event(
+                    events,
+                    experiment_id=experiment_id,
+                    task_id=task.task_id,
+                    stage="scoring",
+                    entity_type="scorers",
+                    entity_id="scoring_stage",
+                    status="completed",
+                    payload={"score_record_count": len(score_records), "failure_count": len(scoring_failures)},
+                )
+            except Exception as exc:
+                failed_stages.append("scoring")
+                failures.append(
+                    {
+                        "stage": "scoring",
+                        "entity_id": "scoring_stage",
+                        "error": str(exc),
+                    }
+                )
+                _append_event(
+                    events,
+                    experiment_id=experiment_id,
+                    task_id=task.task_id,
+                    stage="scoring",
+                    entity_type="scorers",
+                    entity_id="scoring_stage",
+                    status="failed",
+                    payload={"error": str(exc)},
+                )
             _emit_evaluation_eta(
                 progress=progress,
                 started_at=started_at,
@@ -265,28 +332,48 @@ class DefaultExperimentRunner(ExperimentRunner):
                 status="started",
                 payload={"plugin_count": len(analysis_plugin_specs)},
             )
-            analysis_plugin_results, analysis_failures = run_analysis_plugins(
-                task=task,
-                compiled_plan=compiled_plan,
-                benchmark_id=benchmark_id,
-                benchmark_manifest=compiled_plan.case_set.manifest,
-                cases=compiled_plan.case_set.cases,
-                target_results=target_results,
-                normalized_results=normalized_results,
-                score_records=score_records,
-                plugin_specs=analysis_plugin_specs,
-            )
-            failures.extend(analysis_failures)
-            _append_event(
-                events,
-                experiment_id=experiment_id,
-                task_id=task.task_id,
-                stage="analysis_plugin",
-                entity_type="plugins",
-                entity_id="analysis_plugin_stage",
-                status="completed",
-                payload={"analysis_plugin_result_count": len(analysis_plugin_results), "failure_count": len(analysis_failures)},
-            )
+            try:
+                analysis_plugin_results, analysis_failures = run_analysis_plugins(
+                    task=task,
+                    compiled_plan=compiled_plan,
+                    benchmark_id=benchmark_id,
+                    benchmark_manifest=compiled_plan.case_set.manifest,
+                    cases=compiled_plan.case_set.cases,
+                    target_results=target_results,
+                    normalized_results=normalized_results,
+                    score_records=score_records,
+                    plugin_specs=analysis_plugin_specs,
+                )
+                failures.extend(analysis_failures)
+                _append_event(
+                    events,
+                    experiment_id=experiment_id,
+                    task_id=task.task_id,
+                    stage="analysis_plugin",
+                    entity_type="plugins",
+                    entity_id="analysis_plugin_stage",
+                    status="completed",
+                    payload={"analysis_plugin_result_count": len(analysis_plugin_results), "failure_count": len(analysis_failures)},
+                )
+            except Exception as exc:
+                failed_stages.append("analysis_plugin")
+                failures.append(
+                    {
+                        "stage": "analysis_plugin",
+                        "entity_id": "analysis_plugin_stage",
+                        "error": str(exc),
+                    }
+                )
+                _append_event(
+                    events,
+                    experiment_id=experiment_id,
+                    task_id=task.task_id,
+                    stage="analysis_plugin",
+                    entity_type="plugins",
+                    entity_id="analysis_plugin_stage",
+                    status="failed",
+                    payload={"error": str(exc)},
+                )
             _emit_evaluation_eta(
                 progress=progress,
                 started_at=started_at,
@@ -296,6 +383,16 @@ class DefaultExperimentRunner(ExperimentRunner):
                 failed_units=len(failures),
             )
 
+        available_layers = ["cases", "execution_requests", "target_results"]
+        if normalized_results:
+            available_layers.append("normalized_results")
+        if score_records:
+            available_layers.append("score_records")
+        if group_analysis_records:
+            available_layers.append("group_analysis_records")
+        if analysis_plugin_results:
+            available_layers.append("analysis_plugin_results")
+        bundle_completeness = "partial" if failed_stages else "complete"
         summary = build_summary_report(
             benchmark_id=benchmark_id,
             benchmark_path=compiled_plan.case_set.case_set_path or "",
@@ -312,6 +409,9 @@ class DefaultExperimentRunner(ExperimentRunner):
             group_analysis_records=group_analysis_records,
             analysis_plugin_results=analysis_plugin_results,
             failures=failures,
+            bundle_completeness=bundle_completeness,
+            available_layers=available_layers,
+            failed_stages=failed_stages,
         )
         report_markdown = render_experiment_report(
             benchmark_id=benchmark_id,
@@ -358,6 +458,9 @@ class DefaultExperimentRunner(ExperimentRunner):
                 selected_case_count=selection_result.counts_after if selection_result is not None else None,
                 source_case_count=selection_result.counts_before if selection_result is not None else None,
                 excluded_case_count=len(selection_result.excluded_cases) if selection_result is not None else 0,
+                bundle_completeness=bundle_completeness,
+                available_layers=available_layers,
+                failed_stages=list(failed_stages),
             ).to_dict(),
             case_set=compiled_plan.case_set,
             compiled_task_plan=compiled_plan,
@@ -441,6 +544,9 @@ class DefaultExperimentRunner(ExperimentRunner):
             request_previews_path=preview_summary.request_previews_path if preview_summary is not None else None,
             request_preview_summary_path=preview_summary.request_preview_summary_path if preview_summary is not None else None,
             request_previews_markdown_path=preview_summary.request_previews_markdown_path if preview_summary is not None else None,
+            bundle_completeness=bundle_completeness,
+            available_layers=available_layers,
+            failed_stages=list(failed_stages),
         )
 
 
@@ -541,6 +647,9 @@ def build_summary_report(
     group_analysis_records: list[GroupAnalysisRecord],
     analysis_plugin_results: list[AnalysisPluginResult],
     failures: list[dict[str, Any]],
+    bundle_completeness: str = "complete",
+    available_layers: list[str] | None = None,
+    failed_stages: list[str] | None = None,
 ) -> SummaryReport:
     counts_by_target_model = Counter(result.target_model for result in target_results)
     counts_by_normalizer = Counter(result.normalizer_id for result in normalized_results)
@@ -588,6 +697,9 @@ def build_summary_report(
             }
             for scorer_id in sorted(numeric_score_totals)
         },
+        bundle_completeness=bundle_completeness,
+        available_layers=list(available_layers or []),
+        failed_stages=list(failed_stages or []),
     )
 
 
@@ -608,12 +720,24 @@ def render_experiment_report(
         f"- Score Record Count: {payload.get('score_record_count', 0)}",
         f"- Group Analysis Record Count: {payload.get('group_analysis_record_count', 0)}",
         f"- Analysis Plugin Result Count: {payload.get('analysis_plugin_result_count', 0)}",
+        f"- Bundle Completeness: {payload.get('bundle_completeness', 'complete')}",
+        f"- Available Layers: {', '.join(payload.get('available_layers', [])) or '-'}",
         "",
         "## Per-Target Counts",
         "",
         "| Target | Results |",
         "| --- | ---: |",
     ]
+    failed_stages = list(payload.get("failed_stages", []) or [])
+    if failed_stages:
+        lines.extend(
+            [
+                "",
+                "## Failed Stages",
+                "",
+                *[f"- {stage}" for stage in failed_stages],
+            ]
+        )
     for target_model, count in sorted(payload.get("counts_by_target_model", {}).items()):
         lines.append(f"| {target_model} | {count} |")
     lines.extend(
